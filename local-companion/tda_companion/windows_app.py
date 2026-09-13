@@ -13,6 +13,12 @@ from urllib.parse import urlsplit
 from . import VERSION
 from .agent import AgentController, wait_until_ready
 from .agent_connection import probe_agent
+from .installed_acceptance import (
+    REQUIRED_OBSERVATIONS,
+    InstalledAcceptanceError,
+    finalize_installed_acceptance,
+    write_receipt,
+)
 from .pairing import TOKEN_PATTERN, ensure_pairing_token
 from .paths import CompanionPaths, default_paths, migrate_v02_layout
 from .settings import SettingsStore
@@ -163,6 +169,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--install-rc-runtime", choices=("whisper", "qwen"), help=argparse.SUPPRESS)
+    mode.add_argument("--installed-acceptance", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--startup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--state-root", type=Path, default=paths.state_root)
     parser.add_argument("--data-root", type=Path, default=paths.data_root)
@@ -173,6 +180,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rc-artifact", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--rc-artifact-sha256", help=argparse.SUPPRESS)
     parser.add_argument("--rc-result-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-candidate-msi", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-source-sha", help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-result-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--acceptance-observation",
+        action="append",
+        choices=sorted(REQUIRED_OBSERVATIONS),
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(argv)
     if not 1024 <= args.port <= 65535:
         parser.error("INVALID_PORT")
@@ -182,6 +198,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         or args.rc_result_file is None
     ):
         parser.error("RC_RUNTIME_ARTIFACT_HASH_AND_RESULT_REQUIRED")
+    if args.installed_acceptance and (
+        args.acceptance_candidate_msi is None
+        or not args.acceptance_source_sha
+        or args.acceptance_result_file is None
+    ):
+        parser.error("ACCEPTANCE_CANDIDATE_SOURCE_AND_RESULT_REQUIRED")
     origins = args.origin or [PRODUCTION_ORIGIN]
     try:
         args.origins = frozenset(validate_origin(origin) for origin in origins)
@@ -225,6 +247,39 @@ def _install_rc_runtime(args: argparse.Namespace) -> int:
         return 70
 
 
+def _run_installed_acceptance(args: argparse.Namespace) -> int:
+    destination: Path = args.acceptance_result_file
+    try:
+        receipt = finalize_installed_acceptance(
+            executable=Path(sys.executable).resolve(),
+            paths=_paths_for_args(args),
+            port=args.port,
+            candidate_msi=args.acceptance_candidate_msi,
+            source_sha=args.acceptance_source_sha,
+            observations=args.acceptance_observation or (),
+            destination=destination,
+        )
+        return 0 if receipt.get("pass") is True else 66
+    except InstalledAcceptanceError as exc:
+        write_receipt(
+            destination,
+            passed=False,
+            stage="validation",
+            checks={},
+            error_code=exc.code,
+        )
+        return 66
+    except BaseException:
+        write_receipt(
+            destination,
+            passed=False,
+            stage="validation",
+            checks={},
+            error_code="ACCEPTANCE_EXECUTION_FAILED",
+        )
+        return 70
+
+
 def _show_desktop_error(exc: BaseException) -> None:
     try:
         import tkinter as tk
@@ -252,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_worker_stdio()
     if args.install_rc_runtime:
         return _install_rc_runtime(args)
+    if args.installed_acceptance:
+        return _run_installed_acceptance(args)
 
     diagnostic_file: Path | None = args.diagnostic_file
     _write_diagnostic(diagnostic_file, "BOOTSTRAP")
