@@ -25,10 +25,9 @@ class _ReadableResponse(Protocol):
 FallbackOpen = Callable[[], ContextManager[_ReadableResponse]]
 
 
-class LargeDownloadError(RuntimeError):
+class LargeDownloadError(NetworkError):
     def __init__(self, code: str):
         super().__init__(code)
-        self.code = code
 
 
 def github_release_asset_url(tag: str, asset_name: str) -> str:
