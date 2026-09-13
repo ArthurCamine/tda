@@ -10,7 +10,7 @@ Este diretório versiona mudanças do reboot TDA a partir do momento em que o no
 - `supabase/candidates/`: SQL candidato ainda não autorizado para Production. Pode ser executado somente em ensaios scratch explicitamente preparados para esse candidato; o Supabase CLI não o considera no fluxo automático de Production.
 - `supabase/tests/`: fixtures e verificações SQL sintéticas.
 
-Promover um candidato não significa mover o arquivo histórico de volta para `migrations/`. Depois da aprovação, criar uma migration nova com timestamp atual, revisar o SQL contra o schema vigente e registrar a nova versão na documentação antes da aplicação. O candidato original permanece como evidência do desenho ensaiado ou é arquivado deliberadamente.
+Ao promover um candidato, a migration deployável final precisa existir em `supabase/migrations/` com timestamp/nome revisados contra o schema vigente e com a autorização registrada na documentação/PR correspondente. O arquivo candidato original pode ser arquivado ou removido deliberadamente depois da promoção. Depois que uma migration deployável for aplicada remotamente, não editar seu SQL para corrigir history; usar migration corretiva.
 
 ## Regras
 
@@ -48,13 +48,16 @@ O overlay nunca é commitado, não executa `migration repair`, não reescreve o 
 - `20260906210427_backfill_narrative_entity_links.sql`: recupera links de participantes históricos para PCs e adiciona índices do domínio narrativo.
 - `20260906211040_relax_reboot_entity_name_lookup.sql`: remove apenas a unicidade case-insensitive adicionada pelo reboot, mantém lookup case-insensitive e preserva a constraint exata exigida pelo consolidator legado.
 
+## Migrations autorizadas aguardando Production CD
+
+- `migrations/20260912214500_world_entity_media_foundation_v2.sql` — identidade first-class de assets do World, vínculo entity → portrait e wrapper transacional de publicação. Autorizada para rollout controlado pela #271; ainda não aplicada no Supabase Production até a execução do Production CD da promoção `Preview -> main`.
+
 ## Candidatos atuais
 
 Estes SQL permanecem deliberadamente fora de Production:
 
 - `candidates/20260907193704_transcript_import_capability.sql`;
 - `candidates/20260907193705_transcript_import_atomic.sql`;
-- `candidates/20260908231000_backfill_screacky_historical_alias.sql`;
-- `candidates/20260912214500_world_entity_media_foundation_v2.sql` — identidade first-class de assets do World, vínculo entity → portrait e wrapper transacional de publicação; **não aplicado em Production**.
+- `candidates/20260908231000_backfill_screacky_historical_alias.sql`.
 
 Os contratos e gates de ativação continuam em `docs/integrations/transcript-import.md`, `docs/features/world-entity-media-foundation.md` e `docs/database/migrations.md`.
