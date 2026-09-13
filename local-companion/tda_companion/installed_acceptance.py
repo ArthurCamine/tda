@@ -27,6 +27,7 @@ REQUIRED_OBSERVATIONS = frozenset(
         "tray_exit",
         "craig_selected",
         "craig_survives_agent_loss",
+        "background_download_resume",
     }
 )
 
