@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,33 @@ _SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _RC_TAG = re.compile(r"^companion-rc-v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)-(?P<prefix>[a-f0-9]{12})$")
 _REQUIRED_CAPABILITIES = ("core", "network", "maintenance")
+_ALLOWED_CAPABILITIES = frozenset({"core", "network", "maintenance", "whisper", "qwen"})
+_ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
+_ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
+_CANDIDATE_KEYS = frozenset(
+    {"schema", "channel", "tag", "version", "source_sha", "workflow_run_id", "assets"}
+)
+_ACCEPTANCE_KEYS = frozenset(
+    {
+        "schema",
+        "pass",
+        "accepted_at",
+        "version",
+        "stage",
+        "checks",
+        "contains_token",
+        "contains_paths",
+        "contains_transcript",
+        "artifact",
+    }
+)
+_ARTIFACT_KEYS = frozenset(
+    {"version", "source_sha", "msi_sha256", "executable_sha256", "maintenance_helper_sha256"}
+)
+_CHECK_KEYS = frozenset({"observations", "craig_fixture", "diagnostics"})
+_CRAIG_KEYS = frozenset({"track_count", "zip_sha256"})
+_DIAGNOSTIC_KEYS = frozenset({"overall", "capabilities"})
+_CAPABILITY_KEYS = frozenset({"state", "severity"})
 
 
 class ReleaseEvidenceError(RuntimeError):
@@ -133,6 +161,8 @@ def build_candidate_manifest(
 
 
 def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
+    if set(value) != _CANDIDATE_KEYS:
+        raise ReleaseEvidenceError("RELEASE_CANDIDATE_SCHEMA_INVALID")
     if value.get("schema") != CANDIDATE_SCHEMA or value.get("channel") != "rc":
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_SCHEMA_INVALID")
     version = value.get("version")
@@ -150,7 +180,7 @@ def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_TAG_MISMATCH")
     if not isinstance(tag, str) or _RC_TAG.fullmatch(tag) is None:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_TAG_INVALID")
-    if not isinstance(run_id, int) or run_id <= 0:
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_RUN_INVALID")
 
     assets = value.get("assets")
@@ -171,7 +201,7 @@ def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         size = row.get("size")
         if not isinstance(sha, str) or not _SHA256.fullmatch(sha):
             raise ReleaseEvidenceError("RELEASE_CANDIDATE_ASSET_HASH_INVALID")
-        if not isinstance(size, int) or size <= 0:
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
             raise ReleaseEvidenceError("RELEASE_CANDIDATE_ASSET_SIZE_INVALID")
     return value
 
@@ -197,8 +227,66 @@ def verify_candidate_files(manifest: dict[str, Any], assets_root: Path) -> None:
     _verify_checksum_file(assets_root / str(checksum["name"]), str(msi["sha256"]))
 
 
+def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if set(receipt) != _ACCEPTANCE_KEYS:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SCHEMA_INVALID")
+    accepted_at = receipt.get("accepted_at")
+    if not isinstance(accepted_at, str) or len(accepted_at) > 64:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TIMESTAMP_INVALID")
+    try:
+        parsed = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TIMESTAMP_INVALID") from exc
+    if parsed.tzinfo is None:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TIMESTAMP_INVALID")
+
+    artifact = receipt.get("artifact")
+    if not isinstance(artifact, dict) or set(artifact) != _ARTIFACT_KEYS:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_INVALID")
+    checks = receipt.get("checks")
+    if not isinstance(checks, dict) or set(checks) != _CHECK_KEYS:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CHECKS_INVALID")
+
+    observations = checks.get("observations")
+    if not isinstance(observations, dict) or set(observations) != set(REQUIRED_OBSERVATIONS):
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
+    if any(observations[name] is not True for name in REQUIRED_OBSERVATIONS):
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
+
+    craig = checks.get("craig_fixture")
+    if not isinstance(craig, dict) or set(craig) != _CRAIG_KEYS:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
+    zip_sha = craig.get("zip_sha256")
+    track_count = craig.get("track_count")
+    if not isinstance(zip_sha, str) or not _SHA256.fullmatch(zip_sha):
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
+    if not isinstance(track_count, int) or isinstance(track_count, bool) or track_count < 1:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
+
+    diagnostics = checks.get("diagnostics")
+    if not isinstance(diagnostics, dict) or set(diagnostics) != _DIAGNOSTIC_KEYS:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+    overall = diagnostics.get("overall")
+    if not isinstance(overall, str) or not overall or len(overall) > 32:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+    capabilities = diagnostics.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+    if not set(capabilities).issubset(_ALLOWED_CAPABILITIES):
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+    for name, row in capabilities.items():
+        if not isinstance(row, dict) or set(row) != _CAPABILITY_KEYS:
+            raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+        if row.get("state") not in _ALLOWED_CAPABILITY_STATES:
+            raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+        if row.get("severity") not in _ALLOWED_SEVERITIES:
+            raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
+    return artifact, capabilities
+
+
 def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any]) -> None:
     candidate = verify_candidate_manifest(manifest)
+    artifact, capabilities = _verify_acceptance_shape(receipt)
     if receipt.get("schema") != "tda_installed_acceptance_v1":
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SCHEMA_INVALID")
     if receipt.get("pass") is not True or receipt.get("stage") != "completed":
@@ -209,9 +297,6 @@ def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any])
         if receipt.get(key) is not False:
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_PRIVACY_INVALID")
 
-    artifact = receipt.get("artifact")
-    if not isinstance(artifact, dict):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_INVALID")
     assets = candidate["assets"]
     assert isinstance(assets, dict)
     msi = assets["msi"]
@@ -222,33 +307,11 @@ def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any])
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SOURCE_MISMATCH")
     if artifact.get("msi_sha256") != msi["sha256"]:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_MSI_MISMATCH")
-    for key in (
-        "executable_sha256",
-        "maintenance_helper_sha256",
-        "craig_zip_sha256",
-    ):
+    for key in ("executable_sha256", "maintenance_helper_sha256"):
         value = artifact.get(key)
         if not isinstance(value, str) or not _SHA256.fullmatch(value):
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_HASH_INVALID")
-    track_count = artifact.get("craig_track_count")
-    if not isinstance(track_count, int) or isinstance(track_count, bool) or track_count < 1:
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_TRACKS_INVALID")
 
-    checks = receipt.get("checks")
-    if not isinstance(checks, dict):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CHECKS_INVALID")
-    observations = checks.get("observations")
-    if not isinstance(observations, dict) or set(observations) != set(REQUIRED_OBSERVATIONS):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
-    if any(observations[name] is not True for name in REQUIRED_OBSERVATIONS):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
-
-    diagnostics = checks.get("diagnostics")
-    if not isinstance(diagnostics, dict):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
-    capabilities = diagnostics.get("capabilities")
-    if not isinstance(capabilities, dict):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
     for name in _REQUIRED_CAPABILITIES:
         row = capabilities.get(name)
         if not isinstance(row, dict) or row.get("state") != "ready":
