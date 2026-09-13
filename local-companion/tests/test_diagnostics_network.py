@@ -6,10 +6,22 @@ from tda_companion.updates import UpdateManifest
 
 
 class _Response:
-    def __init__(self, status: int = 200, *, size: int | None = None, body: bytes = b"{}"):
+    def __init__(
+        self,
+        status: int = 200,
+        *,
+        size: int | None = None,
+        content_range: str | None = None,
+        body: bytes = b"",
+    ):
         self.status = status
-        self.headers = {} if size is None else {"Content-Length": str(size)}
+        self.headers = {}
+        if size is not None:
+            self.headers["Content-Length"] = str(size)
+        if content_range is not None:
+            self.headers["Content-Range"] = content_range
         self._body = body
+        self.read_calls = 0
 
     def __enter__(self):
         return self
@@ -18,6 +30,7 @@ class _Response:
         return False
 
     def read(self, _limit: int = -1):
+        self.read_calls += 1
         return self._body
 
 
@@ -45,22 +58,38 @@ def _manifest(size: int = 1234) -> UpdateManifest:
     )
 
 
-def test_asset_diagnostic_uses_head_and_validates_manifest_size():
+def test_asset_diagnostic_requests_only_first_byte_and_validates_total_size():
     manifest = _manifest()
-    client = _Client(_Response(status=200, size=manifest.size))
+    response = _Response(
+        status=206,
+        size=1,
+        content_range=f"bytes 0-0/{manifest.size}",
+    )
+    client = _Client(response)
 
     result = diagnostics._asset_check(client, manifest)
 
     assert result["status"] == "pass"
     request, timeout = client.requests[0]
-    assert request.get_method() == "HEAD"
+    assert request.get_method() == "GET"
     assert request.full_url == manifest.url
+    assert request.get_header("Range") == "bytes=0-0"
     assert timeout == 6.0
+    assert response.read_calls == 0
 
 
-def test_asset_diagnostic_rejects_size_mismatch():
+def test_asset_diagnostic_accepts_full_response_headers_without_reading_body():
+    manifest = _manifest()
+    response = _Response(status=200, size=manifest.size)
+    result = diagnostics._asset_check(_Client(response), manifest)
+    assert result["status"] == "pass"
+    assert response.read_calls == 0
+
+
+def test_asset_diagnostic_rejects_total_size_mismatch():
     manifest = _manifest(size=1234)
-    result = diagnostics._asset_check(_Client(_Response(status=200, size=999)), manifest)
+    response = _Response(status=206, size=1, content_range="bytes 0-0/999")
+    result = diagnostics._asset_check(_Client(response), manifest)
     assert result["status"] == "fail"
     assert result["detail"] == "ASSET_SIZE_MISMATCH"
 
