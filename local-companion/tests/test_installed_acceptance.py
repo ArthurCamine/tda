@@ -42,6 +42,7 @@ def test_receipt_is_written_atomically(tmp_path: Path):
         checks={"agent": {"pass": True, "state": "ready"}},
     )
     assert json.loads(destination.read_text(encoding="utf-8")) == value
+    assert value["schema"] == "tda_installed_acceptance_v2"
     assert value["pass"] is True
     assert value["contains_token"] is False
     assert value["contains_paths"] is False
@@ -58,6 +59,7 @@ def test_incomplete_observations_fail_before_artifact_or_diagnostics(tmp_path: P
         paths=SimpleNamespace(),
         port=8765,
         candidate_msi=tmp_path / "not-used.msi",
+        payload_manifest=tmp_path / "not-used.json",
         source_sha="0" * 40,
         craig_zip=tmp_path / "not-used.zip",
         observations=missing,
