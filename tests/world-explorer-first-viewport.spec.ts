@@ -1,4 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function waitForInitialFitView(page: Page) {
+	const viewport = page.locator(".react-flow__viewport");
+	await expect(viewport).toBeVisible();
+	await expect
+		.poll(async () => {
+			const style = (await viewport.getAttribute("style")) ?? "";
+			const normalized = style.replace(/\s+/gu, "");
+			return (
+				normalized.length > 0 &&
+				!normalized.includes("transform:translate(0px,0px)scale(1)")
+			);
+		})
+		.toBeTruthy();
+}
 
 test("World Explorer exposes the graph immediately while desktop chrome overlays a stable canvas", async ({
 	page,
@@ -11,6 +26,7 @@ test("World Explorer exposes the graph immediately while desktop chrome overlays
 	).toBeVisible();
 	const canvas = page.getByTestId("world-canvas");
 	await expect(canvas).toBeVisible();
+	await waitForInitialFitView(page);
 
 	const initialCanvas = await canvas.boundingBox();
 	expect(initialCanvas).not.toBeNull();
