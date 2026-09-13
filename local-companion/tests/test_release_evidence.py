@@ -49,6 +49,7 @@ def _receipt(manifest: dict[str, object]) -> dict[str, object]:
     return {
         "schema": "tda_installed_acceptance_v1",
         "pass": True,
+        "accepted_at": "2026-09-13T20:00:00+00:00",
         "stage": "completed",
         "version": VERSION,
         "contains_token": False,
@@ -60,13 +61,15 @@ def _receipt(manifest: dict[str, object]) -> dict[str, object]:
             "msi_sha256": msi["sha256"],
             "executable_sha256": "2" * 64,
             "maintenance_helper_sha256": "3" * 64,
-            "craig_zip_sha256": "4" * 64,
-            "craig_track_count": 4,
         },
         "checks": {
             "observations": {name: True for name in REQUIRED_OBSERVATIONS},
+            "craig_fixture": {
+                "track_count": 4,
+                "zip_sha256": "4" * 64,
+            },
             "diagnostics": {
-                "overall": "ready",
+                "overall": "degraded",
                 "capabilities": {
                     "core": {"state": "ready", "severity": "info"},
                     "network": {"state": "ready", "severity": "info"},
@@ -120,6 +123,31 @@ def test_acceptance_receipt_requires_operational_core_network_and_maintenance(tm
 
     with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_CAPABILITY_NOT_READY"):
         verify_acceptance_receipt(receipt, manifest)
+
+
+def test_acceptance_receipt_rejects_any_extra_top_level_or_nested_payload(tmp_path: Path):
+    manifest = _manifest(tmp_path)
+    receipt = _receipt(manifest)
+    receipt["extra"] = "must-not-be-carried-into-release-evidence"
+    with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_SCHEMA_INVALID"):
+        verify_acceptance_receipt(receipt, manifest)
+
+    receipt = _receipt(manifest)
+    receipt["checks"]["craig_fixture"]["speaker_names"] = ["private"]
+    with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_CRAIG_INVALID"):
+        verify_acceptance_receipt(receipt, manifest)
+
+
+def test_acceptance_receipt_uses_the_real_craig_fixture_shape(tmp_path: Path):
+    manifest = _manifest(tmp_path)
+    receipt = _receipt(manifest)
+
+    verify_acceptance_receipt(receipt, manifest)
+
+    assert receipt["checks"]["craig_fixture"] == {
+        "track_count": 4,
+        "zip_sha256": "4" * 64,
+    }
 
 
 def test_promotion_evidence_reuses_exact_candidate_bytes(tmp_path: Path):
