@@ -47,11 +47,18 @@ def test_all_capabilities_ready_is_global_pass():
     assert overall_status(capabilities) == "pass"
     rows = capability_rows(capabilities)
     assert [row["code"] for row in rows] == [
-        "capability.core",
-        "capability.network",
-        "capability.maintenance",
-        "capability.whisper",
-        "capability.qwen",
+        "Núcleo local",
+        "Rede e canal online",
+        "Atualização e manutenção",
+        "Transcrição Whisper",
+        "Transcrição Qwen",
+    ]
+    assert [row["capability_id"] for row in rows] == [
+        "core",
+        "network",
+        "maintenance",
+        "whisper",
+        "qwen",
     ]
 
 
@@ -61,6 +68,7 @@ def test_dns_failure_is_degraded_when_https_still_works():
     capabilities = _by_id(build_capabilities(checks))
     assert capabilities["network"]["status"] == "degraded"
     assert capabilities["network"]["degraded"] == ["network_dns"]
+    assert capabilities["network"]["message"] == "Disponível com limitação: DNS local"
     assert capabilities["core"]["status"] == "ready"
     assert capabilities["whisper"]["status"] == "ready"
     assert overall_status(list(capabilities.values())) == "warning"
@@ -71,6 +79,7 @@ def test_https_failure_marks_network_capability_unavailable():
     next(value for value in checks if value["code"] == "network_https")["status"] = "fail"
     capabilities = _by_id(build_capabilities(checks))
     assert capabilities["network"]["status"] == "blocked"
+    assert "HTTPS do TDA" in capabilities["network"]["message"]
     assert capabilities["core"]["status"] == "ready"
     assert capabilities["whisper"]["status"] == "ready"
     assert overall_status(list(capabilities.values())) == "warning"
@@ -82,6 +91,7 @@ def test_one_whisper_profile_keeps_capability_usable():
     capabilities = _by_id(build_capabilities(checks))
     assert capabilities["whisper"]["status"] == "degraded"
     assert capabilities["whisper"]["degraded"] == ["whisper_model_detailed"]
+    assert "modelo Whisper Detalhado" in capabilities["whisper"]["message"]
 
 
 def test_qwen_requires_runtime_aligner_and_one_complete_gated_profile():
@@ -91,6 +101,7 @@ def test_qwen_requires_runtime_aligner_and_one_complete_gated_profile():
     capabilities = _by_id(build_capabilities(checks))
     assert capabilities["qwen"]["status"] == "blocked"
     assert "qwen_gate_fast" in capabilities["qwen"]["blockers"]
+    assert "modelo Qwen Rápido" in capabilities["qwen"]["message"]
 
 
 def test_core_failure_is_global_failure_even_when_asr_is_ready():
