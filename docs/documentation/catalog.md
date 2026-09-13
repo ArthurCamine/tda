@@ -192,7 +192,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [R2 e mídia — runbook operacional](../operations/r2-media-runbook.md) | integrations/media + operations | vigente | 2026-09-12 |
 | [Runbook — release, deploy e rollback](../operations/release-runbook.md) | operations/release | vigente | 2026-09-08 |
 | [Checklist de segurança operacional](../operations/security-checklist.md) | security/operations | vigente | 2026-09-07 |
-| [Do ZIP à produção — páginas e mídia com fidelidade](../operations/zip-to-production.md) | frontend / integrations-media / operations | procedimento vigente; execução por entrega, sem importador genérico automático | 2026-09-12 |
+| [Do ZIP à produção — páginas e mídia com fidelidade](../operations/zip-to-production.md) | frontend / integrations/media / operations | procedimento vigente; execução por entrega, sem importador genérico automático | 2026-09-12 |
 
 ## docs/templates
 
