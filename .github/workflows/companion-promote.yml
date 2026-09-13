@@ -239,6 +239,7 @@ jobs:
           gh release edit "$RC_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --tag "$STABLE_TAG" \
+            --target "$SOURCE_SHA" \
             --title "TDA Companion v${VERSION}" \
             --notes-file stable-notes.md \
             --prerelease=false \
