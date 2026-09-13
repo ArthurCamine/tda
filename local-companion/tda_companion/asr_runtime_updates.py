@@ -132,7 +132,7 @@ def download_whisper_runtime(
     cache_root: Path,
     timeout: float = 300.0,
     *,
-    prefer_bits: bool = False,
+    prefer_bits: bool = True,
 ) -> Path:
     target_dir = cache_root.resolve() / "runtime" / "whisper" / manifest.version
     target_dir.mkdir(parents=True, exist_ok=True)
