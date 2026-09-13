@@ -101,8 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RC_TAG="${{ steps.candidate.outputs.rc_tag }}"
-          if gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "${{ steps.candidate.outputs.rc_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -140,6 +139,7 @@ jobs:
         shell: bash
         env:
           RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          EXPECTED_TREE: ${{ steps.source.outputs.tree_sha }}
         run: |
           set -euo pipefail
           gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > rc-release.json
@@ -154,29 +154,22 @@ jobs:
           rm -rf rc-check && mkdir rc-check
           gh release download "$RC_TAG" --repo "$GITHUB_REPOSITORY" --dir rc-check
           PYTHONPATH=local-companion python - <<'PY'
-          import hashlib, json, os
+          import json, os
           from pathlib import Path
           from tda_companion.release_evidence import verify_candidate_files, verify_candidate_manifest
-          manifest_path = Path('rc-check/TDACompanion-candidate.json')
-          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest = json.loads(Path('rc-check/TDACompanion-candidate.json').read_text(encoding='utf-8'))
           verify_candidate_manifest(manifest)
           verify_candidate_files(manifest, Path('rc-check'))
           if manifest['source_sha'] != os.environ['SOURCE_SHA']:
               raise SystemExit('RC_SOURCE_MISMATCH')
-          expected_tree = os.environ['EXPECTED_TREE']
-          if manifest['source_tree_sha'] != expected_tree:
+          if manifest['source_tree_sha'] != os.environ['EXPECTED_TREE']:
               raise SystemExit('RC_TREE_MISMATCH')
-          # Existing RC retries are valid only if all distributable bytes match
-          # the currently selected validated artifact.
           current = json.loads(Path('dist/TDACompanion-candidate.json').read_text(encoding='utf-8'))
           for key in ('msi', 'checksum', 'zip', 'payload_manifest'):
-              if manifest['assets'][key]['sha256'] != current['assets'][key]['sha256'] or manifest['assets'][key]['size'] != current['assets'][key]['size']:
+              a, b = manifest['assets'][key], current['assets'][key]
+              if a['sha256'] != b['sha256'] or a['size'] != b['size']:
                   raise SystemExit(f'RC_RETRY_BYTES_MISMATCH:{key}')
           PY
           git fetch --force origin "refs/tags/$RC_TAG:refs/tags/$RC_TAG"
           [[ "$(git rev-list -n 1 "$RC_TAG")" == "$SOURCE_SHA" ]] || { echo "::error::RC tag target mismatch"; exit 1; }
-          echo "RC_READY tag=$RC_TAG source=$SOURCE_SHA tree=${{ steps.source.outputs.tree_sha }} run=${{ steps.validated_run.outputs.run_id }}"
-        env:
-          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
-          EXPECTED_TREE: ${{ steps.source.outputs.tree_sha }}
-          SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          echo "RC_READY tag=$RC_TAG source=$SOURCE_SHA tree=$EXPECTED_TREE run=${{ steps.validated_run.outputs.run_id }}"
