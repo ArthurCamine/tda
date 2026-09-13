@@ -72,6 +72,7 @@ $maintenanceExe = Join-Path $maintenanceDist "TDACompanionMaintenance.exe"
 if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_NOT_CREATED" }
 Copy-Item $maintenanceExe (Join-Path $appRoot "TDACompanionMaintenance.exe")
 Copy-Item (Join-Path $PSScriptRoot "run-physical-acceptance.ps1") (Join-Path $appRoot "run-physical-acceptance.ps1")
+Copy-Item (Join-Path $PSScriptRoot "run-installed-acceptance.ps1") (Join-Path $appRoot "run-installed-acceptance.ps1")
 Copy-Item (Join-Path $PSScriptRoot "install-rc-runtimes.ps1") (Join-Path $appRoot "install-rc-runtimes.ps1")
 
 Copy-Item (Join-Path $PSScriptRoot "install-windows.ps1") (Join-Path $packageRoot "install.ps1")
@@ -109,6 +110,8 @@ Preparação de runtimes para teste RC sem publicar releases stable:
 O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashes/tamanhos internos do runtime antes da instalação. Somente Whisper 1.1.1 e Qwen 1.0.1 são aceitos neste RC. Python, CUDA Toolkit e PATH globais não são modificados.
 
 Depois, app\run-physical-acceptance.ps1 executa o gate físico local dos perfis ASR sem enviar áudio ao cloud. Os modelos pinados são materializados separadamente em Models na primeira execução. Por padrão o gate grava somente receipts sanitizados; transcrições exigem -WriteTranscripts explícito.
+
+Para o aceite da jornada Desktop instalada, use app\run-installed-acceptance.ps1 com o MSI candidato, o source SHA do candidato e um Craig ZIP real. O roteiro não executa ações destrutivas automaticamente: recovery do Agent, conflito da porta, X/tray e preservação da sessão Craig exigem observação física explícita antes de o próprio EXE instalado emitir o receipt sanitizado.
 
 O token, a fila e os dados locais não são removidos durante atualização do aplicativo.
 Este aplicativo NÃO usa, inicia, modifica ou depende do antigo DnDScribeCompanion.exe.
