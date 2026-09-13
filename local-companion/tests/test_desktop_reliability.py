@@ -11,6 +11,7 @@ import tda_companion.desktop_session_bridge as desktop_session_bridge
 from tda_companion.agent_connection import AgentConnectionError
 from tda_companion.desktop import DesktopBridge
 from tda_companion.desktop_session_bridge import SessionDesktopBridge
+from tda_companion.large_download import LargeDownloadError
 from tda_companion.network import NetworkError
 
 
@@ -243,6 +244,11 @@ def test_snapshot_exposes_only_sanitized_maintenance_fields(monkeypatch, tmp_pat
         ("HTTP_ERROR", "respondeu com erro"),
         ("MANIFEST_INVALID", "dados inválidos"),
         ("HASH_MISMATCH", "verificação de integridade"),
+        ("DOWNLOAD_CONTINUES_IN_BACKGROUND", "continua em segundo plano"),
+        ("BITS_TRANSFER_FAILED", "download em segundo plano do Windows"),
+        ("UPDATE_SIZE_MISMATCH", "tamanho publicado"),
+        ("QWEN_RUNTIME_PART_SIZE_EXCEEDED", "tamanho publicado"),
+        ("DOWNLOAD_OUTPUT_MISSING", "arquivo esperado"),
     ],
 )
 def test_network_failures_have_user_message_and_stable_code(tmp_path: Path, code: str, message: str):
@@ -251,6 +257,12 @@ def test_network_failures_have_user_message_and_stable_code(tmp_path: Path, code
     text = str(error)
     assert message in text
     assert text.endswith(f"[{code}]")
+
+
+def test_large_download_errors_share_the_installed_network_boundary():
+    error = LargeDownloadError("BITS_TRANSFER_FAILED")
+    assert isinstance(error, NetworkError)
+    assert error.code == "BITS_TRANSFER_FAILED"
 
 
 def test_update_check_translates_network_failure_at_installed_ui_boundary(monkeypatch, tmp_path: Path):
@@ -266,3 +278,22 @@ def test_update_check_translates_network_failure_at_installed_ui_boundary(monkey
 
     assert "resolver o endereço do TDA" in str(exc.value)
     assert "[DNS_FAILED]" in str(exc.value)
+
+
+def test_install_update_translates_background_download_state(monkeypatch, tmp_path: Path):
+    bridge = _bridge(tmp_path)
+    monkeypatch.setattr(
+        DesktopBridge,
+        "install_update",
+        lambda self: (_ for _ in ()).throw(
+            LargeDownloadError("DOWNLOAD_CONTINUES_IN_BACKGROUND")
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        bridge.install_update()
+
+    text = str(exc.value)
+    assert "continua em segundo plano" in text
+    assert "retomará o mesmo download" in text
+    assert text.endswith("[DOWNLOAD_CONTINUES_IN_BACKGROUND]")
