@@ -115,18 +115,34 @@ def summarize_diagnostics(value: dict[str, Any]) -> dict[str, object]:
     overall = str(value.get("overall") or "unknown")
     raw_capabilities = value.get("capabilities")
     capabilities: dict[str, dict[str, str]] = {}
+
+    rows: list[tuple[str, dict[str, Any]]] = []
     if isinstance(raw_capabilities, dict):
-        for name in ("core", "network", "maintenance", "whisper", "qwen"):
-            raw = raw_capabilities.get(name)
+        rows = [
+            (name, raw)
+            for name, raw in raw_capabilities.items()
+            if isinstance(name, str) and isinstance(raw, dict)
+        ]
+    elif isinstance(raw_capabilities, list):
+        for raw in raw_capabilities:
             if not isinstance(raw, dict):
                 continue
-            state = str(raw.get("state") or "blocked")
-            severity = str(raw.get("severity") or "blocker")
-            if state not in _ALLOWED_CAPABILITY_STATES:
-                state = "blocked"
-            if severity not in _ALLOWED_SEVERITIES:
-                severity = "blocker"
-            capabilities[name] = {"state": state, "severity": severity}
+            capability_id = raw.get("id")
+            if isinstance(capability_id, str):
+                rows.append((capability_id, raw))
+
+    for name, raw in rows:
+        if name not in {"core", "network", "maintenance", "whisper", "qwen"}:
+            continue
+        # Diagnostics use `status`; older receipt fixtures used `state`. Accept
+        # both, normalize to the receipt contract and fail closed on unknowns.
+        state = str(raw.get("state") or raw.get("status") or "blocked")
+        severity = str(raw.get("severity") or "blocker")
+        if state not in _ALLOWED_CAPABILITY_STATES:
+            state = "blocked"
+        if severity not in _ALLOWED_SEVERITIES:
+            severity = "blocker"
+        capabilities[name] = {"state": state, "severity": severity}
     return {"overall": overall, "capabilities": capabilities}
 
 
@@ -259,5 +275,5 @@ def finalize_installed_acceptance(
         stage="completed" if operational else "diagnostics",
         checks=checks,
         artifact=artifact,
-        error_code=None if operational else "ACCEPTANCE_CAPABILITY_NOT_READY",
+        error_code=None if operational else "ACCEPTANCE_REQUIRED_CAPABILITY_NOT_READY",
     )
