@@ -85,7 +85,7 @@ Essas decisões não se inferem umas das outras:
 - **vinculada**: pertence a campanha/universo confirmado;
 - **indexável**: pode entrar em mecanismos de busca.
 
-D, Seika e Yllith ficam, no estado atual, públicas por URL, não listadas, sem vínculo com a campanha principal e não indexáveis. `noindex` não é controle de acesso; quem souber a URL ainda pode abrir a página.
+D e Seika ficam, no estado atual, públicas por URL, não listadas, sem vínculo com a campanha principal e não indexáveis. Yllith permanece planejada: quando for publicada, seguirá o mesmo estado editorial de não listada, sem vínculo com a campanha principal e não indexável, salvo nova decisão explícita. `noindex` não é controle de acesso; quem souber a URL de uma lore publicada ainda pode abrir a página.
 
 ## Contrato de produção para standalone
 
