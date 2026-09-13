@@ -346,8 +346,11 @@ def download_verified_release_asset(
     if target.exists():
         target.unlink(missing_ok=True)
     if _valid_file(temporary, expected_size=expected_size, expected_sha256=expected_sha256):
-        os.replace(temporary, target)
-        return target
+        if not (prefer_bits and os.name == "nt"):
+            os.replace(temporary, target)
+            return target
+        # A complete-looking BITS destination may still belong to a Transferred
+        # job waiting for Complete-BitsTransfer. Reconnect before promoting it.
 
     used_bits = False
     if prefer_bits and os.name == "nt":
