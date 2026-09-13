@@ -145,7 +145,7 @@ def test_qwen_runtime_download_uses_verified_release_chain_and_assembles_parts(t
         return responses.pop(0)
 
     monkeypatch.setattr("tda_companion.qwen_runtime_updates.open_verified_release", verified)
-    target = download_qwen_runtime(manifest, tmp_path / "Cache")
+    target = download_qwen_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
 
     assert target.name == "TDAQwenRuntime-1.2.3-windows-x64.zip"
     assert target.read_bytes() == b"".join(payloads)
@@ -165,7 +165,7 @@ def test_qwen_runtime_download_rejects_bad_release_chain_and_cleans_partial(tmp_
     )
 
     with pytest.raises(RuntimeError, match="QWEN_RUNTIME_REDIRECT_REJECTED"):
-        download_qwen_runtime(manifest, tmp_path / "Cache")
+        download_qwen_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert not list((tmp_path / "Cache").rglob("*.partial"))
     assert not list((tmp_path / "Cache").rglob("*.part001"))
 
@@ -183,7 +183,7 @@ def test_qwen_runtime_reuses_only_verified_cached_parts(tmp_path: Path, monkeypa
         "tda_companion.qwen_runtime_updates.open_verified_release",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network should not run")),
     )
-    target = download_qwen_runtime(manifest, tmp_path / "Cache")
+    target = download_qwen_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert target.read_bytes() == payload
 
 
@@ -200,7 +200,7 @@ def test_qwen_runtime_replaces_tampered_cache_only_after_verified_download(tmp_p
         lambda *_args, **_kwargs: FakeResponse(payload),
     )
 
-    target = download_qwen_runtime(manifest, tmp_path / "Cache")
+    target = download_qwen_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert cached.read_bytes() == payload
     assert target.read_bytes() == payload
 
@@ -217,6 +217,6 @@ def test_qwen_runtime_bad_download_never_materializes_part(tmp_path: Path, monke
     )
 
     with pytest.raises(NetworkError, match="^HASH_MISMATCH$"):
-        download_qwen_runtime(manifest, tmp_path / "Cache")
+        download_qwen_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert not list((tmp_path / "Cache").rglob("*.part001"))
     assert not list((tmp_path / "Cache").rglob("*.partial"))
