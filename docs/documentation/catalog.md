@@ -24,7 +24,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0001 — TDA como identidade canônica; dnd-scribe como legado](../adr/0001-project-identity.md) | Não declarado | accepted | Não declarado |
 | [ADR-0002 — Reutilizar o Supabase existente como única base](../adr/0002-existing-supabase.md) | Não declarado | accepted | Não declarado |
 | [ADR-0003 — Processamento pesado local; produto cloud](../adr/0003-local-heavy-processing.md) | Não declarado | accepted | Não declarado |
-| [ADR-0004 — Registry única de entities para PC, NPC e mundo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
+| [ADR-0004 — Registry única de entities para PC, NPC e mundo narrativo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
 | [ADR-0005 — Canon exige fonte e revisão](../adr/0005-canon-review-gate.md) | Não declarado | accepted | Não declarado |
 | [ADR-0006 — React Flow como engine de visualização do World Explorer](../adr/0006-react-flow-world-explorer.md) | frontend / narrative-memory | aceito | Não declarado |
 | [ADR-0007 — Edit como workbench server-first orientado a capabilities](../adr/0007-edit-workbench.md) | Não declarado | Não declarado | Não declarado |
@@ -115,11 +115,12 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Edit Workbench — área administrativa do TDA](../features/edit-workbench.md) | Edit / produto + frontend | arquitetura aprovada; implementação incremental em andamento | 2026-09-07 |
 | [Feature — Perfis editoriais de entities](../features/entity-profiles.md) | narrative-memory / frontend | preparado; projection publicada pendente | 2026-09-08 |
 | [Feature — Timeline por entidade](../features/entity-timeline.md) | narrative-memory | preparado | 2026-09-06 |
-| [Lores independentes — publicação, liberdade visual e catálogo](../features/independent-lores.md) | narrative-memory / frontend / produto | arquitetura aprovada; decisão editorial, não comprovação de implementação | 2026-09-12 |
+| [Lores independentes — publicação, liberdade visual e catálogo](../features/independent-lores.md) | narrative-memory / frontend / produto | arquitetura aprovada; decisão editorial, não comprovação de implementação | 2026-09-13 |
 | [Feature/conceito — Intents / intenção](../features/intents.md) | não atribuído | **não definido / não encontrado como conceito canônico** | 2026-09-06 |
 | [Feature — Conhecimento e audiência](../features/knowledge-audience.md) | narrative-memory/security | em desenho | 2026-09-06 |
 | [Feature — Modo sessão ao vivo](../features/live-session.md) | sessions/live | histórico/planejado; fora das entregas imediatas | 2026-09-06 |
 | [Processamento local no Edit](../features/local-processing.md) | Processamento UI/adapters (Painelzinho); API/export local: Motorzinho; importação cloud: Carteiro | implementação candidata | 2026-09-13 |
+| [Arquitetura de entrega das lores](../features/lore-delivery-architecture.md) | narrative-memory / frontend / produto | decisão aprovada; implementação parcial | 2026-09-13 |
 | [Fidelidade dos pacotes de D e Seika](../features/lore-pack-fidelity.md) | lores e mídia | publicado e verificado em 2026-09-12 | 2026-09-12 |
 | [Feature — Mapas narrativos](../features/maps.md) | narrative-memory/maps | em desenho | 2026-09-06 |
 | [Feature — Músicas e performances](../features/music-performances.md) | narrative-memory/media | preparado/em desenho | 2026-09-06 |
@@ -177,6 +178,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-13 |
 | [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-10 |
 | [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
+| [TDA Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](../operations/companion-0.3.3-heavy-audit.md) | local-companion / processing / operations / security | auditoria concluída; 0.3.3 aposentada para certificação; remediação integrada na linha 0.3.4 | 2026-09-13 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |
 | [TDA Companion — Reliability R2 evidence](../operations/companion-reliability-r2-evidence.md) | Não declarado | Não declarado | Não declarado |
 | [TDA Companion — confiabilidade, manutenção e aceite real](../operations/companion-reliability.md) | local-companion / processing / operations | R1/R2 implementados; R3 C-12/C-13/C-14 implementados em candidato; stable bloqueada até aceite físico do artefato exato | 2026-09-13 |
@@ -200,4 +202,4 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 ## Cobertura
 
-124 páginas inventariadas, além deste catálogo gerado. 13 sem Owner e 22 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
+126 páginas inventariadas, além deste catálogo gerado. 13 sem Owner e 22 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
