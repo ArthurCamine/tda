@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 import ssl
 import urllib.error
@@ -10,6 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from .large_download import download_verified_release_asset, github_release_asset_url
 from .network import NetworkClient, NetworkError, classify_network_error
 from .qwen_runtime_bundle import (
     QwenRuntimeBundleManifest,
@@ -24,7 +23,6 @@ MANIFEST_URL = f"{PRODUCTION_ORIGIN}/api/downloads/companion/windows/qwen-runtim
 RUNTIME_ID = "qwen3-transformers"
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TAG = re.compile(r"^companion-qwen-runtime-v(\d+)\.(\d+)\.(\d+)$")
-_COPY_CHUNK = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -105,22 +103,7 @@ def _part_endpoint(part: QwenRuntimePart) -> str:
 
 
 def _release_asset_url(manifest: QwenRuntimeDownloadManifest, part: QwenRuntimePart) -> str:
-    return f"https://github.com/Faysk/tda/releases/download/{manifest.tag}/{part.name}"
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(_COPY_CHUNK), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _cached_part_valid(path: Path, part: QwenRuntimePart) -> bool:
-    try:
-        return path.is_file() and path.stat().st_size == part.size and _sha256_file(path) == part.sha256
-    except OSError:
-        return False
+    return github_release_asset_url(manifest.tag, part.name)
 
 
 def _download_part(
@@ -129,12 +112,8 @@ def _download_part(
     target: Path,
     *,
     timeout: float,
+    prefer_bits: bool,
 ) -> Path:
-    if _cached_part_valid(target, part):
-        return target
-    target.unlink(missing_ok=True)
-    temporary = target.with_name(target.name + ".partial")
-    temporary.unlink(missing_ok=True)
     request = urllib.request.Request(
         _part_endpoint(part),
         headers={
@@ -143,47 +122,41 @@ def _download_part(
             "User-Agent": "TDACompanion",
         },
     )
-    digest = hashlib.sha256()
-    total = 0
-    try:
+    expected_github = _release_asset_url(manifest, part)
+
+    def fallback_open():
         try:
-            response_context = open_verified_release(
+            return open_verified_release(
                 request,
-                expected_github_url=_release_asset_url(manifest, part),
+                expected_github_url=expected_github,
                 timeout=timeout,
             )
         except ReleaseRedirectError as exc:
             raise RuntimeError("QWEN_RUNTIME_REDIRECT_REJECTED") from exc
-        with response_context as response:
-            with temporary.open("xb") as handle:
-                while True:
-                    chunk = response.read(_COPY_CHUNK)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > part.size:
-                        raise RuntimeError("QWEN_RUNTIME_PART_SIZE_EXCEEDED")
-                    digest.update(chunk)
-                    handle.write(chunk)
-                handle.flush()
-                os.fsync(handle.fileno())
-        if total != part.size:
-            raise RuntimeError("QWEN_RUNTIME_PART_SIZE_MISMATCH")
-        if digest.hexdigest() != part.sha256:
-            raise NetworkError("HASH_MISMATCH")
-        os.replace(temporary, target)
-        return target
+
+    try:
+        return download_verified_release_asset(
+            target=target,
+            github_url=expected_github,
+            expected_size=part.size,
+            expected_sha256=part.sha256,
+            timeout=timeout,
+            fallback_open=fallback_open,
+            prefer_bits=prefer_bits,
+            size_exceeded_code="QWEN_RUNTIME_PART_SIZE_EXCEEDED",
+            size_mismatch_code="QWEN_RUNTIME_PART_SIZE_MISMATCH",
+        )
     except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError, ssl.SSLError) as exc:
         failure = classify_network_error(exc)
         raise NetworkError(failure.code, status=failure.status) from exc
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def download_qwen_runtime(
     manifest: QwenRuntimeDownloadManifest,
     cache_root: Path,
     timeout: float = 300.0,
+    *,
+    prefer_bits: bool = False,
 ) -> Path:
     root = cache_root.resolve() / "runtime" / "qwen" / manifest.version
     parts_root = root / "parts"
@@ -195,5 +168,6 @@ def download_qwen_runtime(
             part,
             parts_root / part.name,
             timeout=timeout,
+            prefer_bits=prefer_bits,
         )
     return assemble_qwen_runtime_bundle(manifest.bundle, parts_root, assembled_root)
