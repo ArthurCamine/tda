@@ -62,16 +62,16 @@ def test_all_capabilities_ready_is_global_pass():
     ]
 
 
-def test_dns_failure_is_degraded_when_https_still_works():
+def test_direct_dns_failure_does_not_degrade_working_proxy_path():
     checks = _healthy_checks()
     next(value for value in checks if value["code"] == "network_dns")["status"] = "fail"
     capabilities = _by_id(build_capabilities(checks))
-    assert capabilities["network"]["status"] == "degraded"
-    assert capabilities["network"]["degraded"] == ["network_dns"]
-    assert capabilities["network"]["message"] == "Disponível com limitação: DNS local"
+    assert capabilities["network"]["status"] == "ready"
+    assert capabilities["network"]["degraded"] == []
+    assert capabilities["network"]["message"] == "Pronto para uso"
     assert capabilities["core"]["status"] == "ready"
     assert capabilities["whisper"]["status"] == "ready"
-    assert overall_status(list(capabilities.values())) == "warning"
+    assert overall_status(list(capabilities.values())) == "pass"
 
 
 def test_https_failure_marks_network_capability_unavailable():
