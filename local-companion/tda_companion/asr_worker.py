@@ -161,9 +161,9 @@ def _run_craig(command: WorkerRunCommand, emitter: _Emitter, cancelled: threadin
                 raise QwenRuntimeError("QWEN_CPU_UNSUPPORTED")
             # Import lazily so the normal Companion/Whisper process never needs to
             # import Torch/Transformers. The isolated Qwen worker owns this stack.
-            from .asr_qwen import transcribe_craig_package_qwen
+            from .asr_qwen_strict import transcribe_craig_package_qwen_strict
 
-            document = transcribe_craig_package_qwen(
+            document = transcribe_craig_package_qwen_strict(
                 package,
                 package_root,
                 models_root,
