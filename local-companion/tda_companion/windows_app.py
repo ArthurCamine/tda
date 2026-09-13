@@ -182,6 +182,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rc-result-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-candidate-msi", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-source-sha", help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-craig-zip", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-result-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--acceptance-observation",
@@ -201,9 +202,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.installed_acceptance and (
         args.acceptance_candidate_msi is None
         or not args.acceptance_source_sha
+        or args.acceptance_craig_zip is None
         or args.acceptance_result_file is None
     ):
-        parser.error("ACCEPTANCE_CANDIDATE_SOURCE_AND_RESULT_REQUIRED")
+        parser.error("ACCEPTANCE_CANDIDATE_SOURCE_CRAIG_AND_RESULT_REQUIRED")
     origins = args.origin or [PRODUCTION_ORIGIN]
     try:
         args.origins = frozenset(validate_origin(origin) for origin in origins)
@@ -256,6 +258,7 @@ def _run_installed_acceptance(args: argparse.Namespace) -> int:
             port=args.port,
             candidate_msi=args.acceptance_candidate_msi,
             source_sha=args.acceptance_source_sha,
+            craig_zip=args.acceptance_craig_zip,
             observations=args.acceptance_observation or (),
             destination=destination,
         )
