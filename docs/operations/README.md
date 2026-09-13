@@ -128,6 +128,7 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 - [Ambientes e configuração](environments.md)
 - [Companion — confiabilidade, manutenção e aceite real](companion-reliability.md)
 - [Companion — evidência Reliability R2](companion-reliability-r2-evidence.md)
+- [Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](companion-0.3.3-heavy-audit.md)
 - [Companion — operação, instalação e rollback](local-companion.md)
 - [Release, deploy e rollback](release-runbook.md)
 - [Histórico de deployments](deployments.md)
