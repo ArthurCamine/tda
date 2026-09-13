@@ -129,7 +129,7 @@
 .root .filterChip:hover,
 .root .filterChip:focus-visible {
 	border: 0;
-	background: color-mix(in srgb, var(--ds-surface-hover) 76%, transparent);
+	background: color-mix(in srgb, var(--ds-canvas-subtle) 76%, transparent);
 	color: var(--ds-foreground);
 }
 
