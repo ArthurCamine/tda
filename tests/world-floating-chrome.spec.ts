@@ -1,4 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function closeWorkspaceOverlays(page: Page) {
+	const navigationClose = page.getByRole("button", { name: "Recolher navegação do mundo" });
+	if (await navigationClose.isVisible().catch(() => false)) await navigationClose.click();
+	const inspectorClose = page.getByRole("button", { name: "Recolher painel de detalhes" });
+	if (await inspectorClose.isVisible().catch(() => false)) await inspectorClose.click();
+}
 
 test("World floating chrome owns the canvas controls without changing their contracts", async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -28,6 +35,7 @@ test("World floating chrome owns the canvas controls without changing their cont
 	expect(paint.borderRadius).not.toBe("0px");
 	expect(paint.backdropFilter).not.toBe("none");
 
+	await closeWorkspaceOverlays(page);
 	await chrome.getByRole("button", { name: "Lista" }).click();
 	await expect(page.getByTestId("world-canvas")).toHaveCount(0);
 	await expect(page.getByRole("heading", { name: "Relações em lista" })).toBeVisible();
@@ -87,6 +95,7 @@ test("World floating chrome stays usable at the 320x800 minimum viewport", async
 		})),
 	).toEqual({ documentWidth: 320, viewportWidth: 320 });
 
+	await closeWorkspaceOverlays(page);
 	await chrome.getByRole("button", { name: "Lista" }).click();
 	await expect(page.getByRole("heading", { name: "Relações em lista" })).toBeVisible();
 	await chrome.getByRole("button", { name: "Canvas" }).click();

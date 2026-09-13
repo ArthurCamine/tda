@@ -14,6 +14,8 @@ export function worldEditFailureMessage(reason: string): string {
 			return "Há um campo inválido no rascunho. Corrija-o antes de publicar.";
 		case "duplicate":
 			return "Já existe um elemento, slug ou ligação incompatível com esta alteração. Ajuste o rascunho e tente novamente.";
+		case "media_pending":
+			return "A imagem ainda não pôde ser verificada para publicação. O rascunho e a sessão de edição foram preservados; tente publicar novamente.";
 		default:
 			return "Não foi possível confirmar a edição agora. Nenhuma alteração foi publicada.";
 	}

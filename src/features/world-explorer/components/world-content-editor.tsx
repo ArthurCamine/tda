@@ -14,6 +14,7 @@ import {
 	type WorldVisibility,
 } from "../model";
 import styles from "./world-content-editor.module.css";
+import { WorldEntityMediaEditor } from "./world-entity-media-editor";
 
 type EditorSection = "entity" | "relation" | "types";
 
@@ -383,6 +384,35 @@ function EntityEditor({
 					<h3>{entity.name}</h3>
 				</div>
 			</div>
+			<WorldEntityMediaEditor
+				entity={entity}
+				onChange={(assetId) =>
+					onChange(
+						updateNode(
+							draft,
+							entity.id,
+							assetId
+								? {
+									primaryMediaAssetId: assetId,
+									primaryMediaFocalPoint: entity.primaryMediaFocalPoint ?? { x: 0.5, y: 0.5 },
+								}
+								: {
+									primaryMediaAssetId: null,
+									primaryMediaFocalPoint: undefined,
+								},
+						),
+						assetId
+							? "Imagem atualizada no rascunho."
+							: "Imagem removida do rascunho.",
+					)
+				}
+				onFocalPointChange={(focalPoint) =>
+					onChange(
+						updateNode(draft, entity.id, { primaryMediaFocalPoint: focalPoint }),
+						"Enquadramento da imagem atualizado no rascunho.",
+					)
+				}
+			/>
 			<label>
 				Nome
 				<input

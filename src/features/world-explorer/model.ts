@@ -46,6 +46,11 @@ export type WorldPositionHint = Readonly<{
 	y: number;
 }>;
 
+export type WorldMediaFocalPoint = Readonly<{
+	x: number;
+	y: number;
+}>;
+
 /**
  * Audience-filtered presentation data for the campaign overview.
  *
@@ -84,6 +89,7 @@ export type WorldNodeDTO = {
 	label: string;
 	subtitle?: string;
 	imageUrl?: string;
+	imageFocalPoint?: WorldMediaFocalPoint;
 	status?: string;
 	visibility?: WorldVisibility;
 	summary?: string;
@@ -138,6 +144,9 @@ export type WorldGraphDraftNode = Readonly<{
 	visibility: WorldVisibility;
 	summary: string;
 	aliases: string[];
+	/** Stable media identity. Undefined means untouched; null means remove on publish. */
+	primaryMediaAssetId?: string | null;
+	primaryMediaFocalPoint?: WorldMediaFocalPoint;
 }>;
 
 export type WorldGraphDraftRelationType = Readonly<{

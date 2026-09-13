@@ -6,6 +6,7 @@ import {
 	WorldWorkspaceControlsContext,
 	type WorldWorkspaceControls,
 } from "./world-workspace-context";
+import { WorldEdgeTab } from "./world-edge-tab";
 import { WorldNavigation, WorldNavigationIntro } from "./world-navigation";
 import styles from "./world-workspace-shell.module.css";
 
@@ -59,23 +60,23 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 	);
 
 	useEffect(() => {
+		if (!navigationOpen) return;
 		const mobile = window.matchMedia("(max-width: 820px)");
-		if (!navigationOpen || !mobile.matches) return;
+		if (mobile.matches) {
+			window.requestAnimationFrame(() => navigationCloseRef.current?.focus());
+		}
 
-		window.requestAnimationFrame(() => navigationCloseRef.current?.focus());
-
-		const containNavigationFocus = (event: KeyboardEvent) => {
-			if (!mobile.matches) return;
-
+		const manageNavigationFocus = (event: KeyboardEvent) => {
+			const panel = navigationPanelRef.current;
 			if (event.key === "Escape") {
+				if (!mobile.matches && (!panel || !panel.contains(document.activeElement))) return;
 				event.preventDefault();
-				closeNavigation();
+				setNavigationOpen(false);
+				window.requestAnimationFrame(() => navigationToggleRef.current?.focus());
 				return;
 			}
 
-			if (event.key !== "Tab") return;
-			const panel = navigationPanelRef.current;
-			if (!panel) return;
+			if (!mobile.matches || event.key !== "Tab" || !panel) return;
 			const focusable = Array.from(
 				panel.querySelectorAll<HTMLElement>(MOBILE_NAVIGATION_FOCUSABLE),
 			).filter((element) => element.getAttribute("aria-hidden") !== "true");
@@ -93,9 +94,9 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 			}
 		};
 
-		document.addEventListener("keydown", containNavigationFocus);
-		return () => document.removeEventListener("keydown", containNavigationFocus);
-	}, [navigationOpen, closeNavigation]);
+		document.addEventListener("keydown", manageNavigationFocus);
+		return () => document.removeEventListener("keydown", manageNavigationFocus);
+	}, [navigationOpen]);
 
 	const navigationIsModal = navigationOpen && mobileNavigation;
 	const navigationContent = (
@@ -108,7 +109,7 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 						type="button"
 						className={styles.closeNavigation}
 						onClick={closeNavigation}
-						aria-label="Recolher navegação do mundo"
+						aria-label="Fechar navegação do mundo"
 					>
 						×
 					</button>
@@ -151,6 +152,7 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 						className={styles.navigationPanel}
 						aria-label="Navegação do mundo"
 						aria-hidden={!navigationOpen}
+						inert={!navigationOpen}
 						data-testid="world-workspace-navigation"
 					>
 						{navigationContent}
@@ -167,17 +169,26 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 				/>
 
 				{!authoringActive ? (
-					<button
-						type="button"
+					<WorldEdgeTab
+						edge="top"
+						expanded={siteHeaderOpen}
+						label={siteHeaderOpen ? "Ocultar menu principal" : "Mostrar menu principal"}
+						onToggle={() => setSiteHeaderOpen((value) => !value)}
+						icon={siteHeaderOpen ? "⌃" : "⌄"}
 						className={styles.topNavigationToggle}
-						onClick={() => setSiteHeaderOpen((value) => !value)}
-						aria-expanded={siteHeaderOpen}
-						aria-label={siteHeaderOpen ? "Ocultar menu principal" : "Mostrar menu principal"}
-						title={siteHeaderOpen ? "Ocultar menu principal" : "Mostrar menu principal"}
-					>
-						<span aria-hidden="true">{siteHeaderOpen ? "⌃" : "⌄"}</span>
-					</button>
+					/>
 				) : null}
+
+				<WorldEdgeTab
+					edge="left"
+					expanded={navigationOpen}
+					controls="world-workspace-navigation"
+					label={navigationOpen ? "Recolher navegação do mundo" : "Explorar universo"}
+					onToggle={() => setNavigationOpen((value) => !value)}
+					icon={navigationOpen ? "‹" : "›"}
+					className={styles.navigationToggle}
+					buttonRef={navigationToggleRef}
+				/>
 
 				<section
 					className={styles.stage}
@@ -185,20 +196,6 @@ export function WorldWorkspaceShell({ children }: { children: React.ReactNode })
 					aria-hidden={navigationIsModal ? "true" : "false"}
 					inert={navigationIsModal}
 				>
-					<button
-						ref={navigationToggleRef}
-						type="button"
-						className={styles.navigationToggle}
-						onClick={() => setNavigationOpen((value) => !value)}
-						aria-controls="world-workspace-navigation"
-						aria-expanded={navigationOpen}
-						aria-hidden={navigationOpen}
-						tabIndex={navigationOpen ? -1 : 0}
-						aria-label={navigationOpen ? "Recolher navegação do mundo" : "Explorar universo"}
-					>
-						<span aria-hidden="true">{navigationOpen ? "‹" : "☰"}</span>
-						<span>{navigationOpen ? "Recolher" : "Explorar universo"}</span>
-					</button>
 					{children}
 				</section>
 			</div>

@@ -1,4 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function closeWorkspaceOverlays(page: Page) {
+	const navigationClose = page.getByRole("button", { name: "Recolher navegação do mundo" });
+	if (await navigationClose.isVisible().catch(() => false)) await navigationClose.click();
+	const inspectorClose = page.getByRole("button", { name: "Recolher painel de detalhes" });
+	if (await inspectorClose.isVisible().catch(() => false)) await inspectorClose.click();
+}
 
 test("World Explorer opens as a multi-hub overview and keeps selection separate from focus", async ({ page }) => {
 	await page.goto("/mundo");
@@ -109,6 +116,7 @@ test("World Explorer exposes honest SSR metadata through the central public cont
 
 test("World Explorer can switch to the textual view and filter relations with the DS select", async ({ page }) => {
 	await page.goto("/mundo");
+	await closeWorkspaceOverlays(page);
 	await page.getByRole("button", { name: "Lista" }).click();
 	const relations = page.locator('section[aria-labelledby="world-relations-title"]');
 	await expect(relations.getByRole("heading", { name: "Relações em lista" })).toBeVisible();
@@ -142,6 +150,7 @@ test("World Explorer explains an empty search and recovers when the query is cle
 
 test("World Explorer relation select follows the real theme toggle and never falls back to native chrome", async ({ page }) => {
 	await page.goto("/mundo");
+	await closeWorkspaceOverlays(page);
 	const relationTrigger = page.getByRole("button", { name: "Filtrar por relação" });
 	const listbox = page.getByRole("listbox", { name: "Filtrar por relação" });
 

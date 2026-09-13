@@ -33,6 +33,7 @@ jobs:
         env:
           TDA_SYNTHETIC_POSTGRES: "1"
       - run: python tools/world-layout-db.py
+      - run: python tools/world-entity-media-db.py
 
   validate:
     runs-on: ubuntu-latest

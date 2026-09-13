@@ -2,10 +2,10 @@
 
 > Status: implementação candidata
 > Owner: Processamento UI/adapters (Painelzinho); API/export local: Motorzinho; importação cloud: Carteiro
-> Última revisão: 2026-09-11
+> Última revisão: 2026-09-13
 > Fonte de verdade: `src/features/edit/processing`, `src/app/edit/processamento`, `local-companion/tda_companion` e testes associados
 
-`/edit/processamento` é a superfície operacional para conexão com o TDA Companion, fila local, telemetria e eventos. O processamento pesado e os áudios permanecem no computador do usuário; o site cloud não depende do PC estar ligado para continuar disponível.
+`/edit/processamento` é a superfície operacional para conexão com o TDA Companion, ingest local de sessões Craig, fila local, telemetria e eventos. O processamento pesado e os áudios permanecem no computador do usuário; o site cloud não depende do PC estar ligado para continuar disponível.
 
 ## Estado atual
 
@@ -16,11 +16,17 @@ O recorte atual entrega:
 - fila local persistida;
 - eventos estruturados para log;
 - telemetria best-effort de CPU, RAM, GPU e VRAM;
-- novo aplicativo Windows `TDACompanion.exe`;
+- aplicativo Windows `TDACompanion.exe`;
 - instalador `TDACompanion-x64.msi` por usuário;
-- link estável no próprio Processamento para baixar a release mais recente do Companion.
+- link estável no próprio Processamento para baixar a release mais recente do Companion;
+- ingest seguro de ZIP Craig pelo loopback local, com staging content-addressed e metadados sanitizados;
+- submissão real de `transcription.craig` ao pipeline canônico do Companion;
+- fluxo Desktop equivalente, com picker nativo, participantes, perfis de qualidade e acompanhamento do job;
+- perfis atuais `qwen-quality`, `qwen-fast`, `whisper-detailed` e `whisper-turbo`, derivados das capabilities anunciadas pelo Agent.
 
-Ainda **não é ASR real ponta a ponta**. O job HTTP executável continua sendo `synthetic.fixture`; o transcriber preservado será conectado ao supervisor em etapa própria. Sincronização/publicação cloud também permanece não configurada.
+O processamento Craig já é ASR real ponta a ponta no Web e no Desktop. `synthetic.fixture` continua existindo somente como ensaio sintético quando anunciado. Sincronização/publicação cloud permanece não configurada, e conclusão local não implica importação, revisão, canon ou publicação.
+
+O candidato 0.3.2 usa Whisper runtime 1.1.1 e Qwen runtime 1.0.1. O gate físico Qwen continua obrigatório por perfil antes de declarar aprovação física do candidato.
 
 ## Download e instalação
 
@@ -44,23 +50,39 @@ A tela segue a regra de que uma superfície operacional deve mostrar primeiro o 
 
 1. computador local e estado da conexão;
 2. CPU/RAM/GPU/VRAM quando conectadas;
-3. resumo da fila;
-4. trabalho em execução e progresso real;
-5. próximos trabalhos e finalizados;
-6. detalhes e log do trabalho observado;
-7. estado de sincronização.
+3. sessão Craig selecionada e perfil de processamento;
+4. resumo da fila;
+5. trabalho em execução e progresso real;
+6. próximos trabalhos e finalizados;
+7. detalhes e log do trabalho observado;
+8. estado de sincronização.
 
 O título é compacto. A navegação própria do Edit é restrita a destinos de trabalho; o logo TDA é a saída intencional para a superfície pública.
 
 O estado desconectado não deve inventar dados. Métricas desconhecidas usam `—`/estado vazio e o pareamento fica disponível. Quando conectado, o campo de pareamento deixa de dominar a tela e a faixa do computador passa a mostrar dados operacionais.
 
+## Ingest Craig e perfis
+
+A superfície Web envia o ZIP Craig somente para o Agent em loopback. O Companion cria um snapshot local, calcula identidade por conteúdo e reutiliza staging existente quando seguro. O frontend recebe apenas metadados necessários ao trabalho; caminho absoluto do disco não deve ser exposto ao JavaScript.
+
+O Desktop usa o mesmo pipeline canônico: escolhe o ZIP por picker nativo, mostra participantes/faixas e submete `transcription.craig`. Não existe um transcriber legado paralelo.
+
+Os perfis executáveis vêm de `capabilities`. No candidato atual:
+
+- `qwen-quality` — melhor precisão e opção recomendada;
+- `qwen-fast` — Qwen priorizando velocidade;
+- `whisper-detailed` — Whisper com maior qualidade;
+- `whisper-turbo` — Whisper priorizando velocidade.
+
+Qwen prepara runtime/modelos e executa o gate necessário antes do job. Para aceitação física, uma faixa Craig suficientemente longa pode gerar uma janela temporária de 180 s escolhida por energia; essa amostra é local e removida após o gate. O receipt do gate não deve carregar transcript integral.
+
 ## Progresso e dados editoriais
 
-A UI usa somente progresso que o companion realmente reporta. `completed/total/unit` pode ser convertido em porcentagem quando esses valores existem; ausência de medida não vira estimativa.
+A UI usa somente progresso que o Companion realmente reporta. `completed/total/unit` pode ser convertido em porcentagem quando esses valores existem; ausência de medida não vira estimativa.
 
-Antes da transcrição real chegar a 100%, a tela não inventa título, resumo, thumbnail ou classificação. Dados como duração, quantidade de arquivos, participantes, data e contagem de palavras entram quando a fonte real os fornecer.
+A tela não inventa título, resumo, thumbnail ou classificação. Dados como duração, quantidade de arquivos, participantes, data e contagem de palavras entram somente quando a fonte real os fornecer.
 
-Quando o ASR for conectado, o transcriber preservado já consegue fornecer contexto por track, incluindo `track`, `total_tracks`, `speaker` e `percent`. O engine atual processa tracks sequencialmente, então a interface não deve mostrar quatro arquivos avançando em paralelo quando isso não estiver acontecendo.
+O pipeline real pode fornecer contexto por track, incluindo `track`, `total_tracks`, `speaker` e `percent`. A interface deve refletir o paralelismo realmente executado pelo engine e não simular múltiplas faixas avançando ao mesmo tempo quando isso não estiver acontecendo.
 
 ## Eventos e zueira
 
@@ -88,6 +110,8 @@ O painel começa desconectado e não sonda portas automaticamente. Após ação 
 O token fica somente na memória da aba. Não há cookie, storage, query string, log ou envio cloud. Requests mantêm CORS, `credentials: omit`, `redirect: error`, `cache: no-store`, `referrerPolicy: no-referrer` e limites de payload/resposta.
 
 O companion escuta somente loopback, exige Host correto, restringe Origin e não descobre outros PCs.
+
+Áudio Craig e artefatos de preparação permanecem locais. O resultado Web não transporta transcript integral para o frontend/cloud como efeito colateral do processamento.
 
 ## Fila e ações
 
@@ -120,6 +144,7 @@ Gates do Companion:
 - smoke do executável empacotado;
 - instalação real do MSI no runner Windows;
 - inicialização + health do app instalado;
-- desinstalação real do MSI.
+- desinstalação real do MSI;
+- gates dos artifacts Whisper/Qwen e dependency freshness no SHA candidato.
 
-Esses testes não medem qualidade ASR, throughput do Whisper, diarização ou compatibilidade CUDA/modelo em uma GPU física.
+Esses testes automatizados não substituem o gate de qualidade/desempenho em GPU física. A aprovação física final dos perfis que a exigem deve registrar runtime/model revision, GPU/VRAM observada, elapsed/RTF e avaliação qualitativa adequada ao perfil.

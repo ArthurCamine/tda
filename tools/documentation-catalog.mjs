@@ -36,10 +36,29 @@ for (const dir of [...new Set(files.map((file) => path.posix.dirname(file)))]) {
 	result += "\n";
 }
 result += `## Cobertura\n\n${files.length} páginas inventariadas, além deste catálogo gerado. ${missingOwner} sem Owner e ${missingReview} sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.\n`;
-if (process.argv.includes("--write")) fs.writeFileSync(output, result);
-else if (
-	!fs.existsSync(output) ||
-	fs.readFileSync(output, "utf8").replaceAll("\r\n", "\n") !== result
-)
-	throw new Error("Documentation catalog stale: run pnpm docs:generate");
+if (process.argv.includes("--write")) {
+	fs.writeFileSync(output, result);
+} else {
+	const current = fs.existsSync(output)
+		? fs.readFileSync(output, "utf8").replaceAll("\r\n", "\n")
+		: "";
+	if (current !== result) {
+		const currentLines = current.split("\n");
+		const expectedLines = result.split("\n");
+		const maxLines = Math.max(currentLines.length, expectedLines.length);
+		let firstDifference = 0;
+		while (
+			firstDifference < maxLines &&
+			currentLines[firstDifference] === expectedLines[firstDifference]
+		) {
+			firstDifference++;
+		}
+		console.error(
+			`Documentation catalog first mismatch at line ${firstDifference + 1}:\n` +
+				`actual:   ${JSON.stringify(currentLines[firstDifference] ?? "<EOF>")}\n` +
+				`expected: ${JSON.stringify(expectedLines[firstDifference] ?? "<EOF>")}`,
+		);
+		throw new Error("Documentation catalog stale: run pnpm docs:generate");
+	}
+}
 console.log(`DOC_CATALOG_OK documents=${files.length}`);

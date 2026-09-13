@@ -8,6 +8,11 @@ test("World canvas uses map-style pan and zoom without scrolling the document", 
 	await page.setViewportSize({ width: 1366, height: 768 });
 	await page.goto("/mundo");
 
+	// Side surfaces are overlays by design. Close them before exercising the
+	// spatial surface so the pointer lands on React Flow rather than drawer UI.
+	await page.getByRole("button", { name: "Recolher navegação do mundo" }).click();
+	await page.getByRole("button", { name: "Recolher painel de detalhes" }).click();
+
 	const canvas = page.getByTestId("world-canvas");
 	const viewport = page.locator(".react-flow__viewport");
 	await expect(canvas).toBeVisible();
@@ -21,16 +26,16 @@ test("World canvas uses map-style pan and zoom without scrolling the document", 
 	const initialTransform = await transform();
 
 	await page.mouse.move(
-		canvasBox.x + canvasBox.width * 0.78,
-		canvasBox.y + canvasBox.height * 0.18,
+		canvasBox.x + canvasBox.width * 0.5,
+		canvasBox.y + canvasBox.height * 0.5,
 	);
 	await page.mouse.wheel(0, -420);
 
 	await expect.poll(transform).not.toBe(initialTransform);
 	const zoomedTransform = await transform();
 
-	// Top-left is deliberately away from the seeded constellation and from the
-	// bottom-corner React Flow controls. Dragging empty space must pan the world.
+	// Top-left stays away from the seeded constellation and the bottom-corner
+	// React Flow controls. Dragging empty space must pan the world.
 	const startX = canvasBox.x + 36;
 	const startY = canvasBox.y + 36;
 	await page.mouse.move(startX, startY);

@@ -190,15 +190,31 @@
 	background: color-mix(in srgb, var(--ds-accent-muted) 58%, var(--ds-surface-hover));
 }
 
-.resultIcon {
+.resultIcon,
+.entityPortrait {
 	display: grid;
 	place-items: center;
 	width: 32px;
 	height: 32px;
 	border: 1px solid var(--ds-control-border);
-	border-radius: 10px;
 	background: var(--ds-surface);
 	color: var(--ds-accent-strong);
+}
+
+.resultIcon {
+	border-radius: 10px;
+}
+
+.entityPortrait {
+	position: relative;
+	overflow: hidden;
+	border-radius: 50%;
+	font: 760 0.62rem/1 var(--ds-font-ui);
+	letter-spacing: -0.02em;
+}
+
+.entityPortraitImage {
+	object-fit: cover;
 }
 
 .resultCopy {

@@ -80,8 +80,8 @@ export function WorldFloatingChrome({
 }: WorldFloatingChromeProps) {
 	return (
 		<div className={chrome.root} data-testid="world-floating-chrome">
-			<div className={`${styles.toolbar} ${chrome.primary}`}>
-				<label className={`${styles.searchField} ${chrome.searchSurface}`}>
+			<div className={`${styles.toolbar} ${chrome.primary}`} data-world-chrome-primary>
+				<label className={`${styles.searchField} ${chrome.searchSurface}`} data-world-search>
 					<span className={styles.srOnly}>Buscar no mundo</span>
 					<span className={chrome.searchGlyph} aria-hidden="true">
 						⌕
@@ -95,7 +95,7 @@ export function WorldFloatingChrome({
 					/>
 				</label>
 
-				<div className={`${styles.relationSelect} ${chrome.relationSurface}`}>
+				<div className={`${styles.relationSelect} ${chrome.relationSurface}`} data-world-relation-filter>
 					<span>Relação</span>
 					<Select
 						value={relationFilter}
@@ -110,6 +110,7 @@ export function WorldFloatingChrome({
 					className={`${styles.resetButton} ${chrome.resetSurface}`}
 					type="button"
 					data-testid="world-layout-reset"
+					data-world-layout-action
 					aria-label={resetLabel}
 					title={resetLabel}
 					disabled={resetDisabled}
@@ -118,7 +119,7 @@ export function WorldFloatingChrome({
 					{resetLabel}
 				</button>
 
-				<fieldset className={`${styles.viewToggle} ${chrome.viewSurface}`}>
+				<fieldset className={`${styles.viewToggle} ${chrome.viewSurface}`} data-world-view-toggle>
 					<legend className={styles.srOnly}>Modo de visualização</legend>
 					<button
 						type="button"
@@ -147,7 +148,7 @@ export function WorldFloatingChrome({
 				</fieldset>
 			</div>
 
-			<div className={chrome.secondary}>
+			<div className={chrome.secondary} data-world-filter-overlay>
 				<fieldset className={`${styles.filters} ${chrome.filterRail}`} aria-label="Filtrar o grafo">
 					{FILTER_OPTIONS.map((option) => (
 						<button

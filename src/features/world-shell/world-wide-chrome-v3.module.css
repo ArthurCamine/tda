@@ -1,0 +1,134 @@
+@media (min-width: 1920px) {
+	:global([data-world-workspace-root] [data-world-authoring-active] section[aria-labelledby="world-explorer-title"]) {
+		position: relative;
+		display: grid;
+		grid-template-columns: minmax(360px, 1fr) auto minmax(210px, 270px) auto auto;
+		grid-template-rows: auto minmax(0, 1fr);
+		align-items: center;
+		column-gap: 8px;
+		row-gap: 8px;
+	}
+
+	:global([data-world-authoring-active="false"] section[aria-labelledby="world-explorer-title"] > header) {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-testid="world-conductor"]) {
+		position: relative;
+		z-index: 16;
+		grid-column: 2;
+		grid-row: 1;
+		min-width: 0;
+		margin: 0;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-conductor-surface]) {
+		min-height: 44px;
+		padding: 4px 5px 4px 9px;
+		gap: 8px;
+		border-radius: var(--ds-radius-md);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-conductor-status] small) {
+		display: none;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active="true"] [data-world-conductor-status] > span:nth-child(2)) {
+		display: none;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-conductor-notice]) {
+		position: absolute;
+		top: calc(100% + 10px);
+		right: 0;
+		z-index: 24;
+		width: min(440px, 46vw);
+		margin: 0;
+		box-shadow: 0 12px 34px color-mix(in srgb, var(--ds-canvas) 46%, transparent);
+		backdrop-filter: blur(16px) saturate(108%);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] div:has(> [data-testid="world-floating-chrome"])),
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-testid="world-floating-chrome"]),
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-chrome-primary]) {
+		display: contents;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-search]) {
+		grid-column: 1;
+		grid-row: 1;
+		min-width: 0;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-relation-filter]) {
+		grid-column: 3;
+		grid-row: 1;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-layout-action]) {
+		grid-column: 4;
+		grid-row: 1;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-view-toggle]) {
+		grid-column: 5;
+		grid-row: 1;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-filter-overlay]) {
+		position: absolute;
+		top: 58px;
+		right: 4px;
+		left: 4px;
+		z-index: 18;
+		min-height: 38px;
+		padding-inline: 4px;
+		pointer-events: none;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-world-filter-overlay] fieldset) {
+		pointer-events: auto;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] fieldset[aria-label="Filtrar o grafo"]) {
+		width: max-content;
+		max-width: min(72vw, 980px);
+		padding: 4px;
+		border: 1px solid color-mix(in srgb, var(--ds-control-border) 62%, transparent);
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--ds-surface-elevated) 48%, transparent);
+		box-shadow: 0 10px 28px color-mix(in srgb, var(--ds-canvas) 26%, transparent);
+		backdrop-filter: blur(12px) saturate(106%);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] fieldset[aria-label="Filtrar o grafo"] button) {
+		background: color-mix(in srgb, var(--ds-surface-elevated) 58%, transparent);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] fieldset[aria-label="Filtrar o grafo"] button[aria-pressed="true"]) {
+		border-color: color-mix(in srgb, var(--ds-accent) 88%, var(--ds-control-border));
+		background: color-mix(in srgb, var(--ds-accent-muted) 78%, var(--ds-surface-elevated));
+		color: var(--ds-foreground);
+		box-shadow:
+			inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 16%, transparent),
+			0 8px 22px color-mix(in srgb, var(--ds-accent) 12%, transparent);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active] [data-testid="world-canvas"]) {
+		grid-column: 1 / -1;
+		grid-row: 2;
+		width: 100%;
+		height: auto;
+		min-height: 0;
+		align-self: stretch;
+	}
+}

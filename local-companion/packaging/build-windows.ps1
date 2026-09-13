@@ -106,7 +106,7 @@ Preparação de runtimes para teste RC sem publicar releases stable:
   -QwenArtifact "C:\artifacts\TDAQwenRuntimeBundle-windows-x64.zip" `
   -QwenArtifactSha256 "<sha256-do-artifact-qwen>"
 
-O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashes/tamanhos internos do runtime antes da instalação. Somente Whisper 1.1.0 e Qwen 1.0.0 são aceitos neste RC. Python, CUDA Toolkit e PATH globais não são modificados.
+O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashes/tamanhos internos do runtime antes da instalação. Somente Whisper 1.1.1 e Qwen 1.0.1 são aceitos neste RC. Python, CUDA Toolkit e PATH globais não são modificados.
 
 Depois, app\run-physical-acceptance.ps1 executa o gate físico local dos perfis ASR sem enviar áudio ao cloud. Os modelos pinados são materializados separadamente em Models na primeira execução. Por padrão o gate grava somente receipts sanitizados; transcrições exigem -WriteTranscripts explícito.
 

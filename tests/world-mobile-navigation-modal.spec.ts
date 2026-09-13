@@ -12,11 +12,12 @@ test("mobile navigation is modal, touch-safe and restores focus when closed by i
 	await trigger.click();
 
 	const navigation = page.getByRole("dialog", { name: "Navegação do mundo" });
-	const close = page.getByRole("button", { name: "Recolher navegação do mundo" });
+	const close = page.getByRole("button", { name: "Fechar navegação do mundo" });
 	await expect(navigation).toBeVisible();
 	await expect(navigation).toHaveAttribute("aria-modal", "true");
 	await expect(stage).toHaveAttribute("aria-hidden", "true");
 	await expect(stage).toHaveAttribute("inert", "");
+	await expect(close).toBeFocused();
 
 	const closeBox = await close.boundingBox();
 	expect(closeBox).not.toBeNull();
@@ -43,7 +44,7 @@ test("mobile focus containment releases when viewport crosses to desktop", async
 
 	const navigation = page.getByTestId("world-workspace-navigation");
 	await expect(page.getByRole("dialog", { name: "Navegação do mundo" })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Recolher navegação do mundo" })).toBeFocused();
+	await expect(page.getByRole("button", { name: "Fechar navegação do mundo" })).toBeFocused();
 
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await expect(navigation).not.toHaveAttribute("role", "dialog");

@@ -9,6 +9,10 @@ import {
 	buildWorldInspectorContext,
 	type WorldInspectorConnection,
 } from "../world-inspector-context";
+import {
+	worldEntityMediaObjectPosition,
+	worldEntityMediaShouldBypassImageOptimization,
+} from "../world-entity-media";
 import styles from "./world-explorer.module.css";
 import inspectorStyles from "./world-inspector.module.css";
 
@@ -94,6 +98,8 @@ export function WorldInspectorContent({
 							alt=""
 							fill
 							sizes="520px"
+							unoptimized={worldEntityMediaShouldBypassImageOptimization(selected.imageUrl)}
+							style={{ objectPosition: worldEntityMediaObjectPosition(selected.imageFocalPoint) }}
 						/>
 					) : (
 						<span className={inspectorStyles.identityInitial}>

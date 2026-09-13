@@ -19,6 +19,10 @@ import {
 	WORLD_AUTHORING_OPEN_INSPECTOR_EVENT,
 	type WorldAuthoringConnectFromNodeDetail,
 } from "../world-authoring-events";
+import {
+	worldEntityMediaObjectPosition,
+	worldEntityMediaShouldBypassImageOptimization,
+} from "../world-entity-media";
 import authoringStyles from "./entity-node-authoring.module.css";
 import nodeStyles from "./entity-node-v2.module.css";
 
@@ -199,6 +203,8 @@ function WorldEntityNodeComponent({ data, selected }: NodeProps<WorldFlowNode>) 
 						alt=""
 						fill
 						sizes={isHero ? "116px" : "90px"}
+						unoptimized={worldEntityMediaShouldBypassImageOptimization(item.imageUrl)}
+						style={{ objectPosition: worldEntityMediaObjectPosition(item.imageFocalPoint) }}
 					/>
 				) : (
 					<span className={nodeStyles.nodeInitials}>{initials(item.label)}</span>

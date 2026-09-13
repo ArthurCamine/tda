@@ -142,8 +142,11 @@ export function WorldConductorBar({
 			data-world-conductor-state={context.editState}
 			aria-label="Condução do Mundo"
 		>
-			<div className={`${styles.surface} ${active ? styles.surfaceActive : ""}`}>
-				<div className={styles.status}>
+			<div
+				className={`${styles.surface} ${active ? styles.surfaceActive : ""}`}
+				data-world-conductor-surface
+			>
+				<div className={styles.status} data-world-conductor-status>
 					<span className={styles.statusDot} aria-hidden="true" />
 					<span className={styles.statusCopy}>
 						<strong>{status.title}</strong>
@@ -156,7 +159,7 @@ export function WorldConductorBar({
 					) : null}
 				</div>
 
-				<div className={styles.actions}>
+				<div className={styles.actions} data-world-conductor-actions>
 					{context.editState === "view" || context.editState === "acquiring" ? (
 						<button
 							type="button"
@@ -226,12 +229,12 @@ export function WorldConductorBar({
 			</div>
 
 			{busyNotice ? (
-				<p className={styles.notice} role="status">
+				<p className={styles.notice} role="status" data-world-conductor-notice>
 					{busyNotice}
 				</p>
 			) : null}
 			{feedback && !active ? (
-				<p className={styles.feedback} role="status" aria-live="polite">
+				<p className={styles.feedback} role="status" aria-live="polite" data-world-conductor-notice>
 					<span aria-hidden="true">{active ? "●" : "·"}</span>
 					{feedback}
 				</p>

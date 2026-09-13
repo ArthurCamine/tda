@@ -557,3 +557,50 @@ Rollback lógico:
 
 - antes de existir consumidor dependente do alias, uma migration corretiva pode remover apenas o valor `Screaky` do array dessa entity;
 - não renomear `name`/slug nem apagar a entity para simular rollback.
+
+## Candidato de mídia de entidades do World Explorer
+
+### `20260912214500_world_entity_media_foundation_v2`
+
+**Estado:** SQL candidato versionado em `supabase/candidates/`; **não aplicado no Supabase canônico** e sem autorização de aplicação remota.
+
+Objetivo:
+
+- criar identidade first-class de mídia sem armazenar URL arbitrária em `entities`;
+- manter bytes em Cloudflare R2 e identidade/metadados/verificação em PostgreSQL;
+- introduzir `media_assets` e `entity_media_bindings`, com `portrait` como primeiro role;
+- persistir focal point normalizado junto ao binding;
+- usar object keys imutáveis por campaign/entity/hash em vez de tratar URL de entrega como identidade;
+- compor a publicação de graph/layout e bindings de mídia no mesmo boundary transacional do banco.
+
+Segurança e autorização candidatas:
+
+- RLS habilitado em `media_assets` e `entity_media_bindings`, sem policy de browser;
+- `anon`/`authenticated` não recebem grants diretos; `service_role` recebe somente o conjunto necessário;
+- o wrapper `publish_world_edit_state_with_media_atomic(...)` permanece `SECURITY INVOKER`, revalida identidade, `campaign.content.edit`, scope e a lease exclusiva vigente;
+- media intent é validada contra o `draft_graph` bloqueado pela mesma lease, inclusive a visibility que será publicada;
+- entity que sai do draft como `public_web` só pode receber asset já `verified_public`, com read-back e delivery público verificados;
+- campaign/entity/object key/sha/MIME precisam corresponder antes do binding;
+- o wrapper chama `publish_world_edit_state_atomic(...)` dentro da mesma transação e só aplica `entity_media_bindings` após sucesso factual/layout; erro SQL posterior reverte o conjunto inteiro.
+
+Compatibilidade e lifecycle:
+
+- `TDA_WORLD_ENTITY_MEDIA_ENABLED` permanece desligado por padrão enquanto o schema candidato não existe;
+- upload para `tda-media-preview`/`tda-media-private` não equivale a publicação;
+- promoção pública externa ao banco deve terminar e ser verificada antes de consumir a lease de publicação; falha de promoção preserva draft/lease para retry;
+- URLs públicas são projeções derivadas de asset verificado, não dados canônicos persistidos no draft;
+- a arquitetura de upload direto por presigned PUT continua como próximo recorte; o boundary de finalização/read-back já é desenhado para revalidar os bytes no servidor.
+
+Validação antes de qualquer promoção:
+
+- o candidato deve permanecer fora de `supabase/migrations` até revisão explícita contra o schema vigente;
+- CI deve manter migration safety, documentação de governança e testes de contrato verdes;
+- qualquer ensaio SQL do candidato deve ocorrer somente em PostgreSQL scratch preparado deliberadamente para ele, sem tocar Production.
+
+Rollback lógico:
+
+- enquanto candidato, pode ser revisado ou descartado sem efeito remoto;
+- se futuramente autorizado/aplicado, desligar primeiro `TDA_WORLD_ENTITY_MEDIA_ENABLED` e retirar consumidores antes de migration corretiva;
+- não apagar assets, bindings ou `audit_log` para simular rollback; preservar evidência e identidade já usadas.
+
+Contrato detalhado: [World entity media foundation](../features/world-entity-media-foundation.md).

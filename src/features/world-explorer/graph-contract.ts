@@ -8,10 +8,15 @@ import {
 	type WorldGraphDraftNode,
 	type WorldGraphDraftRelationType,
 	type WorldLineStyle,
+	type WorldMediaFocalPoint,
 	type WorldRelationDirection,
 	type WorldRelationFamily,
 	type WorldVisibility,
 } from "./model";
+import {
+	isWorldEntityMediaAssetId,
+	worldEntityMediaPreviewUrl,
+} from "./world-entity-media";
 
 const UUID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -53,6 +58,14 @@ function optionalString(value: unknown, maxLength: number): string | null | unde
 	return value;
 }
 
+function parseMediaFocalPoint(value: unknown): WorldMediaFocalPoint | null {
+	const row = objectValue(value);
+	if (!row || typeof row.x !== "number" || typeof row.y !== "number") return null;
+	if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) return null;
+	if (row.x < 0 || row.x > 1 || row.y < 0 || row.y > 1) return null;
+	return { x: row.x, y: row.y };
+}
+
 function parseNode(value: unknown): WorldGraphDraftNode | null {
 	const row = objectValue(value);
 	if (!row || typeof row.id !== "string" || !UUID_PATTERN.test(row.id)) return null;
@@ -74,6 +87,27 @@ function parseNode(value: unknown): WorldGraphDraftNode | null {
 		(alias): alias is string => typeof alias === "string" && alias.length >= 1 && alias.length <= 160,
 	);
 	if (aliases.length !== row.aliases.length) return null;
+
+	let primaryMediaAssetId: string | null | undefined;
+	let primaryMediaFocalPoint: WorldMediaFocalPoint | undefined;
+	if (row.primaryMediaAssetId === undefined) {
+		primaryMediaAssetId = undefined;
+	} else if (row.primaryMediaAssetId === null || row.primaryMediaAssetId === "") {
+		primaryMediaAssetId = null;
+		if (row.primaryMediaFocalPoint !== undefined && row.primaryMediaFocalPoint !== null) return null;
+	} else if (isWorldEntityMediaAssetId(row.primaryMediaAssetId)) {
+		primaryMediaAssetId = row.primaryMediaAssetId.toLowerCase();
+		if (row.primaryMediaFocalPoint === undefined || row.primaryMediaFocalPoint === null) {
+			primaryMediaFocalPoint = { x: 0.5, y: 0.5 };
+		} else {
+			const focal = parseMediaFocalPoint(row.primaryMediaFocalPoint);
+			if (!focal) return null;
+			primaryMediaFocalPoint = focal;
+		}
+	} else {
+		return null;
+	}
+
 	return {
 		id: row.id.toLowerCase(),
 		name: row.name.trim(),
@@ -85,6 +119,8 @@ function parseNode(value: unknown): WorldGraphDraftNode | null {
 		aliases: [...new Set(aliases.map((alias) => alias.trim()).filter(Boolean))].sort((a, b) =>
 			a.localeCompare(b, "pt-BR"),
 		),
+		...(primaryMediaAssetId === undefined ? {} : { primaryMediaAssetId }),
+		...(primaryMediaFocalPoint ? { primaryMediaFocalPoint } : {}),
 	};
 }
 
@@ -218,6 +254,12 @@ export function worldDatasetFromDraft(draft: WorldGraphDraft): WorldDemoDataset 
 			kind: "entity" as const,
 			entityType: node.entityType,
 			label: node.name,
+			imageUrl: node.primaryMediaAssetId
+				? worldEntityMediaPreviewUrl(node.primaryMediaAssetId)
+				: undefined,
+			imageFocalPoint: node.primaryMediaAssetId
+				? (node.primaryMediaFocalPoint ?? { x: 0.5, y: 0.5 })
+				: undefined,
 			status: node.status,
 			visibility: node.visibility,
 			summary: node.summary,

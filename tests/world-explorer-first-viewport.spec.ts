@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("World Explorer exposes the graph immediately and gives desktop space back when chrome collapses", async ({
+test("World Explorer exposes the graph immediately while desktop chrome overlays a stable canvas", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1366, height: 768 });
@@ -16,7 +16,7 @@ test("World Explorer exposes the graph immediately and gives desktop space back 
 	expect(initialCanvas).not.toBeNull();
 	expect(initialCanvas?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(310);
 	expect(initialCanvas?.height ?? 0).toBeGreaterThanOrEqual(430);
-	const initialWidth = initialCanvas?.width ?? 0;
+	const initialTransform = await page.locator(".react-flow__viewport").getAttribute("style");
 
 	const workspace = page.getByTestId("world-workspace");
 	const navigation = page.getByTestId("world-workspace-navigation");
@@ -26,16 +26,13 @@ test("World Explorer exposes the graph immediately and gives desktop space back 
 	await expect(navigation).toBeHidden();
 	await expect(page.getByRole("button", { name: "Explorar universo" })).toBeVisible();
 
-	// The workspace shell animates the grid; assert the settled layout rather than
-	// sampling the first frame immediately after the click.
-	await expect
-		.poll(async () => (await canvas.boundingBox())?.width ?? 0)
-		.toBeGreaterThan(initialWidth);
-	await expect
-		.poll(async () => (await navigation.boundingBox())?.width ?? 0)
-		.toBeLessThanOrEqual(1);
+	const afterNavigation = await canvas.boundingBox();
+	expect(afterNavigation).not.toBeNull();
+	expect(Math.abs((afterNavigation?.width ?? 0) - (initialCanvas?.width ?? 0))).toBeLessThan(2);
+	expect(Math.abs((afterNavigation?.x ?? 0) - (initialCanvas?.x ?? 0))).toBeLessThan(2);
+	expect(await page.locator(".react-flow__viewport").getAttribute("style")).toBe(initialTransform);
 
-	const beforeInspectorCollapse = (await canvas.boundingBox())?.width ?? 0;
+	const beforeInspectorCollapse = await canvas.boundingBox();
 	const detailCollapse = page.getByRole("button", {
 		name: "Recolher painel de detalhes",
 	});
@@ -43,19 +40,11 @@ test("World Explorer exposes the graph immediately and gives desktop space back 
 	await detailCollapse.click();
 	const detailOpen = page.getByRole("button", { name: "Abrir painel de detalhes" });
 	await expect(detailOpen).toBeVisible();
-	await expect
-		.poll(async () => (await canvas.boundingBox())?.width ?? 0)
-		.toBeGreaterThan(beforeInspectorCollapse);
-	await expect
-		.poll(
-			async () =>
-				await detailOpen.evaluate(
-					(button) =>
-						button.parentElement?.getBoundingClientRect().width ??
-						Number.POSITIVE_INFINITY,
-				),
-		)
-		.toBeLessThanOrEqual(1);
+	const afterInspectorCollapse = await canvas.boundingBox();
+	expect(afterInspectorCollapse).not.toBeNull();
+	expect(Math.abs((afterInspectorCollapse?.width ?? 0) - (beforeInspectorCollapse?.width ?? 0))).toBeLessThan(2);
+	expect(Math.abs((afterInspectorCollapse?.x ?? 0) - (beforeInspectorCollapse?.x ?? 0))).toBeLessThan(2);
+	expect(await page.locator(".react-flow__viewport").getAttribute("style")).toBe(initialTransform);
 
 	expect(
 		await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),

@@ -2,7 +2,7 @@
 
 > Status: vivo
 > Owner: produto + domínios
-> Última revisão: 2026-09-07
+> Última revisão: 2026-09-12
 > Fonte de verdade: specs deste diretório e `../feature-catalog.md`
 
 O [catálogo de features](../feature-catalog.md) responde **qual é o status canônico na `main`**. Este diretório responde **o que a feature significa, quais dados usa, o que falta decidir e qual é o critério para implementá-la sem quebrar o modelo**.
@@ -16,6 +16,8 @@ PRs abertas podem conter implementação validada e documentação candidata sem
 Candidato em revisão: [Estatísticas privadas de transcrições](transcript-statistics.md) — palavras e duração registrada por sessão, totais completos autorizados; implementação de branch, sem publicação.
 
 Candidato em revisão: [Pipipi — lore cinematográfica pioneira](pipipi-lore.md) — experiência editorial longa com cenas dirigidas por scroll, enhancement visual e fallback de leitura; implementação de branch, sem publicação.
+
+Candidato em revisão: [World entity media foundation](world-entity-media-foundation.md) — identidade de asset, upload direto R2 com finalização/read-back, preview privado, vínculo entidade → portrait e publicação verificada; SQL permanece em `supabase/candidates/`.
 
 | Feature | Estado na `main` | Spec |
 | --- | --- | --- |

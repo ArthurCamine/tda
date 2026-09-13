@@ -1,12 +1,14 @@
 # World Explorer — composição e UX oficial
 
-> Status: direção visual aprovada; implementação pendente
+> Status: direção visual aprovada; workspace atual implementado, chrome v3 planejado
 > Owner: product / design-system / narrative-memory
-> Última revisão: 2026-09-06
+> Última revisão: 2026-09-12
 
 Este documento traduz as referências visuais oficiais fornecidas para o **Mundo / Ecos da Jornada** em um contrato de composição aplicável ao reboot.
 
 As imagens de referência representam a direção desejada de produto, não screenshots de implementação existente. Quando houver conflito entre composição ilustrativa e acessibilidade/arquitetura do TDA, preservar a intenção visual e adaptar a mecânica.
+
+**Direção de polimento aprovada em 2026-09-12:** a composição desktop do workspace passa a tratar navegação/inspector como overlays que não comprimem o canvas, unificar as edge tabs e condensar o topo em Full HD+. O contrato detalhado, breakpoints, estratégia incremental e testes geométricos estão em [World Workspace — chrome espacial e sobreposição](world-explorer-workspace-chrome-v3.md). Em caso de conflito sobre chrome/layout do workspace, esse documento especializado prevalece sobre os diagramas desktop históricos abaixo.
 
 ## Objetivo
 
@@ -45,7 +47,7 @@ Portanto, no World Explorer público:
 
 ## Arquitetura visual desktop
 
-A referência oficial é organizada em três zonas persistentes e uma barra superior leve.
+A referência oficial original foi organizada em três zonas persistentes e uma barra superior leve. O chrome v3 preserva as responsabilidades dessas zonas, mas transforma navegação e inspector em overlays para impedir que comprimam o canvas.
 
 ```text
 ┌─────────────┬───────────────────────────────────┬──────────────────┐

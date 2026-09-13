@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef } from "react";
+import Image from "next/image";
 import type { CSSProperties } from "react";
 import type { LoreIdentityDTO, LorePresentation } from "../model";
 import {
@@ -46,7 +46,10 @@ export function LoreCinematicHero({
 				const depth = Number(layer.dataset.loreDepth ?? 0);
 				const x = pointerX * motion.pointerAmplitudeX * depth;
 				const y = pointerY * motion.pointerAmplitudeY * depth;
-				layer.style.setProperty("--lore-pointer-transform", `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`);
+				layer.style.setProperty(
+					"--lore-pointer-transform",
+					`translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`,
+				);
 			}
 		};
 
@@ -98,7 +101,16 @@ export function LoreCinematicHero({
 			<div className={styles.artwork} role="img" aria-label={artworkAlt}>
 				{poster && layers.length === 0 ? (
 					<div className={styles.poster}>
-						<Image src={poster.src} alt="" fill preload sizes="100vw" />
+						<Image
+							src={poster.src}
+							alt=""
+							fill
+							preload
+							sizes="100vw"
+							style={{
+								objectPosition: `${scene.hero.focalPoint.x}% ${scene.hero.focalPoint.y}%`,
+							}}
+						/>
 					</div>
 				) : null}
 

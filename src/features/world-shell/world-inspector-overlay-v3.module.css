@@ -1,0 +1,93 @@
+@media (min-width: 1121px) {
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode][data-world-edit-state]) {
+		display: block;
+		grid-template-columns: none;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode][data-world-edit-state] > aside[aria-live="polite"]) {
+		position: fixed;
+		right: 0;
+		bottom: 12px;
+		left: auto;
+		z-index: 55;
+		width: min(var(--world-inspector-width), calc(100vw - 52px));
+		min-width: min(320px, calc(100vw - 52px));
+		max-width: min(520px, calc(100vw - 52px));
+		height: auto;
+		max-height: calc(100dvh - 24px);
+		border: 1px solid var(--ds-control-border);
+		border-right: 0;
+		border-radius: var(--ds-radius-lg) 0 0 var(--ds-radius-lg);
+		background: color-mix(in srgb, var(--ds-surface-elevated) 96%, transparent);
+		box-shadow: -16px 18px 60px color-mix(in srgb, var(--ds-canvas) 56%, transparent);
+		overflow: auto;
+		overscroll-behavior: contain;
+		pointer-events: auto;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active="false"][data-world-inspector-mode][data-world-edit-state] > aside[aria-live="polite"]) {
+		top: 12px;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active="true"][data-world-inspector-mode][data-world-edit-state] > aside[aria-live="polite"]) {
+		top: 72px;
+		max-height: calc(100dvh - 84px);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode="closed"][data-world-edit-state] > aside[aria-live="polite"]) {
+		width: 0;
+		min-width: 0;
+		max-width: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		box-shadow: none;
+		overflow: visible;
+		pointer-events: none;
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode][data-world-edit-state] > aside[aria-live="polite"] > button[aria-label="Abrir painel de detalhes"]),
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode][data-world-edit-state] > aside[aria-live="polite"] > button[aria-label="Recolher painel de detalhes"]) {
+		position: fixed;
+		top: 50%;
+		right: 0;
+		left: auto;
+		z-index: 60;
+		display: grid;
+		width: 40px;
+		height: 56px;
+		min-height: 0;
+		place-items: center;
+		padding: 0;
+		border: 1px solid var(--ds-control-border);
+		border-right: 0;
+		border-radius: var(--ds-radius-md) 0 0 var(--ds-radius-md);
+		background: color-mix(in srgb, var(--ds-surface-elevated) 95%, transparent);
+		color: var(--ds-foreground-soft);
+		box-shadow: -8px 10px 30px color-mix(in srgb, var(--ds-canvas) 36%, transparent);
+		backdrop-filter: blur(14px) saturate(108%);
+		font: 760 1rem/1 var(--ds-font-ui);
+		pointer-events: auto;
+		transform: translateY(-50%);
+	}
+
+	:global([data-world-workspace-root] [data-world-authoring-active][data-world-inspector-mode]:not([data-world-inspector-mode="closed"])[data-world-edit-state] > aside[aria-live="polite"] > button[aria-label="Recolher painel de detalhes"]) {
+		right: min(var(--world-inspector-width), calc(100vw - 52px));
+	}
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1121px) {
+	:global([data-world-workspace-root] [data-world-authoring-active] > aside[aria-live="polite"] > button[aria-label="Abrir painel de detalhes"]:hover),
+	:global([data-world-workspace-root] [data-world-authoring-active] > aside[aria-live="polite"] > button[aria-label="Recolher painel de detalhes"]:hover) {
+		border-color: var(--ds-accent);
+		background: var(--ds-surface-hover);
+		color: var(--ds-accent-strong);
+		transform: translateY(-50%) translateX(-2px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:global([data-world-workspace-root] [data-world-authoring-active] > aside[aria-live="polite"]) {
+		transition: none;
+	}
+}

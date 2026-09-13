@@ -1,4 +1,5 @@
 import "server-only";
+import { loadWorldEntityPortraitPresentations } from "@/features/world-explorer/world-entity-media-repository";
 import { publishedDataClient } from "@/integrations/supabase/server";
 import type { LoreProfileDTO, LoreRouteKind } from "./model";
 import {
@@ -6,6 +7,7 @@ import {
 	toPublicLoreIndexItem,
 	type LoreIndexItem,
 } from "./public-projection";
+import { withPublishedLorePortraitFallback } from "./public-portrait";
 import {
 	loreEntityTypesForRoute,
 	routeAcceptsLoreEntity,
@@ -63,6 +65,21 @@ async function findPublishedSessionsForEntity(
 	return data ?? [];
 }
 
+async function withPublishedEntityPortrait(
+	client: PublishedClient,
+	campaignId: string,
+	entityId: string,
+	profile: LoreProfileDTO,
+): Promise<LoreProfileDTO> {
+	const portraits = await loadWorldEntityPortraitPresentations(
+		client,
+		campaignId,
+		CAMPAIGN_SLUG,
+		[entityId],
+	);
+	return withPublishedLorePortraitFallback(profile, portraits.get(entityId));
+}
+
 /**
  * Public lore projection boundary.
  *
@@ -112,7 +129,7 @@ export async function findPublishedLoreProfile(
 		.in("entity_type", [...loreEntityTypesForRoute(routeKind)])
 		.maybeSingle();
 	if (entityError) throw new Error("Published lore profile unavailable");
-	if (!entity) return null;
+	if (!entity || typeof entity.id !== "string") return null;
 
 	const [{ data: canon, error: canonError }, sessions] = await Promise.all([
 		client
@@ -132,5 +149,5 @@ export async function findPublishedLoreProfile(
 	if (!profile || !routeAcceptsLoreEntity(routeKind, profile.identity.entityType)) {
 		return null;
 	}
-	return profile;
+	return withPublishedEntityPortrait(client, campaignId, entity.id, profile);
 }

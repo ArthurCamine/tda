@@ -23,6 +23,8 @@ describe("World edit session helpers", () => {
 	it("keeps user-facing failure messages stable", () => {
 		expect(worldEditFailureMessage("lease_lost")).toContain("sessão exclusiva");
 		expect(worldEditFailureMessage("conflict")).toContain("rascunho foi preservado");
+		expect(worldEditFailureMessage("media_pending")).toContain("imagem");
+		expect(worldEditFailureMessage("media_pending")).toContain("foram preservados");
 		expect(worldEditFailureMessage("unknown")).toContain("Nenhuma alteração foi publicada");
 	});
 });

@@ -13,7 +13,7 @@
 		"start": "next start",
 		"typecheck": "next typegen && tsc --noEmit",
 		"lint": "biome lint .",
-		"test": "vitest run && node --test tools/media/recovery.test.mjs tools/media/publication-contract.test.mjs tools/media/lore-assets.test.mjs",
+		"test": "vitest run && node --test tools/media/recovery.test.mjs tools/media/publication-contract.test.mjs tools/media/lore-assets.test.mjs tools/world-entity-media-r2-policy.test.mjs",
 		"check": "pnpm typecheck && pnpm lint && pnpm test && pnpm design:check && pnpm docs:check && pnpm db:docs:check",
 		"design:check": "node tools/check-design-system.mjs",
 		"docs:check": "node tools/check-docs.mjs",
