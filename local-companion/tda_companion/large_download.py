@@ -110,6 +110,11 @@ function Emit([string]$Status, [string]$Code) {
   [ordered]@{ status = $Status; code = $Code } | ConvertTo-Json -Compress
   exit 0
 }
+function RemoveInvalidJobs($Jobs) {
+  foreach ($candidate in @($Jobs)) {
+    try { Remove-BitsTransfer -BitsJob $candidate -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+  }
+}
 try {
   Import-Module BitsTransfer -ErrorAction Stop
 } catch {
@@ -127,16 +132,23 @@ try {
 } catch {
   Emit 'unavailable' 'BITS_UNAVAILABLE'
 }
-if ($jobs.Count -gt 1) { Emit 'error' 'BITS_JOB_AMBIGUOUS' }
+if ($jobs.Count -gt 1) {
+  RemoveInvalidJobs $jobs
+  Emit 'error' 'BITS_JOB_AMBIGUOUS'
+}
 $job = $null
 if ($jobs.Count -eq 1) {
   $job = $jobs[0]
   $files = @($job.FileList)
-  if ($files.Count -ne 1) { Emit 'error' 'BITS_JOB_MISMATCH' }
+  if ($files.Count -ne 1) {
+    RemoveInvalidJobs @($job)
+    Emit 'error' 'BITS_JOB_MISMATCH'
+  }
   $remote = [string]$files[0].RemoteName
   $local = [IO.Path]::GetFullPath([string]$files[0].LocalName)
   $expectedLocal = [IO.Path]::GetFullPath($destination)
   if ($remote -ne $source -or $local -ne $expectedLocal) {
+    RemoveInvalidJobs @($job)
     Emit 'error' 'BITS_JOB_MISMATCH'
   }
 } else {
@@ -170,6 +182,7 @@ while ((Get-Date) -lt $deadline) {
       try {
         Complete-BitsTransfer -BitsJob $job -ErrorAction Stop
       } catch {
+        RemoveInvalidJobs @($job)
         Emit 'error' 'BITS_COMPLETE_FAILED'
       }
       Emit 'complete' 'BITS_COMPLETE'
@@ -178,14 +191,18 @@ while ((Get-Date) -lt $deadline) {
       try {
         Resume-BitsTransfer -BitsJob $job -Asynchronous -ErrorAction Stop
       } catch {
+        RemoveInvalidJobs @($job)
         Emit 'error' 'BITS_RESUME_FAILED'
       }
     }
     'Error' {
-      try { Remove-BitsTransfer -BitsJob $job -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+      RemoveInvalidJobs @($job)
       Emit 'error' 'BITS_TRANSFER_FAILED'
     }
-    'Cancelled' { Emit 'error' 'BITS_TRANSFER_CANCELLED' }
+    'Cancelled' {
+      RemoveInvalidJobs @($job)
+      Emit 'error' 'BITS_TRANSFER_CANCELLED'
+    }
     'Acknowledged' {
       if (Test-Path -LiteralPath $destination) { Emit 'complete' 'BITS_COMPLETE' }
       Emit 'error' 'BITS_JOB_LOST'
@@ -280,18 +297,24 @@ def _stream_fallback(
 ) -> None:
     total = 0
     temporary.unlink(missing_ok=True)
-    with fallback_open() as response:
-        with temporary.open("xb") as handle:
-            while True:
-                chunk = response.read(_COPY_CHUNK)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > expected_size:
-                    raise LargeDownloadError(size_exceeded_code)
-                handle.write(chunk)
-            handle.flush()
-            os.fsync(handle.fileno())
+    try:
+        with fallback_open() as response:
+            with temporary.open("xb") as handle:
+                while True:
+                    chunk = response.read(_COPY_CHUNK)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > expected_size:
+                        raise LargeDownloadError(size_exceeded_code)
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+    except BaseException:
+        # The synchronous fallback never owns resumable state. Any interrupted,
+        # rejected or oversized stream must leave no materialized partial bytes.
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def download_verified_release_asset(
@@ -329,14 +352,23 @@ def download_verified_release_asset(
 
     used_bits = False
     if prefer_bits and os.name == "nt":
-        status = _run_bits_transfer(github_url, temporary, timeout=timeout)
+        try:
+            status = _run_bits_transfer(github_url, temporary, timeout=timeout)
+        except BaseException:
+            # Every non-pending BITS failure represents terminal state. The
+            # PowerShell side removes the corresponding job before surfacing it.
+            temporary.unlink(missing_ok=True)
+            raise
         if status == "complete":
             used_bits = True
         elif status == "pending":
+            # Deliberately preserve the BITS-owned destination. The next call
+            # reconnects to the same job using the deterministic display name.
             raise NetworkError("DOWNLOAD_CONTINUES_IN_BACKGROUND")
         elif status == "unavailable":
             temporary.unlink(missing_ok=True)
         else:
+            temporary.unlink(missing_ok=True)
             raise LargeDownloadError("BITS_RESPONSE_INVALID")
 
     if not used_bits:
@@ -350,6 +382,7 @@ def download_verified_release_asset(
     try:
         actual_size = temporary.stat().st_size
     except OSError as exc:
+        temporary.unlink(missing_ok=True)
         raise LargeDownloadError("DOWNLOAD_OUTPUT_MISSING") from exc
     if actual_size != expected_size:
         temporary.unlink(missing_ok=True)
