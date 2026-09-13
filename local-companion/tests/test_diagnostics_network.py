@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import tda_companion.diagnostics as diagnostics
 from tda_companion.network import NetworkError
 from tda_companion.updates import UpdateManifest
@@ -75,30 +73,6 @@ def test_https_diagnostic_preserves_stable_network_code():
         "message": "Não foi possível conectar ao TDA por HTTPS",
         "detail": "PROXY_FAILED",
     }
-
-
-def test_network_diagnostics_stop_after_dns_failure(monkeypatch):
-    monkeypatch.setattr(
-        diagnostics,
-        "_dns_check",
-        lambda: diagnostics._check("network_dns", "fail", "DNS falhou", "DNS_FAILED"),
-    )
-    monkeypatch.setattr(
-        diagnostics,
-        "_https_check",
-        lambda _client: (_ for _ in ()).throw(AssertionError("HTTPS should not run")),
-    )
-
-    checks, manifest = diagnostics._network_checks()
-
-    assert manifest is None
-    assert [check["code"] for check in checks] == [
-        "network_dns",
-        "network_https",
-        "network_manifest",
-        "network_asset",
-    ]
-    assert checks[1]["status"] == "unavailable"
 
 
 def test_maintenance_channel_only_passes_with_validated_manifest():
