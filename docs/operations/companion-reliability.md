@@ -1,6 +1,6 @@
 # TDA Companion — confiabilidade, manutenção e aceite real
 
-> Status: arquitetura aprovada — R1 em implementação; stable bloqueada até aceite físico
+> Status: R1/R2 implementados; R3 C-12/C-13/C-14 implementados em candidato; stable bloqueada até aceite físico do artefato exato
 > Owner: local-companion / processing / operations
 > Última revisão: 2026-09-13
 > Fonte de verdade: este documento + ADR-0013 + código/receipts do candidato exato
@@ -10,6 +10,15 @@
 Definir a correção estrutural dos problemas encontrados no teste físico do TDA Companion 0.3.2. O objetivo não é consertar cada botão como bug isolado, e sim tornar o produto Windows previsível em lifecycle, rede, manutenção, release e processamento ASR.
 
 A implementação é dividida em R1–R4. Integração em `Preview`, merge em `main` ou publicação de uma release não significam aceite físico. **Stable só pode apontar para o mesmo artefato/hash que passou a jornada instalada e o gate ASR aplicável.**
+
+### Estado de implementação em 2026-09-13
+
+- R1 e R2 formam a base atual de confiabilidade do candidato: recovery/identidade do Agent, saída programática, boundary Craig, rede tipada, manifest versionado, manutenção observável, rollback MSI, WebView2 e diagnóstico por capability.
+- C-12 está implementado com harness da jornada instalada e receipt sanitizado ligado ao source SHA/MSI. O `pass=true` real continua pendente até execução no Windows físico.
+- C-13 está implementado: push em `main` não publica mais stable automaticamente; RC e promoção são workflows manuais separados; a promoção exige receipt físico e transforma o mesmo objeto de release/mesmos assets em stable, sem rebuild/reupload.
+- C-14 está implementado no candidato: MSI, Whisper e partes Qwen usam BITS como transporte preferido no Windows, com fallback HTTP verificado; manifest/tag/tamanho/SHA-256 continuam sendo autoridade do Companion. Apenas `DOWNLOAD_CONTINUES_IN_BACKGROUND` preserva estado parcial; falhas terminais limpam o `.partial`.
+- O aceite instalado agora exige também a observação `background_download_resume`: interromper uma transferência grande real, confirmar continuidade pelo Windows e concluir a mesma transferência após reconexão sem erro técnico cru.
+- R4 não foi iniciado por este marco. C-16 continua exigindo ADR antes de qualquer troca estrutural para `qwen-asr`.
 
 ## Contexto observado
 
@@ -64,7 +73,7 @@ A direção vigente continua válida: Web e cloud não dependem do computador pe
 
 ## R1 — lifecycle, Agent e boundary de UX
 
-> Implementação em andamento na PR #272 (`companion-reliability-r1`). Não promover para stable a partir desta fase isolada.
+> Implementado e incorporado ao candidato empilhado de confiabilidade. Aceite físico permanece obrigatório no artefato final.
 
 ### C-01 — conexão e recuperação do Agent
 
@@ -231,42 +240,50 @@ A tela deve responder “o que está impedindo processamento/update?” e não a
 
 ## R3 — E2E instalado, RC e downloads grandes
 
+> Implementado no candidato R3. O pipeline sintético não transforma esse estado em aceite físico; a stable permanece bloqueada até o receipt do MSI/RC exato.
+
 ### C-12 — E2E do produto real
 
-O gate deve instalar o MSI candidato e dirigir a mesma fronteira usada pelo usuário, cobrindo pelo menos:
+O gate instala/exercita o MSI candidato e possui harness de aceite da fronteira usada pelo usuário. O receipt sanitizado exige as observações de Agent, porta, diagnóstico, close/tray, Craig e resume de download em background; também verifica layout instalado, source SHA/MSI SHA e readiness de `core`, `network` e `maintenance`.
 
-```text
-download público -> instalar -> abrir UI -> Agent health
--> selecionar Craig -> perfis -> processar fixture/real autorizado
--> fechar/ocultar -> reiniciar Agent
--> update pelo próprio Companion N-1 -> N
--> uninstall pelo próprio Companion
--> reinstall/preserve -> purge
-```
-
-Também devem existir cenários negativos de Agent morto, porta ocupada, Internet/DNS indisponível e falha de MSI.
+A matriz automática continua cobrindo bundle, MSI, install/uninstall, upgrade N-1→N, preserve, purge e rollback. **Ações físicas deliberadas e Craig real não são simulados como se fossem evidência real**: permanecem obrigatórias antes da promoção stable.
 
 ### C-13 — RC para stable sem rebuild
 
-`main` não deve ser sinônimo de “artefato local aceito”. O fluxo alvo é:
+`main` não é sinônimo de “artefato local aceito”. A publicação stable automática foi removida do workflow normal. O fluxo implementado é:
 
 ```text
-source SHA
-  -> build RC imutável
-  -> CI
+source SHA exato
+  -> workflow Companion verde gera artifact
+  -> workflow manual cria RC imutável sem rebuild
   -> instalação física do RC
-  -> jornada do produto + gate ASR
-  -> receipt ligado a SHA/asset SHA-256
-  -> promoção do MESMO asset/hash para stable
+  -> jornada do produto + gate ASR aplicável
+  -> receipt sanitizado ligado a source SHA + MSI SHA-256
+  -> workflow manual valida receipt/manifest/assets
+  -> promoção do MESMO objeto de release/mesmos bytes para companion-vX.Y.Z
 ```
 
-Rebuild após o aceite físico invalida a evidência e exige novo gate.
+O candidate manifest fixa MSI, checksum e ZIP por nome, tamanho e SHA-256. A promoção falha se `local-companion` ou `.github/workflows` mudaram após o source testado, se o stable tag já existe, se o receipt pertence a outro candidato ou se qualquer asset divergir. Rebuild/reupload depois do aceite físico invalida a evidência e exige novo RC.
 
 ### C-14 — DownloadManager/BITS
 
-Assets pequenos/manifests podem usar HTTPS normal. Runtimes de 1–2+ GiB devem usar uma camada persistente de download; no Windows, BITS é o backend preferido por oferecer resume, retry e integração de rede. O resultado só vira instalável após tamanho e SHA-256 conferidos.
+Manifests continuam pequenos e usam HTTPS normal/no-store. No Windows, MSI, runtime Whisper e cada parte do runtime Qwen usam BITS como transporte preferido. O BITS recebe somente uma URL pública exata derivada internamente da identidade já validada (`https://github.com/Faysk/tda/releases/download/<tag>/<asset>`); ele não escolhe versão, tag, asset, tamanho ou hash.
 
-Estados de produto mínimos: `queued`, `downloading`, `paused_network`, `verifying`, `ready`, `failed`.
+Contrato implementado:
+
+```text
+manifest TDA validado
+  -> tag/version/asset fixados
+  -> URL GitHub exata derivada pelo Companion
+  -> BITS assíncrono/reanexável no Windows
+  -> tamanho esperado
+  -> SHA-256 esperado
+  -> rename atômico para arquivo final
+```
+
+Se BITS estiver indisponível, o fallback preserva o transporte HTTP anterior com cadeia de redirect TDA→release GitHub verificada. Falha/interrupção do fallback remove `.partial`. Falha terminal BITS cancela estado inválido e remove `.partial`. Apenas `DOWNLOAD_CONTINUES_IN_BACKGROUND` pode preservar o arquivo pertencente ao job BITS, permitindo que uma chamada posterior reanexe ao mesmo job. Mesmo quando o `.partial` já aparenta estar completo, o Companion exige `Complete-BitsTransfer` antes de promovê-lo localmente, evitando job órfão.
+
+Nenhum byte vira instalável antes de tamanho e SHA-256 corresponderem ao manifest. O gate físico `background_download_resume` exige interromper/reconectar uma transferência grande real e confirmar continuidade/retomada sem `WinError`, `URLError` ou `BITS_*` cru na UI.
 
 ## R4 — Craig, Qwen, Whisper e qualidade
 
@@ -317,6 +334,7 @@ A próxima stable só pode ser promovida se, **no mesmo MSI/hash publicado**:
 - diagnóstico identificar blockers reais de Agent/rede/WebView2/runtime;
 - manifest e asset corresponderem imediatamente à stable promovida;
 - download estiver preso à versão e SHA-256 do manifest;
+- download grande real sobreviver a perda/reconexão de rede e concluir pelo mesmo estado BITS verificado;
 - falha de upgrade tiver rollback comprovado;
 - update N-1→N funcionar pelo botão real;
 - uninstall preservando dados e purge funcionarem pelo botão real;
@@ -343,13 +361,20 @@ Cada fase deve entrar por PR rastreável em `Preview`, com documentação e test
 - `docs/operations/local-companion.md`
 - `docs/operations/release-runbook.md`
 - `.github/workflows/companion.yml`
+- `.github/workflows/companion-rc.yml`
+- `.github/workflows/companion-promote.yml`
 - `local-companion/tda_companion/agent.py`
 - `local-companion/tda_companion/desktop_runtime.py`
+- `local-companion/tda_companion/desktop_session_bridge.py`
+- `local-companion/tda_companion/installed_acceptance.py`
+- `local-companion/tda_companion/release_evidence.py`
+- `local-companion/tda_companion/large_download.py`
 - `local-companion/tda_companion/ui/app.js`
 - `local-companion/tda_companion/diagnostics.py`
 - `local-companion/tda_companion/asr_timeline.py`
 - `local-companion/tda_companion/asr_whisper.py`
 - `local-companion/tda_companion/asr_qwen.py`
+- `local-companion/packaging/run-installed-acceptance.ps1`
 - `local-companion/packaging/maintenance_entry.py`
 - `local-companion/packaging/TDACompanion.wxs`
 
