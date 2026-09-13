@@ -24,7 +24,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0001 — TDA como identidade canônica; dnd-scribe como legado](../adr/0001-project-identity.md) | Não declarado | accepted | Não declarado |
 | [ADR-0002 — Reutilizar o Supabase existente como única base](../adr/0002-existing-supabase.md) | Não declarado | accepted | Não declarado |
 | [ADR-0003 — Processamento pesado local; produto cloud](../adr/0003-local-heavy-processing.md) | Não declarado | accepted | Não declarado |
-| [ADR-0004 — Registry única de entities para PC, NPC e mundo narrativo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
+| [ADR-0004 — Registry única de entities para PC, NPC e mundo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
 | [ADR-0005 — Canon exige fonte e revisão](../adr/0005-canon-review-gate.md) | Não declarado | accepted | Não declarado |
 | [ADR-0006 — React Flow como engine de visualização do World Explorer](../adr/0006-react-flow-world-explorer.md) | frontend / narrative-memory | aceito | Não declarado |
 | [ADR-0007 — Edit como workbench server-first orientado a capabilities](../adr/0007-edit-workbench.md) | Não declarado | Não declarado | Não declarado |
