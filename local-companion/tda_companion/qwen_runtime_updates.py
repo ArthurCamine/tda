@@ -156,7 +156,7 @@ def download_qwen_runtime(
     cache_root: Path,
     timeout: float = 300.0,
     *,
-    prefer_bits: bool = False,
+    prefer_bits: bool = True,
 ) -> Path:
     root = cache_root.resolve() / "runtime" / "qwen" / manifest.version
     parts_root = root / "parts"
