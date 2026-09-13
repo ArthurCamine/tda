@@ -10,8 +10,9 @@ from typing import Any, Iterable
 
 from . import VERSION
 from .paths import CompanionPaths
+from .payload_evidence import PayloadEvidenceError, verify_installed_payload
 
-INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v1"
+INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v2"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
@@ -51,11 +52,9 @@ def verify_installed_layout(executable: Path, paths: CompanionPaths) -> dict[str
     expected = (paths.companion_root / "versions" / VERSION / "TDACompanion.exe").resolve()
     if exe != expected or not exe.is_file():
         raise InstalledAcceptanceError("INSTALLED_LAYOUT_EXECUTABLE_MISMATCH")
-
     helper = exe.parent / "TDACompanionMaintenance.exe"
     if not helper.is_file():
         raise InstalledAcceptanceError("INSTALLED_LAYOUT_MAINTENANCE_HELPER_MISSING")
-
     current = paths.companion_root / "current-version.txt"
     try:
         current_version = current.read_text(encoding="utf-8").strip()
@@ -63,16 +62,7 @@ def verify_installed_layout(executable: Path, paths: CompanionPaths) -> dict[str
         raise InstalledAcceptanceError("INSTALLED_LAYOUT_VERSION_MARKER_MISSING") from exc
     if current_version != VERSION:
         raise InstalledAcceptanceError("INSTALLED_LAYOUT_VERSION_MARKER_MISMATCH")
-
-    exe_sha256 = sha256_file(exe)
-    helper_sha256 = sha256_file(helper)
-    if not _SHA256.fullmatch(exe_sha256) or not _SHA256.fullmatch(helper_sha256):
-        raise InstalledAcceptanceError("INSTALLED_LAYOUT_HASH_INVALID")
-    return {
-        "version": VERSION,
-        "executable_sha256": exe_sha256,
-        "maintenance_helper_sha256": helper_sha256,
-    }
+    return {"version": VERSION}
 
 
 def verify_candidate(candidate_msi: Path, source_sha: str) -> dict[str, object]:
@@ -82,9 +72,31 @@ def verify_candidate(candidate_msi: Path, source_sha: str) -> dict[str, object]:
     normalized_source = source_sha.strip().casefold()
     if not _SOURCE_SHA.fullmatch(normalized_source):
         raise InstalledAcceptanceError("ACCEPTANCE_SOURCE_SHA_INVALID")
+    return {"source_sha": normalized_source, "msi_sha256": sha256_file(candidate)}
+
+
+def verify_payload(executable: Path, manifest: Path, source_sha: str) -> dict[str, object]:
+    try:
+        evidence = verify_installed_payload(
+            executable.resolve().parent,
+            manifest,
+            expected_version=VERSION,
+            expected_source_sha=source_sha,
+        )
+    except PayloadEvidenceError as exc:
+        raise InstalledAcceptanceError(exc.code) from exc
+    files = evidence.get("files")
+    if not isinstance(files, dict):
+        raise InstalledAcceptanceError("PAYLOAD_MANIFEST_INVALID")
+    exe = files.get("TDACompanion.exe")
+    helper = files.get("TDACompanionMaintenance.exe")
+    if not isinstance(exe, dict) or not isinstance(helper, dict):
+        raise InstalledAcceptanceError("PAYLOAD_MANIFEST_INVALID")
     return {
-        "source_sha": normalized_source,
-        "msi_sha256": sha256_file(candidate),
+        "source_tree_sha": evidence["source_tree_sha"],
+        "payload_manifest_sha256": evidence["manifest_sha256"],
+        "executable_sha256": exe["sha256"],
+        "maintenance_helper_sha256": helper["sha256"],
     }
 
 
@@ -96,10 +108,7 @@ def verify_craig_fixture(craig_zip: Path) -> dict[str, object]:
         tracks, _info, _raw_present = inspect_craig_zip(source)
     except CraigPackageError as exc:
         raise InstalledAcceptanceError("ACCEPTANCE_CRAIG_FIXTURE_INVALID") from exc
-    return {
-        "track_count": len(tracks),
-        "zip_sha256": sha256_file(source),
-    }
+    return {"track_count": len(tracks), "zip_sha256": sha256_file(source)}
 
 
 def summarize_diagnostics(value: dict[str, Any]) -> dict[str, object]:
@@ -130,15 +139,8 @@ def maintenance_summary(value: dict[str, Any] | None) -> dict[str, object] | Non
     ):
         return None
     allowed = (
-        "operation_id",
-        "action",
-        "status",
-        "stage",
-        "failure_stage",
-        "error_code",
-        "msi_exit_code",
-        "target_version",
-        "purge",
+        "operation_id", "action", "status", "stage", "failure_stage",
+        "error_code", "msi_exit_code", "target_version", "purge",
     )
     return {key: value.get(key) for key in allowed if key in value}
 
@@ -192,7 +194,6 @@ def write_receipt(
         receipt["artifact"] = artifact
     if error_code is not None:
         receipt["error_code"] = re.sub(r"[^A-Z0-9_.:-]", "_", error_code.upper())[:120]
-
     _validate_receipt_value(receipt)
     target = destination.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +212,7 @@ def finalize_installed_acceptance(
     paths: CompanionPaths,
     port: int,
     candidate_msi: Path,
+    payload_manifest: Path,
     source_sha: str,
     craig_zip: Path,
     observations: Iterable[str],
@@ -222,17 +224,15 @@ def finalize_installed_acceptance(
             destination,
             passed=False,
             stage="manual_observations",
-            checks={
-                "observations": {
-                    name: name in observed for name in sorted(REQUIRED_OBSERVATIONS)
-                }
-            },
+            checks={"observations": {name: name in observed for name in sorted(REQUIRED_OBSERVATIONS)}},
             error_code="ACCEPTANCE_OBSERVATIONS_INCOMPLETE",
         )
 
+    candidate = verify_candidate(candidate_msi, source_sha)
     artifact = {
-        **verify_candidate(candidate_msi, source_sha),
+        **candidate,
         **verify_installed_layout(executable, paths),
+        **verify_payload(executable, payload_manifest, str(candidate["source_sha"])),
     }
     craig_fixture = verify_craig_fixture(craig_zip)
 
