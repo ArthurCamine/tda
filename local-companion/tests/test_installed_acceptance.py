@@ -59,6 +59,7 @@ def test_incomplete_observations_fail_before_artifact_or_diagnostics(tmp_path: P
         port=8765,
         candidate_msi=tmp_path / "not-used.msi",
         source_sha="0" * 40,
+        craig_zip=tmp_path / "not-used.zip",
         observations=missing,
         destination=destination,
     )
