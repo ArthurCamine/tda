@@ -11,6 +11,7 @@ import tda_companion.desktop_session_bridge as desktop_session_bridge
 from tda_companion.agent_connection import AgentConnectionError
 from tda_companion.desktop import DesktopBridge
 from tda_companion.desktop_session_bridge import SessionDesktopBridge
+from tda_companion.network import NetworkError
 
 
 def _bridge(tmp_path: Path) -> SessionDesktopBridge:
@@ -229,3 +230,39 @@ def test_snapshot_exposes_only_sanitized_maintenance_fields(monkeypatch, tmp_pat
         "target_version": "0.3.3",
         "updated_at": 123.0,
     }
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("OFFLINE", "sem acesso à Internet"),
+        ("DNS_FAILED", "resolver o endereço do TDA"),
+        ("PROXY_FAILED", "proxy configurado"),
+        ("CONNECT_TIMEOUT", "demorou demais"),
+        ("TLS_FAILED", "conexão segura"),
+        ("HTTP_ERROR", "respondeu com erro"),
+        ("MANIFEST_INVALID", "dados inválidos"),
+        ("HASH_MISMATCH", "verificação de integridade"),
+    ],
+)
+def test_network_failures_have_user_message_and_stable_code(tmp_path: Path, code: str, message: str):
+    bridge = _bridge(tmp_path)
+    error = bridge._friendly_network_error(NetworkError(code))
+    text = str(error)
+    assert message in text
+    assert text.endswith(f"[{code}]")
+
+
+def test_update_check_translates_network_failure_at_installed_ui_boundary(monkeypatch, tmp_path: Path):
+    bridge = _bridge(tmp_path)
+    monkeypatch.setattr(
+        DesktopBridge,
+        "check_update",
+        lambda self: (_ for _ in ()).throw(NetworkError("DNS_FAILED")),
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        bridge.check_update()
+
+    assert "resolver o endereço do TDA" in str(exc.value)
+    assert "[DNS_FAILED]" in str(exc.value)
