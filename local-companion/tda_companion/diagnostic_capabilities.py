@@ -10,6 +10,30 @@ LABELS = {
     "qwen": "Transcrição Qwen",
 }
 
+CHECK_LABELS = {
+    "agent": "Agent local",
+    "state": "pasta State",
+    "data": "pasta Data",
+    "sqlite": "banco SQLite local",
+    "disk": "espaço em disco",
+    "network_dns": "DNS local",
+    "network_https": "HTTPS do TDA",
+    "network_manifest": "manifest stable",
+    "network_asset": "asset stable",
+    "maintenance_metadata": "metadados MSI",
+    "maintenance_helper": "helper de manutenção",
+    "maintenance_update_channel": "canal stable de update",
+    "whisper_runtime": "runtime/CUDA Whisper",
+    "whisper_model_turbo": "modelo Whisper Turbo",
+    "whisper_model_detailed": "modelo Whisper Detalhado",
+    "qwen_runtime": "runtime/CUDA Qwen",
+    "qwen_aligner": "alinhador Qwen",
+    "qwen_model_fast": "modelo Qwen Rápido",
+    "qwen_gate_fast": "gate físico Qwen Rápido",
+    "qwen_model_quality": "modelo Qwen Qualidade",
+    "qwen_gate_quality": "gate físico Qwen Qualidade",
+}
+
 
 def _status(checks: dict[str, dict[str, Any]], code: str) -> str:
     value = checks.get(code)
@@ -18,6 +42,10 @@ def _status(checks: dict[str, dict[str, Any]], code: str) -> str:
 
 def _not_pass(checks: dict[str, dict[str, Any]], codes: tuple[str, ...]) -> list[str]:
     return [code for code in codes if _status(checks, code) != "pass"]
+
+
+def _human_codes(codes: list[str]) -> str:
+    return ", ".join(CHECK_LABELS.get(code, code) for code in codes[:4])
 
 
 def _summary(
@@ -32,11 +60,11 @@ def _summary(
     if blockers:
         status = "blocked"
         severity = "blocker"
-        message = "Bloqueado por " + ", ".join(blockers[:4])
+        message = "Bloqueado: " + _human_codes(blockers)
     elif degraded:
         status = "degraded"
         severity = "degraded"
-        message = "Disponível com limitação em " + ", ".join(degraded[:4])
+        message = "Disponível com limitação: " + _human_codes(degraded)
     else:
         status = "ready"
         severity = "info"
@@ -138,13 +166,16 @@ def capability_rows(capabilities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     status_map = {"ready": "pass", "degraded": "warning", "blocked": "fail"}
     rows: list[dict[str, Any]] = []
     for capability in capabilities:
+        capability_id = str(capability.get("id") or "unknown")
         status = str(capability.get("status") or "blocked")
+        label = str(capability.get("label") or LABELS.get(capability_id) or "Capability")
         rows.append(
             {
-                "code": f"capability.{capability.get('id')}",
+                "code": label,
+                "capability_id": capability_id,
                 "status": status_map.get(status, "fail"),
                 "message": str(capability.get("message") or "Estado indisponível"),
-                "detail": str(capability.get("label") or "Capability"),
+                "detail": f"capability.{capability_id} · {status}",
             }
         )
     return rows
