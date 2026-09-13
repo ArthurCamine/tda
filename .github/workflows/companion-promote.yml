@@ -82,6 +82,10 @@ jobs:
             --acceptance-receipt prepared/TDACompanion-acceptance.json \
             --assets-root rc-assets \
             --output prepared/TDACompanion-promotion.json)"
+          PYTHONPATH=local-companion python -m tda_companion.promotion_payload_verify \
+            --candidate-manifest rc-assets/TDACompanion-candidate.json \
+            --acceptance-receipt prepared/TDACompanion-acceptance.json \
+            --assets-root rc-assets
           [[ "$STABLE_TAG" =~ ^companion-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -198,6 +202,10 @@ jobs:
             --candidate-manifest stable-check/TDACompanion-candidate.json \
             --acceptance-receipt stable-check/TDACompanion-acceptance.json \
             --assets-root stable-check --output stable-check/post-promotion.json >/dev/null
+          PYTHONPATH=local-companion python -m tda_companion.promotion_payload_verify \
+            --candidate-manifest stable-check/TDACompanion-candidate.json \
+            --acceptance-receipt stable-check/TDACompanion-acceptance.json \
+            --assets-root stable-check
           cmp -s stable-check/TDACompanion-promotion.json stable-check/post-promotion.json
           git fetch --force origin "refs/tags/$STABLE_TAG:refs/tags/$STABLE_TAG"
           [[ "$(git rev-list -n 1 "$STABLE_TAG")" == "$SOURCE_SHA" ]] || { echo "::error::Stable tag target mismatch"; exit 1; }
