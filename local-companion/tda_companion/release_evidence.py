@@ -11,9 +11,10 @@ from typing import Any
 
 from . import VERSION
 from .installed_acceptance import REQUIRED_OBSERVATIONS
+from .payload_evidence import PayloadEvidenceError, load_payload_manifest
 
-CANDIDATE_SCHEMA = "tda_companion_candidate_v1"
-PROMOTION_SCHEMA = "tda_companion_promotion_v1"
+CANDIDATE_SCHEMA = "tda_companion_candidate_v2"
+PROMOTION_SCHEMA = "tda_companion_promotion_v2"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -23,7 +24,16 @@ _ALLOWED_CAPABILITIES = frozenset({"core", "network", "maintenance", "whisper", 
 _ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
 _ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
 _CANDIDATE_KEYS = frozenset(
-    {"schema", "channel", "tag", "version", "source_sha", "workflow_run_id", "assets"}
+    {
+        "schema",
+        "channel",
+        "tag",
+        "version",
+        "source_sha",
+        "source_tree_sha",
+        "workflow_run_id",
+        "assets",
+    }
 )
 _ACCEPTANCE_KEYS = frozenset(
     {
@@ -40,7 +50,15 @@ _ACCEPTANCE_KEYS = frozenset(
     }
 )
 _ARTIFACT_KEYS = frozenset(
-    {"version", "source_sha", "msi_sha256", "executable_sha256", "maintenance_helper_sha256"}
+    {
+        "version",
+        "source_sha",
+        "source_tree_sha",
+        "msi_sha256",
+        "payload_manifest_sha256",
+        "executable_sha256",
+        "maintenance_helper_sha256",
+    }
 )
 _CHECK_KEYS = frozenset({"observations", "craig_fixture", "diagnostics"})
 _CRAIG_KEYS = frozenset({"track_count", "zip_sha256"})
@@ -83,11 +101,15 @@ def _load_json(path: Path, code: str) -> dict[str, Any]:
     return value
 
 
-def _normalize_source_sha(value: str) -> str:
+def _normalize_git_sha(value: str, code: str) -> str:
     normalized = value.strip().casefold()
     if not _SOURCE_SHA.fullmatch(normalized):
-        raise ReleaseEvidenceError("RELEASE_SOURCE_SHA_INVALID")
+        raise ReleaseEvidenceError(code)
     return normalized
+
+
+def _normalize_source_sha(value: str) -> str:
+    return _normalize_git_sha(value, "RELEASE_SOURCE_SHA_INVALID")
 
 
 def _candidate_tag(version: str, source_sha: str) -> str:
@@ -118,44 +140,74 @@ def _verify_checksum_file(checksum_path: Path, msi_sha256: str) -> None:
         raise ReleaseEvidenceError("RELEASE_CHECKSUM_MISMATCH")
 
 
+def _verify_payload_identity(
+    payload_path: Path,
+    *,
+    version: str,
+    source_sha: str,
+    source_tree_sha: str,
+) -> None:
+    try:
+        value = load_payload_manifest(payload_path)
+    except PayloadEvidenceError as exc:
+        raise ReleaseEvidenceError("RELEASE_PAYLOAD_MANIFEST_INVALID") from exc
+    if value.get("version") != version:
+        raise ReleaseEvidenceError("RELEASE_PAYLOAD_VERSION_MISMATCH")
+    if value.get("source_sha") != source_sha:
+        raise ReleaseEvidenceError("RELEASE_PAYLOAD_SOURCE_MISMATCH")
+    if value.get("source_tree_sha") != source_tree_sha:
+        raise ReleaseEvidenceError("RELEASE_PAYLOAD_TREE_MISMATCH")
+
+
 def build_candidate_manifest(
     *,
     source_sha: str,
+    source_tree_sha: str,
     workflow_run_id: int,
     msi_path: Path,
     checksum_path: Path,
     zip_path: Path,
+    payload_manifest_path: Path,
 ) -> dict[str, object]:
     source = _normalize_source_sha(source_sha)
+    tree = _normalize_git_sha(source_tree_sha, "RELEASE_SOURCE_TREE_INVALID")
     if not isinstance(workflow_run_id, int) or workflow_run_id <= 0:
         raise ReleaseEvidenceError("RELEASE_WORKFLOW_RUN_INVALID")
-    if VERSION != str(VERSION) or not _VERSION.fullmatch(VERSION):
+    if not _VERSION.fullmatch(VERSION):
         raise ReleaseEvidenceError("RELEASE_VERSION_INVALID")
-
     if msi_path.name != "TDACompanion-x64.msi":
         raise ReleaseEvidenceError("RELEASE_MSI_NAME_INVALID")
     if checksum_path.name != "TDACompanion-x64.msi.sha256":
         raise ReleaseEvidenceError("RELEASE_CHECKSUM_NAME_INVALID")
-    expected_zip = f"TDACompanion-{VERSION}-windows-x64.zip"
-    if zip_path.name != expected_zip:
+    if zip_path.name != f"TDACompanion-{VERSION}-windows-x64.zip":
         raise ReleaseEvidenceError("RELEASE_ZIP_NAME_INVALID")
+    if payload_manifest_path.name != "TDACompanion-payload-manifest.json":
+        raise ReleaseEvidenceError("RELEASE_PAYLOAD_NAME_INVALID")
 
+    _verify_payload_identity(
+        payload_manifest_path,
+        version=VERSION,
+        source_sha=source,
+        source_tree_sha=tree,
+    )
     msi = _asset_record(msi_path)
     checksum = _asset_record(checksum_path)
     zip_asset = _asset_record(zip_path)
+    payload = _asset_record(payload_manifest_path)
     _verify_checksum_file(checksum_path, str(msi["sha256"]))
-
     return {
         "schema": CANDIDATE_SCHEMA,
         "channel": "rc",
         "tag": _candidate_tag(VERSION, source),
         "version": VERSION,
         "source_sha": source,
+        "source_tree_sha": tree,
         "workflow_run_id": workflow_run_id,
         "assets": {
             "msi": msi,
             "checksum": checksum,
             "zip": zip_asset,
+            "payload_manifest": payload,
         },
     }
 
@@ -167,15 +219,17 @@ def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_SCHEMA_INVALID")
     version = value.get("version")
     source_sha = value.get("source_sha")
+    source_tree_sha = value.get("source_tree_sha")
     tag = value.get("tag")
     run_id = value.get("workflow_run_id")
-    if not isinstance(version, str) or not _VERSION.fullmatch(version):
-        raise ReleaseEvidenceError("RELEASE_CANDIDATE_VERSION_INVALID")
-    if version != VERSION:
+    if not isinstance(version, str) or not _VERSION.fullmatch(version) or version != VERSION:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_VERSION_MISMATCH")
     if not isinstance(source_sha, str):
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_SOURCE_INVALID")
     source = _normalize_source_sha(source_sha)
+    if not isinstance(source_tree_sha, str):
+        raise ReleaseEvidenceError("RELEASE_CANDIDATE_TREE_INVALID")
+    tree = _normalize_git_sha(source_tree_sha, "RELEASE_CANDIDATE_TREE_INVALID")
     if tag != _candidate_tag(version, source):
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_TAG_MISMATCH")
     if not isinstance(tag, str) or _RC_TAG.fullmatch(tag) is None:
@@ -184,12 +238,14 @@ def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_RUN_INVALID")
 
     assets = value.get("assets")
-    if not isinstance(assets, dict) or set(assets) != {"msi", "checksum", "zip"}:
+    expected_keys = {"msi", "checksum", "zip", "payload_manifest"}
+    if not isinstance(assets, dict) or set(assets) != expected_keys:
         raise ReleaseEvidenceError("RELEASE_CANDIDATE_ASSETS_INVALID")
     expected_names = {
         "msi": "TDACompanion-x64.msi",
         "checksum": "TDACompanion-x64.msi.sha256",
         "zip": f"TDACompanion-{version}-windows-x64.zip",
+        "payload_manifest": "TDACompanion-payload-manifest.json",
     }
     for key, expected_name in expected_names.items():
         row = assets.get(key)
@@ -203,6 +259,8 @@ def verify_candidate_manifest(value: dict[str, Any]) -> dict[str, Any]:
             raise ReleaseEvidenceError("RELEASE_CANDIDATE_ASSET_HASH_INVALID")
         if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
             raise ReleaseEvidenceError("RELEASE_CANDIDATE_ASSET_SIZE_INVALID")
+    value["source_sha"] = source
+    value["source_tree_sha"] = tree
     return value
 
 
@@ -210,7 +268,7 @@ def verify_candidate_files(manifest: dict[str, Any], assets_root: Path) -> None:
     value = verify_candidate_manifest(manifest)
     assets = value["assets"]
     assert isinstance(assets, dict)
-    for key in ("msi", "checksum", "zip"):
+    for key in ("msi", "checksum", "zip", "payload_manifest"):
         row = assets[key]
         assert isinstance(row, dict)
         path = assets_root / str(row["name"])
@@ -221,10 +279,16 @@ def verify_candidate_files(manifest: dict[str, Any], assets_root: Path) -> None:
         if sha256_file(path) != row["sha256"]:
             raise ReleaseEvidenceError("RELEASE_ASSET_HASH_MISMATCH")
     msi = assets["msi"]
-    assert isinstance(msi, dict)
     checksum = assets["checksum"]
-    assert isinstance(checksum, dict)
+    payload = assets["payload_manifest"]
+    assert isinstance(msi, dict) and isinstance(checksum, dict) and isinstance(payload, dict)
     _verify_checksum_file(assets_root / str(checksum["name"]), str(msi["sha256"]))
+    _verify_payload_identity(
+        assets_root / str(payload["name"]),
+        version=str(value["version"]),
+        source_sha=str(value["source_sha"]),
+        source_tree_sha=str(value["source_tree_sha"]),
+    )
 
 
 def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -239,20 +303,17 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TIMESTAMP_INVALID") from exc
     if parsed.tzinfo is None:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TIMESTAMP_INVALID")
-
     artifact = receipt.get("artifact")
     if not isinstance(artifact, dict) or set(artifact) != _ARTIFACT_KEYS:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_INVALID")
     checks = receipt.get("checks")
     if not isinstance(checks, dict) or set(checks) != _CHECK_KEYS:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CHECKS_INVALID")
-
     observations = checks.get("observations")
     if not isinstance(observations, dict) or set(observations) != set(REQUIRED_OBSERVATIONS):
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
     if any(observations[name] is not True for name in REQUIRED_OBSERVATIONS):
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
-
     craig = checks.get("craig_fixture")
     if not isinstance(craig, dict) or set(craig) != _CRAIG_KEYS:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
@@ -262,7 +323,6 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
     if not isinstance(track_count, int) or isinstance(track_count, bool) or track_count < 1:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
-
     diagnostics = checks.get("diagnostics")
     if not isinstance(diagnostics, dict) or set(diagnostics) != _DIAGNOSTIC_KEYS:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
@@ -270,16 +330,12 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
     if not isinstance(overall, str) or not overall or len(overall) > 32:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
     capabilities = diagnostics.get("capabilities")
-    if not isinstance(capabilities, dict):
+    if not isinstance(capabilities, dict) or not set(capabilities).issubset(_ALLOWED_CAPABILITIES):
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
-    if not set(capabilities).issubset(_ALLOWED_CAPABILITIES):
-        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
-    for name, row in capabilities.items():
+    for row in capabilities.values():
         if not isinstance(row, dict) or set(row) != _CAPABILITY_KEYS:
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
-        if row.get("state") not in _ALLOWED_CAPABILITY_STATES:
-            raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
-        if row.get("severity") not in _ALLOWED_SEVERITIES:
+        if row.get("state") not in _ALLOWED_CAPABILITY_STATES or row.get("severity") not in _ALLOWED_SEVERITIES:
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_DIAGNOSTICS_INVALID")
     return artifact, capabilities
 
@@ -287,7 +343,7 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
 def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any]) -> None:
     candidate = verify_candidate_manifest(manifest)
     artifact, capabilities = _verify_acceptance_shape(receipt)
-    if receipt.get("schema") != "tda_installed_acceptance_v1":
+    if receipt.get("schema") != "tda_installed_acceptance_v2":
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SCHEMA_INVALID")
     if receipt.get("pass") is not True or receipt.get("stage") != "completed":
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_NOT_PASSED")
@@ -296,22 +352,25 @@ def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any])
     for key in ("contains_token", "contains_paths", "contains_transcript"):
         if receipt.get(key) is not False:
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_PRIVACY_INVALID")
-
     assets = candidate["assets"]
     assert isinstance(assets, dict)
     msi = assets["msi"]
-    assert isinstance(msi, dict)
+    payload = assets["payload_manifest"]
+    assert isinstance(msi, dict) and isinstance(payload, dict)
     if artifact.get("version") != candidate["version"]:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_VERSION_MISMATCH")
     if artifact.get("source_sha") != candidate["source_sha"]:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SOURCE_MISMATCH")
+    if artifact.get("source_tree_sha") != candidate["source_tree_sha"]:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_TREE_MISMATCH")
     if artifact.get("msi_sha256") != msi["sha256"]:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_MSI_MISMATCH")
+    if artifact.get("payload_manifest_sha256") != payload["sha256"]:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_PAYLOAD_MISMATCH")
     for key in ("executable_sha256", "maintenance_helper_sha256"):
         value = artifact.get(key)
         if not isinstance(value, str) or not _SHA256.fullmatch(value):
             raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_ARTIFACT_HASH_INVALID")
-
     for name in _REQUIRED_CAPABILITIES:
         row = capabilities.get(name)
         if not isinstance(row, dict) or row.get("state") != "ready":
@@ -335,6 +394,7 @@ def build_promotion_evidence(
         "stable_tag": f"companion-v{version}",
         "version": version,
         "source_sha": candidate["source_sha"],
+        "source_tree_sha": candidate["source_tree_sha"],
         "workflow_run_id": candidate["workflow_run_id"],
         "candidate_manifest_sha256": sha256_file(candidate_manifest_path),
         "acceptance_receipt_sha256": sha256_file(acceptance_receipt_path),
@@ -345,15 +405,15 @@ def build_promotion_evidence(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tda_companion.release_evidence")
     sub = parser.add_subparsers(dest="command", required=True)
-
     candidate = sub.add_parser("candidate-manifest")
     candidate.add_argument("--source-sha", required=True)
+    candidate.add_argument("--source-tree-sha", required=True)
     candidate.add_argument("--workflow-run-id", required=True, type=int)
     candidate.add_argument("--msi", required=True, type=Path)
     candidate.add_argument("--checksum", required=True, type=Path)
     candidate.add_argument("--zip", required=True, type=Path)
+    candidate.add_argument("--payload-manifest", required=True, type=Path)
     candidate.add_argument("--output", required=True, type=Path)
-
     promote = sub.add_parser("verify-promotion")
     promote.add_argument("--candidate-manifest", required=True, type=Path)
     promote.add_argument("--acceptance-receipt", required=True, type=Path)
@@ -368,10 +428,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "candidate-manifest":
             manifest = build_candidate_manifest(
                 source_sha=args.source_sha,
+                source_tree_sha=args.source_tree_sha,
                 workflow_run_id=args.workflow_run_id,
                 msi_path=args.msi,
                 checksum_path=args.checksum,
                 zip_path=args.zip,
+                payload_manifest_path=args.payload_manifest,
             )
             _atomic_json(args.output, manifest)
             print(str(manifest["tag"]))
