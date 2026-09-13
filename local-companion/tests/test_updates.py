@@ -111,7 +111,7 @@ def test_download_update_uses_verified_release_chain(monkeypatch, tmp_path):
 
     monkeypatch.setattr("tda_companion.updates.open_verified_release", fake_open)
 
-    target = download_update(manifest, tmp_path, timeout=12.5)
+    target = download_update(manifest, tmp_path, timeout=12.5, prefer_bits=False)
 
     assert target.read_bytes() == payload
     assert seen == {
@@ -122,7 +122,7 @@ def test_download_update_uses_verified_release_chain(monkeypatch, tmp_path):
         ),
         "timeout": 12.5,
     }
-    assert not target.with_suffix(".partial").exists()
+    assert not target.with_name(target.name + ".partial").exists()
 
 
 def test_download_update_maps_rejected_release_chain_to_stable_error(monkeypatch, tmp_path):
@@ -134,11 +134,11 @@ def test_download_update_maps_rejected_release_chain_to_stable_error(monkeypatch
     monkeypatch.setattr("tda_companion.updates.open_verified_release", reject)
 
     with pytest.raises(RuntimeError, match="^UPDATE_REDIRECT_REJECTED$"):
-        download_update(manifest, tmp_path)
+        download_update(manifest, tmp_path, prefer_bits=False)
 
     target = tmp_path / "updates" / manifest.version / "TDACompanion-x64.msi"
     assert not target.exists()
-    assert not target.with_suffix(".partial").exists()
+    assert not target.with_name(target.name + ".partial").exists()
 
 
 def test_download_update_reports_hash_mismatch_as_typed_network_error(monkeypatch, tmp_path):
@@ -159,4 +159,4 @@ def test_download_update_reports_hash_mismatch_as_typed_network_error(monkeypatc
     )
 
     with pytest.raises(NetworkError, match="^HASH_MISMATCH$"):
-        download_update(manifest, tmp_path)
+        download_update(manifest, tmp_path, prefer_bits=False)
