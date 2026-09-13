@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CandidateMsi,
     [Parameter(Mandatory = $true)]
+    [string]$PayloadManifest,
+    [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-fA-F0-9]{40}$')]
     [string]$SourceSha,
     [Parameter(Mandatory = $true)]
@@ -13,13 +15,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$script:ExpectedVersion = $null
 
 function Resolve-RequiredFile([string]$Value, [string]$Code) {
-    try {
-        return (Resolve-Path -LiteralPath $Value -ErrorAction Stop).Path
-    } catch {
-        throw $Code
-    }
+    try { return (Resolve-Path -LiteralPath $Value -ErrorAction Stop).Path } catch { throw $Code }
 }
 
 function Confirm-Observation([string]$Name, [string]$Instructions) {
@@ -41,6 +40,9 @@ function Get-AgentHealth {
         $raw = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         $value = $raw | ConvertFrom-Json -ErrorAction Stop
         if ([string]$value.product_id -ne "tda-companion") { return $null }
+        if ([string]$value.api_version -ne "1") { return $null }
+        if ([int]$value.port -ne $Port -or [int]$value.pid -le 0) { return $null }
+        if ($null -ne $script:ExpectedVersion -and [string]$value.service_version -ne $script:ExpectedVersion) { return $null }
         return $value
     } catch {
         return $null
@@ -53,9 +55,7 @@ function Wait-AgentReplacement([int]$PreviousPid, [int]$TimeoutSeconds = 30) {
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         $health = Get-AgentHealth
-        if ($null -ne $health -and [int]$health.pid -gt 0 -and [int]$health.pid -ne $PreviousPid) {
-            return $health
-        }
+        if ($null -ne $health -and [int]$health.pid -ne $PreviousPid) { return $health }
         Start-Sleep -Milliseconds 300
     }
     return $null
@@ -63,16 +63,19 @@ function Wait-AgentReplacement([int]$PreviousPid, [int]$TimeoutSeconds = 30) {
 
 if (-not $env:LOCALAPPDATA) { throw "LOCALAPPDATA_NOT_FOUND" }
 $candidate = Resolve-RequiredFile $CandidateMsi "CANDIDATE_MSI_NOT_FOUND"
+$payload = Resolve-RequiredFile $PayloadManifest "PAYLOAD_MANIFEST_NOT_FOUND"
 $craig = Resolve-RequiredFile $CraigZip "CRAIG_ZIP_NOT_FOUND"
 if ([IO.Path]::GetExtension($candidate).ToLowerInvariant() -ne ".msi") { throw "CANDIDATE_MSI_REQUIRED" }
+if ([IO.Path]::GetExtension($payload).ToLowerInvariant() -ne ".json") { throw "PAYLOAD_MANIFEST_REQUIRED" }
 if ([IO.Path]::GetExtension($craig).ToLowerInvariant() -ne ".zip") { throw "CRAIG_ZIP_REQUIRED" }
-if ($candidate.Contains('"') -or $craig.Contains('"') -or $ReceiptPath.Contains('"')) { throw "UNSUPPORTED_QUOTE_IN_PATH" }
+if ($candidate.Contains('"') -or $payload.Contains('"') -or $craig.Contains('"') -or $ReceiptPath.Contains('"')) { throw "UNSUPPORTED_QUOTE_IN_PATH" }
 
 $companionRoot = Join-Path $env:LOCALAPPDATA "TDA\Companion"
 $marker = Join-Path $companionRoot "current-version.txt"
 if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw "INSTALLED_VERSION_MARKER_MISSING" }
 $version = (Get-Content -LiteralPath $marker -Raw -Encoding UTF8).Trim()
 if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "INSTALLED_VERSION_INVALID" }
+$script:ExpectedVersion = $version
 $executable = Join-Path (Join-Path (Join-Path $companionRoot "versions") $version) "TDACompanion.exe"
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "INSTALLED_EXECUTABLE_MISSING" }
 
@@ -80,28 +83,28 @@ Write-Host "TDA Companion installed acceptance" -ForegroundColor Yellow
 Write-Host "Versão instalada: $version"
 Write-Host "Source SHA candidato: $($SourceSha.ToLowerInvariant())"
 Write-Host "MSI SHA256: $((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
+Write-Host "Payload manifest SHA256: $((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant())"
 Write-Host ""
-Write-Host "Este roteiro NÃO executa ações destrutivas automaticamente. Cada interferência no Agent/porta/rede é feita por você e só vira evidência depois de PASS explícito." -ForegroundColor DarkYellow
+Write-Host "As observações humanas são atestações; recovery e identidade do Agent também exigem prova medida via /health." -ForegroundColor DarkYellow
 
 $observations = New-Object System.Collections.Generic.List[string]
 
 $initialHealth = Get-AgentHealth
-$initialPid = if ($null -ne $initialHealth) { [int]$initialHealth.pid } else { 0 }
-if ($initialPid -gt 0) {
-    Write-Host "Agent atual identificado pelo /health: PID $initialPid"
-}
+if ($null -eq $initialHealth) { throw "AGENT_INITIAL_IDENTITY_REQUIRED" }
+$initialPid = [int]$initialHealth.pid
+Write-Host "Agent inicial exato: PID $initialPid, versão $([string]$initialHealth.service_version)"
 $recoveryPrompt = @"
 Com a UI do Companion aberta, finalize manualmente SOMENTE o processo Agent no Gerenciador de Tarefas.
 A interface deve mostrar recovery/reconexão e voltar a Ready sem abrir uma segunda UI, sem loop de erro e sem você reiniciar o aplicativo.
 "@
 $recoveryObserved = Confirm-Observation "agent_recovery" $recoveryPrompt
-if ($recoveryObserved -and $initialPid -gt 0) {
+if ($recoveryObserved) {
     $replacement = Wait-AgentReplacement $initialPid
     if ($null -eq $replacement) {
-        Write-Warning "O /health não confirmou um novo PID do Agent. A observação não será aceita."
+        Write-Warning "O /health não confirmou um novo Agent exato/PID. A observação não será aceita."
         $recoveryObserved = $false
     } else {
-        Write-Host "Novo Agent confirmado pelo /health: PID $([int]$replacement.pid)" -ForegroundColor Green
+        Write-Host "Novo Agent exato confirmado: PID $([int]$replacement.pid)" -ForegroundColor Green
     }
 }
 if ($recoveryObserved) { $observations.Add("agent_recovery") }
@@ -119,9 +122,7 @@ if (Confirm-Observation "diagnostics_ui" $diagnosticPrompt) { $observations.Add(
 
 $downloadPrompt = @"
 Teste um download grande real pelo Companion (Whisper ou Qwen) que ainda precise ser baixado nesta máquina.
-Com o download em andamento, interrompa temporariamente a Internet por tempo suficiente para a chamada da UI deixar de aguardar. O Companion deve informar de forma amigável que o download continua em segundo plano, sem mostrar WinError/URLError/BITS_* cru.
-Feche/oculte e reabra a interface se desejar; isso não deve cancelar o job do Windows. Reconecte a Internet e acione a instalação novamente. O Companion deve reutilizar/retomar a transferência existente e concluir a verificação por tamanho + SHA-256 antes de instalar, sem reiniciar o download completo por causa da queda de rede.
-Digite PASS somente depois de a instalação terminar íntegra e a UI mostrar o runtime como pronto.
+Interrompa temporariamente a Internet durante a transferência. O Companion deve informar amigavelmente que o download continua em segundo plano, sem WinError/URLError/BITS_* cru. Reconecte a Internet e acione a instalação novamente; a transferência deve retomar e só instalar depois de tamanho + SHA-256 válidos.
 "@
 if (Confirm-Observation "background_download_resume" $downloadPrompt) { $observations.Add("background_download_resume") }
 
@@ -131,29 +132,27 @@ Com a preferência 'Ao fechar: Ocultar a interface' e o tray ativo, clique no X.
 if (Confirm-Observation "close_hides_ui" $closePrompt) { $observations.Add("close_hides_ui") }
 
 $trayPrompt = @"
-Reabra a interface pelo tray e use 'Sair da interface'. A UI deve encerrar de verdade sem encerrar o Agent.
-Depois abra novamente o Companion para continuar o aceite.
+Reabra a interface pelo tray e use 'Sair da interface'. A UI deve encerrar de verdade sem encerrar o Agent. Depois abra novamente o Companion para continuar o aceite.
 "@
 if (Confirm-Observation "tray_exit" $trayPrompt) { $observations.Add("tray_exit") }
 
 $craigPrompt = @"
-Na tela Processar sessão, selecione exatamente o Craig ZIP fornecido a este roteiro.
-Confirme que as faixas/speakers aparecem e que o ZIP não é rejeitado por uma falha posterior de Agent/perfis.
+Na tela Processar sessão, selecione exatamente o Craig ZIP fornecido. Confirme que as faixas/speakers aparecem e que o ZIP não é rejeitado por uma falha posterior de Agent/perfis.
 "@
 if (Confirm-Observation "craig_selected" $craigPrompt) { $observations.Add("craig_selected") }
 
 $craigHealth = Get-AgentHealth
-$craigPid = if ($null -ne $craigHealth) { [int]$craigHealth.pid } else { 0 }
-if ($craigPid -gt 0) { Write-Host "Agent antes do teste Craig/recovery: PID $craigPid" }
+if ($null -eq $craigHealth) { throw "CRAIG_AGENT_INITIAL_IDENTITY_REQUIRED" }
+$craigPid = [int]$craigHealth.pid
+Write-Host "Agent exato antes do teste Craig/recovery: PID $craigPid"
 $craigRecoveryPrompt = @"
-Sem remover a sessão Craig da tela, finalize manualmente SOMENTE o Agent.
-Após o recovery, a sessão Craig deve continuar selecionada e válida; a UI não pode dizer que o ZIP é inválido/rejeitado só porque o Agent caiu.
+Sem remover a sessão Craig da tela, finalize manualmente SOMENTE o Agent. Após o recovery, a sessão Craig deve continuar selecionada e válida; a UI não pode dizer que o ZIP é inválido/rejeitado só porque o Agent caiu.
 "@
 $craigRecoveryObserved = Confirm-Observation "craig_survives_agent_loss" $craigRecoveryPrompt
-if ($craigRecoveryObserved -and $craigPid -gt 0) {
+if ($craigRecoveryObserved) {
     $replacement = Wait-AgentReplacement $craigPid
     if ($null -eq $replacement) {
-        Write-Warning "O /health não confirmou recovery do Agent após o teste Craig. A observação não será aceita."
+        Write-Warning "O /health não confirmou recovery exato do Agent após o teste Craig."
         $craigRecoveryObserved = $false
     }
 }
@@ -162,19 +161,18 @@ if ($craigRecoveryObserved) { $observations.Add("craig_survives_agent_loss") }
 $arguments = @(
     "--installed-acceptance",
     "--acceptance-candidate-msi", "`"$candidate`"",
+    "--acceptance-payload-manifest", "`"$payload`"",
     "--acceptance-source-sha", $SourceSha.ToLowerInvariant(),
     "--acceptance-craig-zip", "`"$craig`"",
     "--acceptance-result-file", "`"$ReceiptPath`"",
     "--port", [string]$Port
 )
-foreach ($observation in $observations) {
-    $arguments += @("--acceptance-observation", $observation)
-}
+foreach ($observation in $observations) { $arguments += @("--acceptance-observation", $observation) }
 
 $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
 if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw "ACCEPTANCE_RECEIPT_MISSING" }
 $receipt = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-if ([string]$receipt.schema -ne "tda_installed_acceptance_v1") { throw "ACCEPTANCE_RECEIPT_SCHEMA_INVALID" }
+if ([string]$receipt.schema -ne "tda_installed_acceptance_v2") { throw "ACCEPTANCE_RECEIPT_SCHEMA_INVALID" }
 if ([int]$process.ExitCode -ne 0 -or $receipt.pass -ne $true) {
     $code = if ($receipt.error_code) { [string]$receipt.error_code } else { "ACCEPTANCE_NOT_PASSED" }
     Write-Error "Aceite instalado não passou: $code"
