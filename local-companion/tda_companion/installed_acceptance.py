@@ -16,6 +16,7 @@ _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
 _ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
 _ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
+_PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript"})
 
 
 class InstalledAcceptanceError(RuntimeError):
@@ -108,6 +109,10 @@ def _validate_receipt_value(value: object, *, depth: int = 0) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             folded = str(key).casefold()
+            if folded in _PRIVACY_PROOF_FIELDS:
+                if child is not False:
+                    raise InstalledAcceptanceError("ACCEPTANCE_RECEIPT_PRIVACY_PROOF_INVALID")
+                continue
             if any(term in folded for term in ("token", "password", "authorization", "transcript", "path")):
                 raise InstalledAcceptanceError("ACCEPTANCE_RECEIPT_PRIVATE_FIELD")
             _validate_receipt_value(child, depth=depth + 1)
