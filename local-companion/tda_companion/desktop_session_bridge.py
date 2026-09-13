@@ -13,10 +13,22 @@ from .agent_connection import AgentConnection, AgentConnectionError
 from .asr_models import get_profile
 from .asr_runtime import inspect_whisper_runtime
 from .desktop import DesktopBridge, _CRAIG_SOURCE_ID, _PROFILE_ORDER
+from .network import NetworkError
 from .paths import CompanionPaths
 from .qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig
 from .qwen_runtime import inspect_qwen_runtime
 from .settings import SettingsStore
+
+_NETWORK_MESSAGES = {
+    "OFFLINE": "Este computador parece estar sem acesso à Internet.",
+    "DNS_FAILED": "Não foi possível resolver o endereço do TDA.",
+    "PROXY_FAILED": "O proxy configurado não conseguiu acessar o TDA.",
+    "CONNECT_TIMEOUT": "A conexão com o TDA demorou demais e expirou.",
+    "TLS_FAILED": "Não foi possível validar a conexão segura com o TDA.",
+    "HTTP_ERROR": "O servidor do TDA respondeu com erro.",
+    "MANIFEST_INVALID": "O canal de atualização respondeu com dados inválidos.",
+    "HASH_MISMATCH": "O arquivo baixado falhou na verificação de integridade.",
+}
 
 
 class SessionDesktopBridge(DesktopBridge):
@@ -51,6 +63,11 @@ class SessionDesktopBridge(DesktopBridge):
             expected_version=VERSION,
         )
         self._last_maintenance_operation_id: str | None = None
+
+    @staticmethod
+    def _friendly_network_error(exc: NetworkError) -> RuntimeError:
+        message = _NETWORK_MESSAGES.get(exc.code, "Não foi possível acessar o serviço online do TDA.")
+        return RuntimeError(f"{message} [{exc.code}]")
 
     @staticmethod
     def _read_maintenance_summary(
@@ -196,6 +213,42 @@ class SessionDesktopBridge(DesktopBridge):
     def restart_agent(self) -> bool:
         return self.client.restart()
 
+    def check_update(self) -> dict[str, object]:
+        try:
+            return super().check_update()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
+    def download_update(self) -> dict[str, object]:
+        try:
+            return super().download_update()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
+    def check_whisper_runtime(self) -> dict[str, object]:
+        try:
+            return super().check_whisper_runtime()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
+    def install_whisper_runtime(self) -> dict[str, object]:
+        try:
+            return super().install_whisper_runtime()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
+    def check_qwen_runtime(self) -> dict[str, object]:
+        try:
+            return super().check_qwen_runtime()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
+    def install_qwen_runtime(self) -> dict[str, object]:
+        try:
+            return super().install_qwen_runtime()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
+
     def _maintenance_helper(self) -> Path:
         operation_id = self._last_maintenance_operation_id
         if operation_id is None:
@@ -236,7 +289,10 @@ class SessionDesktopBridge(DesktopBridge):
 
     def install_update(self) -> dict[str, object]:
         self._last_maintenance_operation_id = None
-        result = super().install_update()
+        try:
+            result = super().install_update()
+        except NetworkError as exc:
+            raise self._friendly_network_error(exc) from None
         operation_id = self._last_maintenance_operation_id
         if result.get("accepted") is True and operation_id is not None:
             return {**result, "operation_id": operation_id}
