@@ -1,4 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function waitForInitialFitView(page: Page) {
+	const viewport = page.locator(".react-flow__viewport");
+	await expect(viewport).toBeVisible();
+	await expect
+		.poll(async () => {
+			const style = (await viewport.getAttribute("style")) ?? "";
+			const normalized = style.replace(/\s+/gu, "");
+			return (
+				normalized.length > 0 &&
+				!normalized.includes("transform:translate(0px,0px)scale(1)")
+			);
+		})
+		.toBeTruthy();
+}
 
 test("desktop navigation overlays without resizing the workspace", async ({ page }, testInfo) => {
 	test.skip(testInfo.project.name === "mobile", "Desktop overlay contract.");
@@ -10,6 +25,7 @@ test("desktop navigation overlays without resizing the workspace", async ({ page
 	const navigation = page.getByTestId("world-workspace-navigation");
 	await expect(workspace).toHaveAttribute("data-world-navigation", "open");
 	await expect(navigation).toBeVisible();
+	await waitForInitialFitView(page);
 
 	const stageBefore = await stage.boundingBox();
 	const canvasBefore = await canvas.boundingBox();
@@ -41,6 +57,7 @@ test("desktop inspector overlays without resizing the canvas", async ({ page }, 
 
 	const canvas = page.getByTestId("world-canvas");
 	const inspector = page.locator('aside[aria-live="polite"]');
+	await waitForInitialFitView(page);
 	const before = await canvas.boundingBox();
 	const transformBefore = await page.locator(".react-flow__viewport").getAttribute("style");
 	await page.getByRole("button", { name: "Recolher painel de detalhes" }).click();
