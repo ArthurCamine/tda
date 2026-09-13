@@ -363,13 +363,6 @@ def _asset_check(client: NetworkClient, manifest: UpdateManifest | None) -> dict
 
 def _network_checks() -> tuple[list[dict[str, Any]], UpdateManifest | None]:
     dns = _dns_check()
-    if dns["status"] != "pass":
-        return [
-            dns,
-            _check("network_https", "unavailable", "HTTPS não testado porque DNS falhou"),
-            _check("network_manifest", "unavailable", "Manifest não testado porque DNS falhou"),
-            _check("network_asset", "unavailable", "Asset não testado porque DNS falhou"),
-        ], None
     client = NetworkClient.internet()
     https = _https_check(client)
     if https["status"] != "pass":
