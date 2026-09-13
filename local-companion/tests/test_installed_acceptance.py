@@ -32,6 +32,31 @@ def test_diagnostic_summary_is_capability_only():
     }
 
 
+def test_diagnostic_summary_accepts_real_run_diagnostics_list_shape():
+    value = summarize_diagnostics(
+        {
+            "overall": "pass",
+            "capabilities": [
+                {"id": "core", "status": "ready", "severity": "info", "message": "Pronto"},
+                {"id": "network", "status": "ready", "severity": "info", "message": "Pronto"},
+                {"id": "maintenance", "status": "ready", "severity": "info", "message": "Pronto"},
+                {"id": "whisper", "status": "degraded", "severity": "degraded", "message": "Modelo ausente"},
+                {"id": "qwen", "status": "blocked", "severity": "blocker", "message": "Gate pendente"},
+            ],
+        }
+    )
+    assert value == {
+        "overall": "pass",
+        "capabilities": {
+            "core": {"state": "ready", "severity": "info"},
+            "network": {"state": "ready", "severity": "info"},
+            "maintenance": {"state": "ready", "severity": "info"},
+            "whisper": {"state": "degraded", "severity": "degraded"},
+            "qwen": {"state": "blocked", "severity": "blocker"},
+        },
+    }
+
+
 def test_receipt_is_written_atomically(tmp_path: Path):
     destination = tmp_path / "receipt.json"
     value = write_receipt(
