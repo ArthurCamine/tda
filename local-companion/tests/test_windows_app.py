@@ -81,7 +81,7 @@ def test_headless_remains_compatibility_alias_for_agent(monkeypatch, tmp_path: P
     assert args.agent is True
 
 
-def test_installed_acceptance_requires_candidate_source_and_result(monkeypatch, tmp_path: Path):
+def test_installed_acceptance_requires_candidate_source_craig_and_result(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     with pytest.raises(SystemExit):
         parse_args(["--installed-acceptance"])
@@ -95,6 +95,8 @@ def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_pa
         str(tmp_path / "candidate.msi"),
         "--acceptance-source-sha",
         "0" * 40,
+        "--acceptance-craig-zip",
+        str(tmp_path / "craig.zip"),
         "--acceptance-result-file",
         str(tmp_path / "receipt.json"),
     ]
@@ -104,4 +106,5 @@ def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_pa
     args = parse_args(argv)
 
     assert args.installed_acceptance is True
+    assert args.acceptance_craig_zip == tmp_path / "craig.zip"
     assert frozenset(args.acceptance_observation or ()) == REQUIRED_OBSERVATIONS
