@@ -146,11 +146,11 @@ def test_runtime_download_uses_verified_release_chain_and_hash(tmp_path: Path, m
         return FakeResponse(payload)
 
     monkeypatch.setattr("tda_companion.asr_runtime_updates.open_verified_release", verified)
-    target = download_whisper_runtime(manifest, tmp_path / "Cache")
+    target = download_whisper_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert target.read_bytes() == payload
     assert calls["request_url"] == manifest.url
     assert calls["url"] == expected
-    assert not target.with_suffix(".partial").exists()
+    assert not target.with_name(target.name + ".partial").exists()
 
 
 def test_runtime_download_maps_rejected_release_chain_to_stable_error(tmp_path: Path, monkeypatch):
@@ -167,7 +167,7 @@ def test_runtime_download_maps_rejected_release_chain_to_stable_error(tmp_path: 
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ReleaseRedirectError("RELEASE_REDIRECT_REJECTED")),
     )
     with pytest.raises(RuntimeError, match="RUNTIME_REDIRECT_REJECTED"):
-        download_whisper_runtime(manifest, tmp_path / "Cache")
+        download_whisper_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
     assert not any((tmp_path / "Cache").rglob("*.partial"))
 
 
@@ -186,4 +186,4 @@ def test_runtime_download_reports_hash_mismatch_as_typed_error(tmp_path: Path, m
     )
 
     with pytest.raises(NetworkError, match="^HASH_MISMATCH$"):
-        download_whisper_runtime(manifest, tmp_path / "Cache")
+        download_whisper_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
