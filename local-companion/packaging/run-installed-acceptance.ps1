@@ -81,7 +81,7 @@ Write-Host "Versão instalada: $version"
 Write-Host "Source SHA candidato: $($SourceSha.ToLowerInvariant())"
 Write-Host "MSI SHA256: $((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
 Write-Host ""
-Write-Host "Este roteiro NÃO executa ações destrutivas automaticamente. Cada interferência no Agent/porta é feita por você e só vira evidência depois de PASS explícito." -ForegroundColor DarkYellow
+Write-Host "Este roteiro NÃO executa ações destrutivas automaticamente. Cada interferência no Agent/porta/rede é feita por você e só vira evidência depois de PASS explícito." -ForegroundColor DarkYellow
 
 $observations = New-Object System.Collections.Generic.List[string]
 
@@ -116,6 +116,14 @@ $diagnosticPrompt = @"
 Abra Diagnóstico na UI instalada. Confirme que o resumo por capability aparece, que erros de rede são tipados/amigáveis e que WebView2 não aparece como ausente enquanto essa mesma UI WebView2 está aberta.
 "@
 if (Confirm-Observation "diagnostics_ui" $diagnosticPrompt) { $observations.Add("diagnostics_ui") }
+
+$downloadPrompt = @"
+Teste um download grande real pelo Companion (Whisper ou Qwen) que ainda precise ser baixado nesta máquina.
+Com o download em andamento, interrompa temporariamente a Internet por tempo suficiente para a chamada da UI deixar de aguardar. O Companion deve informar de forma amigável que o download continua em segundo plano, sem mostrar WinError/URLError/BITS_* cru.
+Feche/oculte e reabra a interface se desejar; isso não deve cancelar o job do Windows. Reconecte a Internet e acione a instalação novamente. O Companion deve reutilizar/retomar a transferência existente e concluir a verificação por tamanho + SHA-256 antes de instalar, sem reiniciar o download completo por causa da queda de rede.
+Digite PASS somente depois de a instalação terminar íntegra e a UI mostrar o runtime como pronto.
+"@
+if (Confirm-Observation "background_download_resume" $downloadPrompt) { $observations.Add("background_download_resume") }
 
 $closePrompt = @"
 Com a preferência 'Ao fechar: Ocultar a interface' e o tray ativo, clique no X. A janela deve desaparecer, o tray deve permanecer e o Agent deve continuar operacional.
