@@ -66,7 +66,7 @@ Copy-Item (Join-Path $dist "TDACompanion") $appRoot -Recurse
     --distpath $maintenanceDist `
     --workpath (Join-Path $work "maintenance") `
     --specpath (Join-Path $work "maintenance") `
-    (Join-Path $PSScriptRoot "maintenance_entry.py")
+    (Join-Path $PSScriptRoot "maintenance_secure_entry.py")
 if ($LASTEXITCODE -ne 0) { throw "MAINTENANCE_PYINSTALLER_FAILED" }
 $maintenanceExe = Join-Path $maintenanceDist "TDACompanionMaintenance.exe"
 if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_NOT_CREATED" }
