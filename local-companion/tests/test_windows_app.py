@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from tda_companion.installed_acceptance import REQUIRED_OBSERVATIONS
 from tda_companion.pairing import TOKEN_PATTERN, ensure_pairing_token
 from tda_companion.windows_app import (
     PRODUCTION_ORIGIN,
@@ -78,3 +79,29 @@ def test_headless_remains_compatibility_alias_for_agent(monkeypatch, tmp_path: P
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     args = parse_args(["--headless"])
     assert args.agent is True
+
+
+def test_installed_acceptance_requires_candidate_source_and_result(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    with pytest.raises(SystemExit):
+        parse_args(["--installed-acceptance"])
+
+
+def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    argv = [
+        "--installed-acceptance",
+        "--acceptance-candidate-msi",
+        str(tmp_path / "candidate.msi"),
+        "--acceptance-source-sha",
+        "0" * 40,
+        "--acceptance-result-file",
+        str(tmp_path / "receipt.json"),
+    ]
+    for observation in sorted(REQUIRED_OBSERVATIONS):
+        argv.extend(["--acceptance-observation", observation])
+
+    args = parse_args(argv)
+
+    assert args.installed_acceptance is True
+    assert frozenset(args.acceptance_observation or ()) == REQUIRED_OBSERVATIONS
