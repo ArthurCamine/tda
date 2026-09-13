@@ -16,6 +16,10 @@ def test_normal_companion_ci_never_publishes_a_stable_release():
     assert "publish-companion-release" not in value
     assert "gh release create" not in value
     assert "contents: write" not in value
+    assert "TDA_BUILD_SOURCE_SHA" not in value  # one canonical source identity only
+    assert "TDA_SOURCE_SHA" in value
+    assert "TDACompanion-payload-manifest.json" in value
+    assert "retention-days: 90" in value
 
 
 def test_rc_workflow_is_manual_reuses_validated_artifact_and_never_rebuilds():
@@ -25,21 +29,28 @@ def test_rc_workflow_is_manual_reuses_validated_artifact_and_never_rebuilds():
     assert "branches: [main, Preview]" not in value
     assert "gh run download" in value
     assert "candidate-manifest" in value
+    assert "--source-tree-sha" in value
+    assert "--payload-manifest" in value
+    assert "TDACompanion-payload-manifest.json" in value
+    assert "RC_RETRY_BYTES_MISMATCH" in value
     assert "--prerelease" in value
     assert "gh release create" in value
     assert "build-windows.ps1" not in value
+    assert "actions/checkout@v7" not in value
 
 
-def test_stable_promotion_is_manual_receipt_gated_and_never_rebuilds_or_reuploads_binaries():
+def test_stable_promotion_is_manual_receipt_gated_content_equivalent_and_never_rebuilds():
     value = _read("companion-promote.yml")
     assert "workflow_dispatch:" in value
     assert "pull_request:" not in value
     assert "branches: [main, Preview]" not in value
     assert "verify-promotion" in value
     assert "docs/companion/acceptance/${RC_TAG}.json" in value
-    assert "git merge-base --is-ancestor" in value
-    assert "git diff --quiet \"$SOURCE_SHA\" HEAD -- local-companion" in value
-    assert "git diff --quiet \"$SOURCE_SHA\" HEAD -- .github/workflows" in value
+    assert "git merge-base --is-ancestor" not in value
+    assert 'git fetch --no-tags origin "$SOURCE_SHA"' in value
+    assert 'git diff --quiet "$SOURCE_SHA" HEAD -- local-companion' in value
+    assert ".github/workflows/companion-rc.yml" in value
+    assert "TDACompanion-payload-manifest.json" in value
     assert "gh release edit \"$RC_TAG\"" in value
     assert "--tag \"$STABLE_TAG\"" in value
     assert "--prerelease=false" in value
@@ -48,3 +59,4 @@ def test_stable_promotion_is_manual_receipt_gated_and_never_rebuilds_or_reupload
     assert "TDACompanion-x64.msi" not in "\n".join(
         line for line in value.splitlines() if "gh release upload" in line
     )
+    assert "actions/checkout@v7" not in value
