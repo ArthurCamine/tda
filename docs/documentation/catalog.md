@@ -179,7 +179,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |
 | [TDA Companion — Reliability R2 evidence](../operations/companion-reliability-r2-evidence.md) | Não declarado | Não declarado | Não declarado |
-| [TDA Companion — confiabilidade, manutenção e aceite real](../operations/companion-reliability.md) | local-companion / processing / operations | arquitetura aprovada — R1 em implementação; stable bloqueada até aceite físico | 2026-09-13 |
+| [TDA Companion — confiabilidade, manutenção e aceite real](../operations/companion-reliability.md) | local-companion / processing / operations | R1/R2 implementados; R3 C-12/C-13/C-14 implementados em candidato; stable bloqueada até aceite físico do artefato exato | 2026-09-13 |
 | [Runbook operacional do banco / Supabase](../operations/database-runbook.md) | dados/Supabase | vigente | 2026-09-07 |
 | [Histórico de deployments](../operations/deployments.md) | operations | vigente | 2026-09-11 |
 | [Login Discord: configuração e verificação](../operations/discord-auth.md) | identity/access | publicado na Production #006; OAuth real, acesso e logout verificados | 2026-09-07 |
