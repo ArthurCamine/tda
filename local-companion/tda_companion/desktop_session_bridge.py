@@ -28,6 +28,13 @@ _NETWORK_MESSAGES = {
     "HTTP_ERROR": "O servidor do TDA respondeu com erro.",
     "MANIFEST_INVALID": "O canal de atualização respondeu com dados inválidos.",
     "HASH_MISMATCH": "O arquivo baixado falhou na verificação de integridade.",
+    "DOWNLOAD_CONTINUES_IN_BACKGROUND": (
+        "O download continua em segundo plano pelo Windows. Aguarde alguns instantes e tente "
+        "novamente; o Companion retomará o mesmo download."
+    ),
+    "DOWNLOAD_OUTPUT_MISSING": (
+        "O Windows concluiu o transporte sem disponibilizar o arquivo esperado. Tente novamente."
+    ),
 }
 
 
@@ -66,7 +73,18 @@ class SessionDesktopBridge(DesktopBridge):
 
     @staticmethod
     def _friendly_network_error(exc: NetworkError) -> RuntimeError:
-        message = _NETWORK_MESSAGES.get(exc.code, "Não foi possível acessar o serviço online do TDA.")
+        if exc.code.startswith("BITS_"):
+            message = (
+                "O serviço de download em segundo plano do Windows encontrou um problema. "
+                "Tente novamente."
+            )
+        elif exc.code.endswith("_SIZE_EXCEEDED") or exc.code.endswith("_SIZE_MISMATCH"):
+            message = "O arquivo baixado não corresponde ao tamanho publicado e foi descartado."
+        else:
+            message = _NETWORK_MESSAGES.get(
+                exc.code,
+                "Não foi possível acessar o serviço online do TDA.",
+            )
         return RuntimeError(f"{message} [{exc.code}]")
 
     @staticmethod
