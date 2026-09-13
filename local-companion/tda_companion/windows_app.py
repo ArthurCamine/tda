@@ -89,15 +89,8 @@ def _entry_command() -> list[str]:
 
 def _agent_arguments(args: argparse.Namespace) -> list[str]:
     values = [
-        "--agent",
-        "--state-root",
-        str(args.state_root),
-        "--data-root",
-        str(args.data_root),
-        "--logs-root",
-        str(args.logs_root),
-        "--port",
-        str(args.port),
+        "--agent", "--state-root", str(args.state_root), "--data-root", str(args.data_root),
+        "--logs-root", str(args.logs_root), "--port", str(args.port),
     ]
     for origin in sorted(args.origins):
         values.extend(["--origin", origin])
@@ -105,20 +98,9 @@ def _agent_arguments(args: argparse.Namespace) -> list[str]:
 
 
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
-    """Ensure the current Agent is available without trusting an arbitrary listener.
-
-    A verified-but-different/foreign listener is deliberately left untouched so the
-    Desktop can render an explicit compatibility/port-conflict state. We only spawn
-    when the loopback endpoint is actually unavailable.
-    """
-    existing = probe_agent(
-        args.port,
-        expected_version=VERSION,
-        timeout=0.5,
-    )
+    existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
     if existing.state in {"exact", "compatible", "foreign", "incompatible"}:
         return None
-
     creationflags = 0
     if os.name == "nt":
         creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -181,31 +163,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rc-artifact-sha256", help=argparse.SUPPRESS)
     parser.add_argument("--rc-result-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-candidate-msi", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-payload-manifest", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-source-sha", help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-craig-zip", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-result-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
-        "--acceptance-observation",
-        action="append",
-        choices=sorted(REQUIRED_OBSERVATIONS),
-        help=argparse.SUPPRESS,
+        "--acceptance-observation", action="append", choices=sorted(REQUIRED_OBSERVATIONS), help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
     if not 1024 <= args.port <= 65535:
         parser.error("INVALID_PORT")
     if args.install_rc_runtime and (
-        args.rc_artifact is None
-        or args.rc_artifact_sha256 is None
-        or args.rc_result_file is None
+        args.rc_artifact is None or args.rc_artifact_sha256 is None or args.rc_result_file is None
     ):
         parser.error("RC_RUNTIME_ARTIFACT_HASH_AND_RESULT_REQUIRED")
     if args.installed_acceptance and (
         args.acceptance_candidate_msi is None
+        or args.acceptance_payload_manifest is None
         or not args.acceptance_source_sha
         or args.acceptance_craig_zip is None
         or args.acceptance_result_file is None
     ):
-        parser.error("ACCEPTANCE_CANDIDATE_SOURCE_CRAIG_AND_RESULT_REQUIRED")
+        parser.error("ACCEPTANCE_CANDIDATE_PAYLOAD_SOURCE_CRAIG_AND_RESULT_REQUIRED")
     origins = args.origin or [PRODUCTION_ORIGIN]
     try:
         args.origins = frozenset(validate_origin(origin) for origin in origins)
@@ -230,22 +209,13 @@ def _install_rc_runtime(args: argparse.Namespace) -> int:
             runtime_root=paths.runtime_root,
             cache_root=paths.cache_root,
         )
-        _atomic_json(
-            result_path,
-            {"schema": "tda_rc_runtime_install_v1", "ok": True, **result},
-        )
+        _atomic_json(result_path, {"schema": "tda_rc_runtime_install_v1", "ok": True, **result})
         return 0
     except RcRuntimeArtifactError as exc:
-        _atomic_json(
-            result_path,
-            {"schema": "tda_rc_runtime_install_v1", "ok": False, "error": exc.code},
-        )
+        _atomic_json(result_path, {"schema": "tda_rc_runtime_install_v1", "ok": False, "error": exc.code})
         return 66
     except BaseException:
-        _atomic_json(
-            result_path,
-            {"schema": "tda_rc_runtime_install_v1", "ok": False, "error": "RC_RUNTIME_INSTALL_FAILED"},
-        )
+        _atomic_json(result_path, {"schema": "tda_rc_runtime_install_v1", "ok": False, "error": "RC_RUNTIME_INSTALL_FAILED"})
         return 70
 
 
@@ -257,6 +227,7 @@ def _run_installed_acceptance(args: argparse.Namespace) -> int:
             paths=_paths_for_args(args),
             port=args.port,
             candidate_msi=args.acceptance_candidate_msi,
+            payload_manifest=args.acceptance_payload_manifest,
             source_sha=args.acceptance_source_sha,
             craig_zip=args.acceptance_craig_zip,
             observations=args.acceptance_observation or (),
@@ -264,22 +235,10 @@ def _run_installed_acceptance(args: argparse.Namespace) -> int:
         )
         return 0 if receipt.get("pass") is True else 66
     except InstalledAcceptanceError as exc:
-        write_receipt(
-            destination,
-            passed=False,
-            stage="validation",
-            checks={},
-            error_code=exc.code,
-        )
+        write_receipt(destination, passed=False, stage="validation", checks={}, error_code=exc.code)
         return 66
     except BaseException:
-        write_receipt(
-            destination,
-            passed=False,
-            stage="validation",
-            checks={},
-            error_code="ACCEPTANCE_EXECUTION_FAILED",
-        )
+        write_receipt(destination, passed=False, stage="validation", checks={}, error_code="ACCEPTANCE_EXECUTION_FAILED")
         return 70
 
 
@@ -287,15 +246,13 @@ def _show_desktop_error(exc: BaseException) -> None:
     try:
         import tkinter as tk
         from tkinter import messagebox
-
         root = tk.Tk()
         root.withdraw()
         messagebox.showerror(
             "TDA Companion",
             "Não foi possível abrir a interface do TDA Companion.\n\n"
             f"Código: {_safe_error_detail(exc)}\n\n"
-            "O Agent local pode continuar funcionando em segundo plano. "
-            "Use o diagnóstico ou reinicie o aplicativo.",
+            "O Agent local pode continuar funcionando em segundo plano. Use o diagnóstico ou reinicie o aplicativo.",
         )
         root.destroy()
     except Exception:
@@ -306,7 +263,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.worker:
         from .asr_worker import run_worker_stdio
-
         return run_worker_stdio()
     if args.install_rc_runtime:
         return _install_rc_runtime(args)
@@ -326,20 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         system_log = SystemLog(paths.logs_root)
 
         if args.agent:
-            system_log.write(
-                "info",
-                "bootstrap",
-                "AGENT_BOOTSTRAP",
-                "TDA Companion Agent starting",
-                {"version": VERSION},
-            )
+            system_log.write("info", "bootstrap", "AGENT_BOOTSTRAP", "TDA Companion Agent starting", {"version": VERSION})
             controller = AgentController(
-                paths.data_root,
-                token,
-                args.origins,
-                args.port,
-                system_log,
-                models_root=paths.models_root,
+                paths.data_root, token, args.origins, args.port, system_log, models_root=paths.models_root,
             )
             controller.run_forever(on_ready=lambda: _write_diagnostic(diagnostic_file, "READY"))
             return 0
@@ -350,9 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         if os.name == "nt":
             set_start_with_windows(bool(settings.snapshot()["start_with_windows"]), executable)
         _write_diagnostic(diagnostic_file, "READY")
-
         from .desktop_runtime import run_desktop
-
         run_desktop(
             token=token,
             port=args.port,
