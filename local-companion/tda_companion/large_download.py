@@ -104,6 +104,8 @@ def _bits_display_name(source_url: str, destination: Path) -> str:
 
 _BITS_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 function Emit([string]$Status, [string]$Code) {
   [ordered]@{ status = $Status; code = $Code } | ConvertTo-Json -Compress
   exit 0
@@ -239,10 +241,12 @@ def _run_bits_transfer(
             check=False,
             creationflags=creationflags,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        if isinstance(_, subprocess.TimeoutExpired):
-            pass
+    except subprocess.TimeoutExpired:
+        # BITS owns the transfer, so killing this observation process must not
+        # cancel the job. A later call reconnects by deterministic display name.
         return "pending"
+    except OSError:
+        return "unavailable"
     if len(process.stdout.encode("utf-8", errors="replace")) > 64 * 1024:
         raise LargeDownloadError("BITS_RESPONSE_INVALID")
     lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
