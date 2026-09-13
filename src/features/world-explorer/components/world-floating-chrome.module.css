@@ -2,23 +2,23 @@
 	position: relative;
 	z-index: 14;
 	display: grid;
-	gap: 8px;
+	gap: 6px;
 	min-width: 0;
-	margin: 0 0 10px;
+	margin: 0 0 4px;
 }
 
 .root .primary {
 	display: grid;
-	grid-template-columns: minmax(280px, 1fr) minmax(210px, 270px) auto auto;
+	grid-template-columns: minmax(320px, 1fr) minmax(190px, 240px) auto auto;
 	align-items: stretch;
-	gap: 8px;
+	gap: 6px;
 	min-width: 0;
 	margin: 0;
-	padding: 6px;
-	border: 1px solid color-mix(in srgb, var(--ds-control-border) 88%, transparent);
+	padding: 4px;
+	border: 1px solid color-mix(in srgb, var(--ds-control-border) 82%, transparent);
 	border-radius: var(--ds-radius-lg);
-	background: color-mix(in srgb, var(--ds-surface-elevated) 84%, transparent);
-	box-shadow: 0 12px 34px color-mix(in srgb, var(--ds-canvas) 58%, transparent);
+	background: color-mix(in srgb, var(--ds-surface-elevated) 82%, transparent);
+	box-shadow: 0 10px 28px color-mix(in srgb, var(--ds-canvas) 48%, transparent);
 	backdrop-filter: blur(18px) saturate(112%);
 }
 
@@ -26,14 +26,14 @@
 .root .relationSurface,
 .root .resetSurface,
 .root .viewSurface {
-	min-height: 44px;
-	border-color: color-mix(in srgb, var(--ds-control-border) 92%, transparent);
-	background: color-mix(in srgb, var(--ds-canvas-subtle) 80%, transparent);
-	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ds-foreground) 5%, transparent);
+	min-height: 40px;
+	border-color: color-mix(in srgb, var(--ds-control-border) 86%, transparent);
+	background: color-mix(in srgb, var(--ds-canvas-subtle) 72%, transparent);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ds-foreground) 4%, transparent);
 }
 
 .root .searchSurface {
-	padding-inline: 13px;
+	padding-inline: 11px;
 }
 
 .searchGlyph {
@@ -47,33 +47,33 @@
 }
 
 .root .relationSurface {
-	padding-left: 12px;
+	padding-left: 10px;
 }
 
 .root .resetSurface {
 	grid-column: auto;
 	min-width: max-content;
-	padding-inline: 15px;
+	padding-inline: 13px;
 	white-space: nowrap;
 }
 
 .root .viewSurface {
 	align-self: stretch;
-	padding: 3px;
+	padding: 2px;
 	border-radius: var(--ds-radius-md);
 }
 
 .root .viewSurface button {
 	position: relative;
-	min-width: 40px;
-	min-height: 40px;
-	padding: 0 10px;
+	min-width: 36px;
+	min-height: 36px;
+	padding: 0 9px;
 }
 
 .viewGlyph {
 	display: inline-grid;
 	place-items: center;
-	font: 700 0.92rem/1 var(--ds-font-ui);
+	font: 700 0.9rem/1 var(--ds-font-ui);
 }
 
 .viewLabel {
@@ -90,19 +90,24 @@
 
 .secondary {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 10px;
 	min-width: 0;
-	padding: 0 2px;
+	padding: 0 6px;
 }
 
 .root .filterRail {
-	flex: 1 1 auto;
+	flex: 0 1 auto;
 	min-width: 0;
 	margin: 0;
-	padding: 0;
-	gap: 7px;
+	padding: 3px;
+	gap: 2px;
+	border: 1px solid color-mix(in srgb, var(--ds-control-border) 72%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--ds-surface-elevated) 76%, transparent);
+	box-shadow: 0 8px 24px color-mix(in srgb, var(--ds-canvas) 38%, transparent);
+	backdrop-filter: blur(16px) saturate(108%);
 	scrollbar-width: none;
 }
 
@@ -112,48 +117,61 @@
 }
 
 .root .filterChip {
-	min-height: 36px;
-	padding: 0 13px;
-	border-color: color-mix(in srgb, var(--ds-control-border) 84%, transparent);
-	background: color-mix(in srgb, var(--ds-surface-elevated) 78%, transparent);
-	box-shadow: 0 8px 20px color-mix(in srgb, var(--ds-canvas) 34%, transparent);
-	backdrop-filter: blur(12px);
+	min-height: 30px;
+	padding: 0 10px;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	backdrop-filter: none;
+	color: var(--ds-foreground-muted);
 }
 
-.root .filterChipActive {
-	border-color: color-mix(in srgb, var(--ds-accent) 86%, var(--ds-control-border));
-	background: color-mix(in srgb, var(--ds-accent-muted) 72%, var(--ds-surface-elevated));
+.root .filterChip:hover,
+.root .filterChip:focus-visible {
+	border: 0;
+	background: color-mix(in srgb, var(--ds-surface-hover) 76%, transparent);
 	color: var(--ds-foreground);
-	box-shadow:
-		inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 15%, transparent),
-		0 8px 22px color-mix(in srgb, var(--ds-accent) 10%, transparent);
+}
+
+.root .filterChipActive,
+.root .filterChipActive:hover,
+.root .filterChipActive:focus-visible {
+	border: 0;
+	background: color-mix(in srgb, var(--ds-accent-muted) 78%, var(--ds-surface-elevated));
+	color: var(--ds-foreground);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 38%, transparent);
 }
 
 .root .legendRail {
 	flex: 0 1 auto;
 	min-width: 0;
-	max-width: 52%;
+	max-width: 48%;
 	margin: 0;
-	padding: 0;
-	gap: 6px;
+	padding: 3px 5px;
+	gap: 2px;
+	border: 1px solid color-mix(in srgb, var(--ds-control-border) 54%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--ds-surface-elevated) 58%, transparent);
+	box-shadow: 0 8px 24px color-mix(in srgb, var(--ds-canvas) 26%, transparent);
+	backdrop-filter: blur(14px);
 	scrollbar-width: none;
 }
 
 .root .legendItem {
-	min-height: 30px;
-	padding: 0 9px;
-	border: 1px solid color-mix(in srgb, var(--ds-control-border) 72%, transparent);
+	min-height: 26px;
+	padding: 0 7px;
+	border: 0;
 	border-radius: 999px;
-	background: color-mix(in srgb, var(--ds-surface-elevated) 64%, transparent);
-	backdrop-filter: blur(10px);
+	background: transparent;
+	backdrop-filter: none;
 }
 
 .root .legendItem::before {
-	width: 14px;
-	height: 3px;
+	width: 12px;
+	height: 2px;
 	border-radius: 999px;
 	background: var(--world-relation-color, var(--world-edge-context));
-	box-shadow: 0 0 8px color-mix(in srgb, var(--world-relation-color, var(--world-edge-context)) 72%, transparent);
+	box-shadow: 0 0 6px color-mix(in srgb, var(--world-relation-color, var(--world-edge-context)) 62%, transparent);
 }
 
 .legendItem[data-family="affinity"] { --world-relation-color: var(--world-edge-affinity); }
@@ -163,24 +181,44 @@
 .legendItem[data-family="creative"] { --world-relation-color: var(--world-edge-creative); }
 .legendItem[data-family="origin"] { --world-relation-color: var(--world-edge-origin); }
 
+@media (min-width: 1081px) {
+	.secondary {
+		position: absolute;
+		top: calc(100% + 5px);
+		left: 0;
+		right: 0;
+		z-index: 2;
+		pointer-events: none;
+	}
+
+	.root .filterRail,
+	.root .legendRail {
+		pointer-events: auto;
+	}
+}
+
 @media (min-width: 1121px) {
 	.root + :global([data-testid="world-canvas"]) {
-		height: clamp(500px, calc(100dvh - 210px), 940px);
-		min-height: 500px;
+		height: clamp(540px, calc(100dvh - 158px), 980px);
+		min-height: 540px;
 	}
 }
 
 @media (max-width: 1280px) {
 	.root .primary {
-		grid-template-columns: minmax(0, 1fr) minmax(205px, 250px) auto auto;
+		grid-template-columns: minmax(0, 1fr) minmax(185px, 225px) auto auto;
 	}
 
 	.root .legendRail {
-		max-width: 46%;
+		max-width: 43%;
 	}
 }
 
 @media (max-width: 1080px) {
+	.root {
+		margin-bottom: 8px;
+	}
+
 	.root .primary {
 		grid-template-columns: minmax(0, 1fr) auto auto;
 	}
@@ -196,7 +234,8 @@
 	.secondary {
 		align-items: flex-start;
 		flex-direction: column;
-		gap: 7px;
+		gap: 6px;
+		padding: 0;
 	}
 
 	.root .filterRail,
@@ -217,6 +256,13 @@
 		gap: 7px;
 		padding: 5px;
 		border-radius: var(--ds-radius-md);
+	}
+
+	.root .searchSurface,
+	.root .relationSurface,
+	.root .resetSurface,
+	.root .viewSurface {
+		min-height: 44px;
 	}
 
 	.root .searchSurface {
@@ -250,8 +296,13 @@
 		min-height: 44px;
 	}
 
+	.root .filterRail {
+		padding: 3px;
+	}
+
 	.root .filterChip {
 		min-height: 44px;
+		padding-inline: 12px;
 	}
 
 	.secondary {
