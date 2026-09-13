@@ -1,168 +1,302 @@
 import { createHash } from "node:crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PUBLIC_BUCKET = "tda-media-public";
 const PUBLIC_ORIGIN = "https://media.dnd.faysk.dev";
+const CHUNK_BYTES = 4096;
 
 const assets = {
-	"backgroud_jornada.avif": {
-		bytes: 44678,
-		sha256: "04ae4968021a938e8a8e738bbe84fea20f8e0900bba0be2b6cba70bc635e06b5",
-		type: "image/avif",
-	},
-	"despedida_pais_background.avif": {
-		bytes: 43481,
-		sha256: "f096873034fe4cd14c1cfd24849dcf2fa127bcd65964dc9dd244846a7487421e",
-		type: "image/avif",
-	},
-	"despedida_pais_destaque.avif": {
-		bytes: 46697,
-		sha256: "025d9245cb769525756e7fc9511257d22617905524c4c1c6764dce4fc4cbed86",
-		type: "image/avif",
-	},
-	"despedida_tios_backgroud.avif": {
-		bytes: 42002,
-		sha256: "6e094723afb19b7be52115ecccfc291d699ead15e66bdea688befef07638c803",
-		type: "image/avif",
-	},
-	"despedida_tios_destaque-personagem.avif": {
-		bytes: 33161,
-		sha256: "b065a145edf1f07651a49624bbd3be0740e0e167557a23fcba3a47990460f2bc",
-		type: "image/avif",
-	},
-	"jornada.avif": {
-		bytes: 52590,
-		sha256: "e14ea119456bdd8688d96c6d9f854f90493480f6bedc6a1d1f871610904b3575",
-		type: "image/avif",
-	},
-	"maos_sobre_mapa_matilha.avif": {
-		bytes: 16734,
-		sha256: "585df10d13dfbb442d9a12daafe22b1589c99c4397fd560f2b7911e8e3a3d4de",
-		type: "image/avif",
-	},
-	"mapa_matilha_sem_mao.avif": {
-		bytes: 84082,
-		sha256: "84e87577d93d06b69e9b5d9ff644e2d860cae32ee4542b8e0a7c523124c6850c",
-		type: "image/avif",
-	},
-	"sonho-paralax_personagem.avif": {
-		bytes: 20734,
-		sha256: "0a6d758ad05a37b84040e7548dbf693612fd55c4272f1f0a018a902213e1cca2",
-		type: "image/avif",
-	},
-	"sonho_paralax_backgroud.avif": {
-		bytes: 16786,
-		sha256: "bcf5985f7f43bb50e40d36fc40a6e35192343cf39d9159a479ad0a62f3bab655",
-		type: "image/avif",
-	},
-	"sonho_paralax_espirito.avif": {
-		bytes: 13665,
-		sha256: "650c460bad660ecb35184f1208771ec8659103735bdd797d1a7583369d7756da",
-		type: "image/avif",
-	},
-	"sonho_paralax_nevoa.avif": {
-		bytes: 14532,
-		sha256: "dcfd8cfb7c1ab21a47a4441e34497935de06865140e0f79a56a9c0d63ea5cbb2",
-		type: "image/avif",
-	},
-	"yllith.avif": {
-		bytes: 73407,
-		sha256: "d8d2f723883922f2b31682d946e4278bbe178c7ad769b69cf08cd2ed4eaca288",
-		type: "image/avif",
-	},
-	"yllith_jornada.avif": {
-		bytes: 33469,
-		sha256: "92b5a5922c776170d251afa3190e33e62aab1fb6e1cd9465df437129608a8cad",
-		type: "image/avif",
-	},
-	"social-yllith.jpg": {
-		bytes: 225462,
-		sha256: "c06d0be79fef0ef58d710f0243567724ed457610cbe657845e8297f41377cac9",
-		type: "image/jpeg",
-	},
+  "backgroud_jornada.avif": {
+    "bytes": 44678,
+    "sha256": "04ae4968021a938e8a8e738bbe84fea20f8e0900bba0be2b6cba70bc635e06b5",
+    "type": "image/avif",
+    "parts": 11
+  },
+  "despedida_pais_background.avif": {
+    "bytes": 43481,
+    "sha256": "f096873034fe4cd14c1cfd24849dcf2fa127bcd65964dc9dd244846a7487421e",
+    "type": "image/avif",
+    "parts": 11
+  },
+  "despedida_pais_destaque.webp": {
+    "bytes": 56612,
+    "sha256": "88c7ce480d435e1f565faa2a257ea645da65d54d8a066a506b0672345f45484f",
+    "type": "image/webp",
+    "parts": 14
+  },
+  "despedida_tios_backgroud.avif": {
+    "bytes": 42002,
+    "sha256": "6e094723afb19b7be52115ecccfc291d699ead15e66bdea688befef07638c803",
+    "type": "image/avif",
+    "parts": 11
+  },
+  "despedida_tios_destaque-personagem.webp": {
+    "bytes": 32900,
+    "sha256": "8f06c91fc38b1ab98f918d390632b7859068f39e7664cf33842f5296def7ba9d",
+    "type": "image/webp",
+    "parts": 9
+  },
+  "maos_sobre_mapa_matilha.webp": {
+    "bytes": 20272,
+    "sha256": "4f76223c2b0b4065beb6457173bf8a3a684715c7fcf76a395ccc7e252c0734d4",
+    "type": "image/webp",
+    "parts": 5
+  },
+  "mapa_matilha_sem_mao.avif": {
+    "bytes": 84082,
+    "sha256": "84e87577d93d06b69e9b5d9ff644e2d860cae32ee4542b8e0a7c523124c6850c",
+    "type": "image/avif",
+    "parts": 21
+  },
+  "social-yllith.jpg": {
+    "bytes": 65609,
+    "sha256": "b9858046c31ddc338fafe822b8c6132d4b4a4383c5f11b7b6e536943f8509f48",
+    "type": "image/jpeg",
+    "parts": 17
+  },
+  "sonho-paralax_personagem.webp": {
+    "bytes": 22930,
+    "sha256": "34a720045e7b9886d152e6b67cdb161c1f81194579cf693c4a0750ad2a055fab",
+    "type": "image/webp",
+    "parts": 6
+  },
+  "sonho_paralax_backgroud.avif": {
+    "bytes": 16786,
+    "sha256": "bcf5985f7f43bb50e40d36fc40a6e35192343cf39d9159a479ad0a62f3bab655",
+    "type": "image/avif",
+    "parts": 5
+  },
+  "sonho_paralax_espirito.webp": {
+    "bytes": 18090,
+    "sha256": "52dcd41179659ff80bb0b55bab50862a4d4449d726a5dd3a0b50af5db02800fd",
+    "type": "image/webp",
+    "parts": 5
+  },
+  "sonho_paralax_nevoa.webp": {
+    "bytes": 22342,
+    "sha256": "1bc774679515e7524ed4db58738455554c8eeef298042a7cff365ca41ed05b2b",
+    "type": "image/webp",
+    "parts": 6
+  },
+  "yllith.webp": {
+    "bytes": 98122,
+    "sha256": "77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f",
+    "type": "image/webp",
+    "parts": 24
+  },
+  "yllith_jornada.webp": {
+    "bytes": 34612,
+    "sha256": "24f564be0e4a17610dc2d6eaec92dcbcff139440dcf64ead30c982e0b2c5f886",
+    "type": "image/webp",
+    "parts": 9
+  }
 } as const;
 
 type AssetName = keyof typeof assets;
 
+function isAssetName(value: string | null): value is AssetName {
+  return Boolean(value && value in assets);
+}
+
 function isConfigured() {
-	return Boolean(
-		process.env.R2_PUBLIC_BUCKET === PUBLIC_BUCKET &&
-			process.env.R2_ACCOUNT_ID &&
-			process.env.R2_ACCESS_KEY_ID &&
-			process.env.R2_SECRET_ACCESS_KEY,
-	);
+  return Boolean(
+    process.env.R2_PUBLIC_BUCKET === PUBLIC_BUCKET &&
+      process.env.R2_ACCOUNT_ID &&
+      process.env.R2_ACCESS_KEY_ID &&
+      process.env.R2_SECRET_ACCESS_KEY,
+  );
+}
+
+function client() {
+  return new S3Client({
+    region: "auto",
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+    requestChecksumCalculation: "WHEN_REQUIRED",
+  });
+}
+
+function finalKey(name: AssetName) {
+  return `lore/yllith/${assets[name].sha256}/${name}`;
+}
+
+function stagingKey(name: AssetName, part: number) {
+  return `lore/yllith/.staging-v2/${assets[name].sha256}/${part}.part`;
 }
 
 function publicUrl(name: AssetName) {
-	const asset = assets[name];
-	return `${PUBLIC_ORIGIN}/lore/yllith/${asset.sha256}/${name}`;
+  return `${PUBLIC_ORIGIN}/${finalKey(name)}`;
 }
 
-export async function GET() {
-	return Response.json({
-		environment: process.env.APP_ENV ?? null,
-		configured: isConfigured(),
-		assets: Object.keys(assets).map((name) => ({
-			name,
-			url: publicUrl(name as AssetName),
-		})),
-	});
+function sha256(bytes: Uint8Array) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
-export async function POST(request: Request) {
-	if (process.env.APP_ENV !== "preview") {
-		return Response.json({ error: "preview-only endpoint" }, { status: 404 });
-	}
-	if (!isConfigured()) {
-		return Response.json({ error: "R2 configuration unavailable" }, { status: 503 });
-	}
+function decodeBase64Url(value: string) {
+  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
 
-	const name = new URL(request.url).searchParams.get("file") as AssetName | null;
-	if (!name || !(name in assets)) {
-		return Response.json({ error: "unknown asset" }, { status: 400 });
-	}
+async function bodyBytes(body: unknown) {
+  const candidate = body as { transformToByteArray?: () => Promise<Uint8Array> };
+  if (!candidate.transformToByteArray) throw new Error("R2 body is not byte-readable");
+  return Buffer.from(await candidate.transformToByteArray());
+}
 
-	const asset = assets[name];
-	const bytes = Buffer.from(await request.arrayBuffer());
-	if (bytes.length !== asset.bytes) {
-		return Response.json({ error: "byte length mismatch" }, { status: 422 });
-	}
+function json(data: unknown, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "no-store");
+  return Response.json(data, { ...init, headers });
+}
 
-	const digest = createHash("sha256").update(bytes).digest("hex");
-	if (digest !== asset.sha256) {
-		return Response.json({ error: "sha256 mismatch" }, { status: 422 });
-	}
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const file = url.searchParams.get("file");
+  const partParam = url.searchParams.get("part");
+  const dataParam = url.searchParams.get("data");
+  const finalize = url.searchParams.get("finalize");
+  const verify = url.searchParams.get("verify");
 
-	const client = new S3Client({
-		region: "auto",
-		endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-		credentials: {
-			accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-			secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-		},
-		requestChecksumCalculation: "WHEN_REQUIRED",
-	});
+  const writes = Boolean(finalize || (file && partParam !== null && dataParam !== null));
+  const verifies = Boolean(verify);
 
-	const key = `lore/yllith/${asset.sha256}/${name}`;
-	await client.send(
-		new PutObjectCommand({
-			Bucket: PUBLIC_BUCKET,
-			Key: key,
-			Body: bytes,
-			ContentType: asset.type,
-			CacheControl: "public, max-age=31536000, immutable",
-		}),
-	);
+  if (!writes && !verifies) {
+    return json({
+      environment: process.env.APP_ENV ?? null,
+      configured: isConfigured(),
+      protocol: "yllith-r2-bootstrap-v2",
+      policy: "fixed immutable content-addressed media only",
+      chunkBytes: CHUNK_BYTES,
+      assets: (Object.keys(assets) as AssetName[]).map((name) => ({
+        name,
+        bytes: assets[name].bytes,
+        sha256: assets[name].sha256,
+        parts: assets[name].parts,
+        url: publicUrl(name),
+      })),
+    });
+  }
 
-	return Response.json({
-		ok: true,
-		name,
-		sha256: digest,
-		bytes: bytes.length,
-		key,
-		url: publicUrl(name),
-	});
+  if (process.env.APP_ENV !== "production") {
+    return json({ error: "production bootstrap only" }, { status: 404 });
+  }
+  if (!isConfigured()) {
+    return json({ error: "R2 configuration unavailable" }, { status: 503 });
+  }
+
+  const s3 = client();
+
+  if (verify) {
+    if (!isAssetName(verify)) return json({ error: "unknown asset" }, { status: 400 });
+    try {
+      const head = await s3.send(
+        new HeadObjectCommand({ Bucket: PUBLIC_BUCKET, Key: finalKey(verify) }),
+      );
+      return json({
+        ok: head.ContentLength === assets[verify].bytes,
+        name: verify,
+        expectedBytes: assets[verify].bytes,
+        remoteBytes: head.ContentLength ?? null,
+        url: publicUrl(verify),
+      });
+    } catch {
+      return json({ ok: false, name: verify }, { status: 404 });
+    }
+  }
+
+  if (finalize) {
+    if (!isAssetName(finalize)) return json({ error: "unknown asset" }, { status: 400 });
+    const spec = assets[finalize];
+    const pieces: Buffer[] = [];
+    for (let part = 0; part < spec.parts; part += 1) {
+      const result = await s3.send(
+        new GetObjectCommand({ Bucket: PUBLIC_BUCKET, Key: stagingKey(finalize, part) }),
+      );
+      if (!result.Body) return json({ error: "missing part", name: finalize, part }, { status: 409 });
+      pieces.push(await bodyBytes(result.Body));
+    }
+    const bytes = Buffer.concat(pieces);
+    const digest = sha256(bytes);
+    if (bytes.length !== spec.bytes || digest !== spec.sha256) {
+      return json(
+        {
+          error: "final integrity mismatch",
+          name: finalize,
+          expectedBytes: spec.bytes,
+          actualBytes: bytes.length,
+          expectedSha256: spec.sha256,
+          actualSha256: digest,
+        },
+        { status: 409 },
+      );
+    }
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: PUBLIC_BUCKET,
+        Key: finalKey(finalize),
+        Body: bytes,
+        ContentType: spec.type,
+        CacheControl: "public, max-age=31536000, immutable",
+      }),
+    );
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: PUBLIC_BUCKET,
+        Delete: {
+          Objects: Array.from({ length: spec.parts }, (_, part) => ({
+            Key: stagingKey(finalize, part),
+          })),
+          Quiet: true,
+        },
+      }),
+    );
+    return json({
+      ok: true,
+      finalized: true,
+      name: finalize,
+      bytes: bytes.length,
+      sha256: digest,
+      url: publicUrl(finalize),
+    });
+  }
+
+  if (!isAssetName(file)) return json({ error: "unknown asset" }, { status: 400 });
+  const spec = assets[file];
+  const part = Number(partParam);
+  if (!Number.isSafeInteger(part) || part < 0 || part >= spec.parts) {
+    return json({ error: "unknown part" }, { status: 400 });
+  }
+  if (!dataParam) return json({ error: "missing data" }, { status: 400 });
+
+  const bytes = decodeBase64Url(dataParam);
+  const expectedBytes =
+    part === spec.parts - 1 ? spec.bytes - CHUNK_BYTES * (spec.parts - 1) : CHUNK_BYTES;
+  if (bytes.length !== expectedBytes) {
+    return json(
+      { error: "part length mismatch", name: file, part, expectedBytes, actualBytes: bytes.length },
+      { status: 422 },
+    );
+  }
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: PUBLIC_BUCKET,
+      Key: stagingKey(file, part),
+      Body: bytes,
+      ContentType: "application/octet-stream",
+      CacheControl: "no-store",
+    }),
+  );
+  return json({ ok: true, staged: true, name: file, part, bytes: bytes.length });
 }
