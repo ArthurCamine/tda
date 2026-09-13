@@ -6,17 +6,29 @@ import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from . import VERSION
 from .paths import CompanionPaths
 
 INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v1"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
 _ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
 _ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
 _PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript"})
+REQUIRED_OBSERVATIONS = frozenset(
+    {
+        "agent_recovery",
+        "port_conflict",
+        "diagnostics_ui",
+        "close_hides_ui",
+        "tray_exit",
+        "craig_selected",
+        "craig_survives_agent_loss",
+    }
+)
 
 
 class InstalledAcceptanceError(RuntimeError):
@@ -59,6 +71,19 @@ def verify_installed_layout(executable: Path, paths: CompanionPaths) -> dict[str
         "version": VERSION,
         "executable_sha256": exe_sha256,
         "maintenance_helper_sha256": helper_sha256,
+    }
+
+
+def verify_candidate(candidate_msi: Path, source_sha: str) -> dict[str, object]:
+    candidate = candidate_msi.resolve()
+    if candidate.suffix.casefold() != ".msi" or not candidate.is_file():
+        raise InstalledAcceptanceError("ACCEPTANCE_CANDIDATE_MSI_INVALID")
+    normalized_source = source_sha.strip().casefold()
+    if not _SOURCE_SHA.fullmatch(normalized_source):
+        raise InstalledAcceptanceError("ACCEPTANCE_SOURCE_SHA_INVALID")
+    return {
+        "source_sha": normalized_source,
+        "msi_sha256": sha256_file(candidate),
     }
 
 
@@ -163,3 +188,58 @@ def write_receipt(
         os.fsync(handle.fileno())
     os.replace(temporary, target)
     return receipt
+
+
+def finalize_installed_acceptance(
+    *,
+    executable: Path,
+    paths: CompanionPaths,
+    port: int,
+    candidate_msi: Path,
+    source_sha: str,
+    observations: Iterable[str],
+    destination: Path,
+) -> dict[str, object]:
+    observed = frozenset(str(value).strip() for value in observations if str(value).strip())
+    if observed != REQUIRED_OBSERVATIONS:
+        return write_receipt(
+            destination,
+            passed=False,
+            stage="manual_observations",
+            checks={
+                "observations": {
+                    name: name in observed for name in sorted(REQUIRED_OBSERVATIONS)
+                }
+            },
+            error_code="ACCEPTANCE_OBSERVATIONS_INCOMPLETE",
+        )
+
+    artifact = {
+        **verify_candidate(candidate_msi, source_sha),
+        **verify_installed_layout(executable, paths),
+    }
+
+    from .diagnostics import run_diagnostics
+
+    diagnostic_summary = summarize_diagnostics(run_diagnostics(paths, port))
+    capabilities = diagnostic_summary.get("capabilities")
+    if not isinstance(capabilities, dict):
+        capabilities = {}
+    required_capabilities = ("core", "network", "maintenance")
+    operational = all(
+        isinstance(capabilities.get(name), dict)
+        and capabilities[name].get("state") == "ready"
+        for name in required_capabilities
+    )
+    checks: dict[str, object] = {
+        "observations": {name: True for name in sorted(REQUIRED_OBSERVATIONS)},
+        "diagnostics": diagnostic_summary,
+    }
+    return write_receipt(
+        destination,
+        passed=operational,
+        stage="completed" if operational else "diagnostics",
+        checks=checks,
+        artifact=artifact,
+        error_code=None if operational else "ACCEPTANCE_CAPABILITY_NOT_READY",
+    )
