@@ -208,6 +208,38 @@ def test_bits_complete_uses_direct_github_asset_and_still_verifies_bytes(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="BITS is a Windows transport")
+def test_complete_bits_partial_is_acknowledged_before_local_promotion(tmp_path: Path, monkeypatch):
+    payload = b"already-transferred"
+    target = tmp_path / "TDACompanion-x64.msi"
+    partial = target.with_name(target.name + ".partial")
+    partial.write_bytes(payload)
+    seen: list[Path] = []
+
+    def acknowledge(_source_url: str, destination: Path, *, timeout: float) -> str:
+        assert timeout == 2.0
+        seen.append(destination)
+        assert destination.read_bytes() == payload
+        return "complete"
+
+    monkeypatch.setattr("tda_companion.large_download._run_bits_transfer", acknowledge)
+    result = download_verified_release_asset(
+        target=target,
+        github_url=_url(),
+        expected_size=len(payload),
+        expected_sha256=_sha(payload),
+        timeout=2.0,
+        fallback_open=lambda: (_ for _ in ()).throw(AssertionError("fallback should not run")),
+        prefer_bits=True,
+        size_exceeded_code="TEST_SIZE_EXCEEDED",
+        size_mismatch_code="TEST_SIZE_MISMATCH",
+    )
+
+    assert seen == [partial.resolve()]
+    assert result.read_bytes() == payload
+    assert not partial.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="BITS is a Windows transport")
 def test_bits_pending_keeps_job_owned_transfer_for_later_retry(tmp_path: Path, monkeypatch):
     payload = b"still-downloading"
 
