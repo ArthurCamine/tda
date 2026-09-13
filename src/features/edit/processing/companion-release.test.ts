@@ -75,11 +75,12 @@ describe("selectLatestCompanionTag", () => {
 		).toBe("companion-v1.0.0");
 	});
 
-	it("ignores malformed tags", () => {
+	it("ignores malformed, prerelease-shaped and RC tags", () => {
 		expect(
 			selectLatestCompanionTag([
 				{ ref: "refs/tags/companion-v1.0" },
 				{ ref: "refs/tags/companion-v1.0.0-beta" },
+				{ ref: "refs/tags/companion-rc-v9.9.9-abcdef123456" },
 				{ ref: "refs/heads/companion-v9.0.0" },
 			]),
 		).toBeNull();
