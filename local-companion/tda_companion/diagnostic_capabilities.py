@@ -54,9 +54,7 @@ def _summary(
     degraded: list[str] | None = None,
 ) -> dict[str, Any]:
     blockers = list(dict.fromkeys(blockers))
-    degraded = [
-        code for code in dict.fromkeys(degraded or []) if code not in blockers
-    ]
+    degraded = [code for code in dict.fromkeys(degraded or []) if code not in blockers]
     if blockers:
         status = "blocked"
         severity = "blocker"
@@ -93,14 +91,12 @@ def build_capabilities(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     core_degraded = ["disk"] if _status(values, "disk") == "warning" else []
     core = _summary("core", core_blockers, core_degraded)
 
-    network_blockers = _not_pass(
-        values,
-        ("network_https", "network_manifest", "network_asset"),
-    )
-    network_degraded = []
-    if not network_blockers and _status(values, "network_dns") != "pass":
-        network_degraded.append("network_dns")
-    network = _summary("network", network_blockers, network_degraded)
+    network_blockers = _not_pass(values, ("network_https", "network_manifest", "network_asset"))
+    # Direct DNS is diagnostic only. In proxy-managed environments the effective
+    # resolution can happen inside the proxy while HTTPS/manifest/asset all work.
+    # End-to-end success is the readiness signal; a direct DNS miss must not make
+    # an otherwise functional production path fail physical acceptance.
+    network = _summary("network", network_blockers)
 
     maintenance_codes = (
         "maintenance_metadata",
@@ -130,11 +126,7 @@ def build_capabilities(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ("qwen_model_fast", "qwen_gate_fast"),
         ("qwen_model_quality", "qwen_gate_quality"),
     )
-    ready_qwen = [
-        pair
-        for pair in qwen_profiles
-        if all(_status(values, code) == "pass" for code in pair)
-    ]
+    ready_qwen = [pair for pair in qwen_profiles if all(_status(values, code) == "pass" for code in pair)]
     qwen_degraded: list[str] = []
     if not ready_qwen:
         for pair in qwen_profiles:
@@ -149,10 +141,7 @@ def build_capabilities(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def overall_status(capabilities: list[dict[str, Any]]) -> str:
-    values = {
-        str(capability.get("id")): str(capability.get("status"))
-        for capability in capabilities
-    }
+    values = {str(capability.get("id")): str(capability.get("status")) for capability in capabilities}
     if values.get("core") == "blocked":
         return "fail"
     if values.get("whisper") == "blocked" and values.get("qwen") == "blocked":
