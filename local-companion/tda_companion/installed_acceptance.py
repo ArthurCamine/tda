@@ -87,6 +87,20 @@ def verify_candidate(candidate_msi: Path, source_sha: str) -> dict[str, object]:
     }
 
 
+def verify_craig_fixture(craig_zip: Path) -> dict[str, object]:
+    from .craig import CraigPackageError, inspect_craig_zip
+
+    source = craig_zip.resolve()
+    try:
+        tracks, _info, _raw_present = inspect_craig_zip(source)
+    except CraigPackageError as exc:
+        raise InstalledAcceptanceError("ACCEPTANCE_CRAIG_FIXTURE_INVALID") from exc
+    return {
+        "track_count": len(tracks),
+        "zip_sha256": sha256_file(source),
+    }
+
+
 def summarize_diagnostics(value: dict[str, Any]) -> dict[str, object]:
     overall = str(value.get("overall") or "unknown")
     raw_capabilities = value.get("capabilities")
@@ -197,6 +211,7 @@ def finalize_installed_acceptance(
     port: int,
     candidate_msi: Path,
     source_sha: str,
+    craig_zip: Path,
     observations: Iterable[str],
     destination: Path,
 ) -> dict[str, object]:
@@ -218,6 +233,7 @@ def finalize_installed_acceptance(
         **verify_candidate(candidate_msi, source_sha),
         **verify_installed_layout(executable, paths),
     }
+    craig_fixture = verify_craig_fixture(craig_zip)
 
     from .diagnostics import run_diagnostics
 
@@ -233,6 +249,7 @@ def finalize_installed_acceptance(
     )
     checks: dict[str, object] = {
         "observations": {name: True for name in sorted(REQUIRED_OBSERVATIONS)},
+        "craig_fixture": craig_fixture,
         "diagnostics": diagnostic_summary,
     }
     return write_receipt(
