@@ -332,15 +332,31 @@ def _manifest_check(client: NetworkClient) -> tuple[dict[str, Any], UpdateManife
         return _check("network_manifest", "fail", "Manifest stable não pôde ser validado", exc.code), None
 
 
+def _asset_total_size(response: Any) -> int | None:
+    if response.status == 206:
+        content_range = str(response.headers.get("Content-Range") or "")
+        prefix = "bytes 0-0/"
+        if not content_range.startswith(prefix):
+            return None
+        raw_total = content_range[len(prefix) :]
+    else:
+        raw_total = str(response.headers.get("Content-Length") or "")
+    try:
+        total = int(raw_total)
+    except ValueError:
+        return None
+    return total if total > 0 else None
+
+
 def _asset_check(client: NetworkClient, manifest: UpdateManifest | None) -> dict[str, Any]:
     if manifest is None:
         return _check("network_asset", "unavailable", "Asset stable não foi testado porque o manifest falhou")
     request = urllib.request.Request(
         manifest.url,
-        method="HEAD",
         headers={
             "Accept": "application/x-msi,application/octet-stream",
             "Cache-Control": "no-store",
+            "Range": "bytes=0-0",
             "User-Agent": "TDACompanion",
         },
     )
@@ -348,14 +364,11 @@ def _asset_check(client: NetworkClient, manifest: UpdateManifest | None) -> dict
         with client.open(request, timeout=6.0) as response:
             if response.status not in {200, 206}:
                 return _check("network_asset", "fail", "Asset stable respondeu com erro", f"HTTP_{response.status}")
-            raw_size = response.headers.get("Content-Length")
-            if raw_size:
-                try:
-                    size = int(raw_size)
-                except ValueError:
-                    return _check("network_asset", "fail", "Asset stable retornou tamanho inválido", "ASSET_SIZE_INVALID")
-                if response.status == 200 and size != manifest.size:
-                    return _check("network_asset", "fail", "Asset stable não corresponde ao tamanho do manifest", "ASSET_SIZE_MISMATCH")
+            total = _asset_total_size(response)
+            if total is None:
+                return _check("network_asset", "fail", "Asset stable retornou tamanho inválido", "ASSET_SIZE_INVALID")
+            if total != manifest.size:
+                return _check("network_asset", "fail", "Asset stable não corresponde ao tamanho do manifest", "ASSET_SIZE_MISMATCH")
         return _check("network_asset", "pass", "Asset stable está acessível", f"v{manifest.version}")
     except NetworkError as exc:
         return _check("network_asset", "fail", "Asset stable não está acessível", exc.code)
