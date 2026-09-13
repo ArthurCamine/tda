@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 import ssl
 import urllib.error
@@ -11,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlsplit
 
+from .large_download import download_verified_release_asset, github_release_asset_url
 from .network import NetworkClient, NetworkError, classify_network_error
 from .release_download import ReleaseRedirectError, open_verified_release
 
@@ -132,15 +131,13 @@ def download_whisper_runtime(
     manifest: WhisperRuntimeManifest,
     cache_root: Path,
     timeout: float = 300.0,
+    *,
+    prefer_bits: bool = False,
 ) -> Path:
     target_dir = cache_root.resolve() / "runtime" / "whisper" / manifest.version
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"TDAWhisperRuntime-{manifest.version}-windows-x64.zip"
-    temporary = target.with_suffix(".partial")
-    temporary.unlink(missing_ok=True)
-
-    digest = hashlib.sha256()
-    total = 0
+    asset_name = f"TDAWhisperRuntime-{manifest.version}-windows-x64.zip"
+    target = target_dir / asset_name
     request = urllib.request.Request(
         manifest.url,
         headers={
@@ -150,40 +147,30 @@ def download_whisper_runtime(
             "User-Agent": "TDACompanion",
         },
     )
-    expected_github = (
-        f"https://github.com/Faysk/tda/releases/download/{manifest.tag}/"
-        f"TDAWhisperRuntime-{manifest.version}-windows-x64.zip"
-    )
-    try:
+    expected_github = github_release_asset_url(manifest.tag, asset_name)
+
+    def fallback_open():
         try:
-            response_context = open_verified_release(
+            return open_verified_release(
                 request,
                 expected_github_url=expected_github,
                 timeout=timeout,
             )
         except ReleaseRedirectError as exc:
             raise RuntimeError("RUNTIME_REDIRECT_REJECTED") from exc
-        with response_context as response:
-            with temporary.open("wb") as handle:
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > manifest.size or total > MAX_RUNTIME_DOWNLOAD_BYTES:
-                        raise RuntimeError("RUNTIME_SIZE_EXCEEDED")
-                    digest.update(chunk)
-                    handle.write(chunk)
-                handle.flush()
-                os.fsync(handle.fileno())
-        if total != manifest.size:
-            raise RuntimeError("RUNTIME_SIZE_MISMATCH")
-        if digest.hexdigest() != manifest.sha256:
-            raise NetworkError("HASH_MISMATCH")
-        os.replace(temporary, target)
-        return target
+
+    try:
+        return download_verified_release_asset(
+            target=target,
+            github_url=expected_github,
+            expected_size=manifest.size,
+            expected_sha256=manifest.sha256,
+            timeout=timeout,
+            fallback_open=fallback_open,
+            prefer_bits=prefer_bits,
+            size_exceeded_code="RUNTIME_SIZE_EXCEEDED",
+            size_mismatch_code="RUNTIME_SIZE_MISMATCH",
+        )
     except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError, ssl.SSLError) as exc:
         failure = classify_network_error(exc)
         raise NetworkError(failure.code, status=failure.status) from exc
-    finally:
-        temporary.unlink(missing_ok=True)
