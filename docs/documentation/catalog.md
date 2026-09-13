@@ -24,7 +24,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0001 — TDA como identidade canônica; dnd-scribe como legado](../adr/0001-project-identity.md) | Não declarado | accepted | Não declarado |
 | [ADR-0002 — Reutilizar o Supabase existente como única base](../adr/0002-existing-supabase.md) | Não declarado | accepted | Não declarado |
 | [ADR-0003 — Processamento pesado local; produto cloud](../adr/0003-local-heavy-processing.md) | Não declarado | accepted | Não declarado |
-| [ADR-0004 — Registry única de entities para PC, NPC e mundo narrativo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
+| [ADR-0004 — Registry única de entities para PC, NPC e mundo](../adr/0004-canonical-entities.md) | Não declarado | accepted | Não declarado |
 | [ADR-0005 — Canon exige fonte e revisão](../adr/0005-canon-review-gate.md) | Não declarado | accepted | Não declarado |
 | [ADR-0006 — React Flow como engine de visualização do World Explorer](../adr/0006-react-flow-world-explorer.md) | frontend / narrative-memory | aceito | Não declarado |
 | [ADR-0007 — Edit como workbench server-first orientado a capabilities](../adr/0007-edit-workbench.md) | Não declarado | Não declarado | Não declarado |
@@ -192,13 +192,13 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [R2 e mídia — runbook operacional](../operations/r2-media-runbook.md) | integrations/media + operations | vigente | 2026-09-12 |
 | [Runbook — release, deploy e rollback](../operations/release-runbook.md) | operations/release | vigente | 2026-09-08 |
 | [Checklist de segurança operacional](../operations/security-checklist.md) | security/operations | vigente | 2026-09-07 |
-| [Do ZIP à produção — páginas e mídia com fidelidade](../operations/zip-to-production.md) | frontend / integrations/media / operations | procedimento vigente; execução por entrega, sem importador genérico automático | 2026-09-12 |
+| [Do ZIP à produção — páginas e mídia com fidelidade](../operations/zip-to-production.md) | frontend / integrations-media / operations | procedimento vigente; execução por entrega, sem importador genérico automático | 2026-09-12 |
 
 ## docs/templates
 
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
-| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations/media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
+| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations-media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
 
 ## Cobertura
 
