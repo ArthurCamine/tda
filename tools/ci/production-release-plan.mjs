@@ -2,15 +2,21 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { changedFilesForRange, classifyPaths } from "./classify-changes.mjs";
 
-export function planProductionPaths(inputPaths) {
-	const classified = classifyPaths(inputPaths);
-	const migrations = classified.files.some(
+export function planProductionPaths(releasePaths, currentPaths = releasePaths) {
+	const accumulated = classifyPaths(releasePaths);
+	const current = classifyPaths(currentPaths);
+	const migrations = accumulated.files.some(
 		(path) => path.startsWith("supabase/migrations/") && path.endsWith(".sql"),
 	);
-	const mediaPublish = classified.files.some(
+	const mediaPublish = current.files.some(
 		(path) => path.startsWith("media/manifests/") && path.endsWith(".json"),
 	);
-	return { ...classified, migrations, mediaPublish };
+	return {
+		...accumulated,
+		migrations,
+		mediaPublish,
+		currentFiles: current.files,
+	};
 }
 
 function writeGithubOutputs(result) {
@@ -22,32 +28,42 @@ function writeGithubOutputs(result) {
 		process.env.GITHUB_OUTPUT,
 		`files_json=${JSON.stringify(result.files)}\n`,
 	);
+	appendFileSync(
+		process.env.GITHUB_OUTPUT,
+		`current_files_json=${JSON.stringify(result.currentFiles)}\n`,
+	);
 }
 
-function writeSummary(range, result) {
+function writeSummary(releaseRange, currentRange, result) {
 	if (!process.env.GITHUB_STEP_SUMMARY) return;
 	appendFileSync(
 		process.env.GITHUB_STEP_SUMMARY,
 		[
 			"## Production release plan",
-			`- Range: \`${range}\``,
-			`- migrations: \`${result.migrations}\``,
-			`- media relevant: \`${result.media}\``,
-			`- media publish: \`${result.mediaPublish}\``,
-			`- DB-related code: \`${result.db}\``,
-			`- Files (${result.files.length}): ${result.files.map((file) => `\`${file}\``).join(", ") || "none"}`,
+			`- Unpublished range: \`${releaseRange}\``,
+			`- Current merge range: \`${currentRange}\``,
+			`- migrations pending: \`${result.migrations}\``,
+			`- accumulated media relevance: \`${result.media}\``,
+			`- publish media from current merge: \`${result.mediaPublish}\``,
+			`- accumulated DB relevance: \`${result.db}\``,
+			`- Unpublished files (${result.files.length}): ${result.files.map((file) => `\`${file}\``).join(", ") || "none"}`,
+			`- Current files (${result.currentFiles.length}): ${result.currentFiles.map((file) => `\`${file}\``).join(", ") || "none"}`,
 			"",
 		].join("\n"),
 	);
 }
 
 function main() {
-	const range = process.argv[2];
-	if (!range) throw new Error("An explicit git range is required");
-	const result = planProductionPaths(changedFilesForRange(range));
+	const releaseRange = process.argv[2];
+	const currentRange = process.argv[3] ?? releaseRange;
+	if (!releaseRange) throw new Error("An explicit unpublished git range is required");
+	const result = planProductionPaths(
+		changedFilesForRange(releaseRange),
+		changedFilesForRange(currentRange),
+	);
 	writeGithubOutputs(result);
-	writeSummary(range, result);
-	console.log(JSON.stringify({ range, ...result }));
+	writeSummary(releaseRange, currentRange, result);
+	console.log(JSON.stringify({ releaseRange, currentRange, ...result }));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main();
