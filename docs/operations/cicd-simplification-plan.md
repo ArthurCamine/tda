@@ -1,6 +1,6 @@
 # CI/CD — plano de simplificação
 
-> Status: em execução — Fases 1 e 2 concluídas; Fase 3 em planejamento
+> Status: em execução — Fases 1 e 2 concluídas; Fase 3 implementada e em validação final docs-only
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
 | 2 — CI rápido | **concluída** | PR #332; merge `6352f73636aa5bc8040ad3ba7db22527d7591397`; `validate` ~5m05s → ~37s |
-| 3 — separar domínios pesados | **planejamento detalhado** | branch `ops/cicd-simplification-phase-3-plan` |
+| 3 — separar domínios pesados | **validação final docs-only** | PRs #334/#337; merges `c22d0cbd54f7c4ef14ed5b6071ae55bfa8a2dbc9` / `5cbf298c06094c3b3ce83c07c861629bb06ebee4`; protections cortadas para `required-ci` |
 | 4 — Preview por PR / main-only | planejada | — |
 | 5 — Production simples | planejada | — |
 | 6 — limpeza e documentação final | planejada | — |
@@ -171,13 +171,68 @@ Definition of Done atingida:
 
 ## Fase 3 — separar domínios pesados
 
-**Estado: planejamento detalhado. Nenhum filtro seletivo está ativo ainda.**
+**Estado: implementação concluída; validação final docs-only em andamento.**
 
 ### Objetivo
 
 Tirar PostgreSQL, Companion/MSI e auditoria pública global de mídia do caminho comum quando a mudança não toca esses riscos, sem transformar `skipped` legítimo em bypass de segurança.
 
 A classificação deve ser feita pelos arquivos alterados, não pelo título, autor ou descrição da PR.
+
+### Evidência executada — 3A / 3B / 3C
+
+#### 3A — shadow mode
+
+PR #334 comprovou o classificador e o agregador no mesmo SHA.
+
+```text
+Head validado: f49b7156aff3b4ec98cf175c944662eec4dc9354
+CI run:        34889341770
+Resultado:    success
+DB:           success
+Companion:    Linux + Windows + MSI success
+Mídia:        contrato local success
+required-ci:  success
+Merge Preview: c22d0cbd54f7c4ef14ed5b6071ae55bfa8a2dbc9
+```
+
+O primeiro teste de mídia em shadow mode reproduziu o 403 público do asset antigo `backgroud_jornada.avif`. Isso confirmou que o full public audit global via rede não deveria ser merge gate. O gate de PR ficou restrito à integridade local de manifests/tooling/contratos; auditoria pública global permanece separada do caminho comum.
+
+A Fase 3A foi promovida para `main` pela PR #336, merge `2e85d835c4c9815cfd2d74190fba6749a0fb3b79`.
+
+#### 3B — cutover administrativo
+
+Depois de `required-ci` estar comprovado em `Preview` e `main`, os required contexts foram alterados sem mexer nas demais proteções:
+
+```text
+Preview:
+  required-ci
+
+main:
+  required-ci
+  promotion-source
+```
+
+`promotion-source` continua temporariamente porque a topologia `Preview -> main` ainda existe até a Fase 4.
+
+#### 3C — seletividade ativa
+
+PR #337 ativou os jobs condicionais depois do cutover das protections.
+
+```text
+Head:          81680ac665567226c1cfcd7337e2e1495b7ef406
+CI run:        34891945990
+DB relevante: false
+PostgreSQL:    skipped
+Mídia:         skipped
+Companion:     Linux + Windows + MSI success, uma única chamada via CI
+required-ci:   success
+Merge Preview: 5cbf298c06094c3b3ce83c07c861629bb06ebee4
+```
+
+O workflow `Companion` deixou de disparar automaticamente em toda PR/push. Ele continua reutilizável via `workflow_call` e disponível manualmente via `workflow_dispatch`. O workflow `Companion Dependency Freshness` mantém seus próprios `paths`, agenda e dispatch.
+
+A validação final da Fase 3 é uma PR docs-only criada a partir desse merge. O esperado é `db=false`, `companion=false`, `media=false`, com os três domínios pesados em `skipped` e apenas o CI rápido bloqueando o merge.
 
 ### Regra central
 
@@ -259,7 +314,7 @@ local-companion/**
 tools/check-companion-*.py
 ```
 
-O `companion.yml` deverá aceitar `workflow_call` para ser chamado condicionalmente pelo CI. Seus synthetics Linux/Windows e MSI continuam iguais quando o domínio for relevante; a economia vem de não iniciá-los quando o domínio não mudou.
+O `companion.yml` aceita `workflow_call` para ser chamado condicionalmente pelo CI. Seus synthetics Linux/Windows e MSI continuam iguais quando o domínio é relevante; a economia vem de não iniciá-los quando o domínio não mudou.
 
 Workflows especializados de RC/runtime (`companion-rc`, `companion-promote`, `runtime-*`, `qwen-*`, `whisper-*`) mantêm seus próprios contratos, paths e/ou dispatch. Alterá-los é sempre coberto pelo `workflow-contract`, mas não deve construir automaticamente o MSI genérico apenas por terem sido editados.
 
@@ -315,7 +370,7 @@ A ordem é parte do contrato; não inverter.
 5. executar uma ou mais PRs de prova e comparar classificação esperada x observada;
 6. ainda não pular os checks hoje exigidos pela protection.
 
-Essa etapa pode duplicar temporariamente algum trabalho de Companion; é custo de transição, não estado final.
+**Executada:** PR #334, promoção #336 e evidências acima.
 
 #### Fase 3B — cutover administrativo
 
@@ -345,7 +400,7 @@ promotion-source
 
 `promotion-source` só desaparece na Fase 4, junto com a topologia `Preview -> main`.
 
-A conexão GitHub usada pela automação pode não ter permissão administrativa para escrever branch protection. Se isso se confirmar na execução, essa troca será uma etapa administrativa explícita, única e documentada; não será simulada com bypass.
+**Executada:** protections verificadas após o cutover com os contexts acima.
 
 #### Fase 3C — ativar seletividade
 
@@ -355,6 +410,8 @@ Somente depois do cutover da protection:
 - Companion deixa de disparar como workflow PR independente e passa a ser chamado pelo CI quando `companion == true`;
 - media job/pipeline executa somente quando `media == true`;
 - `required-ci` aceita `skipped` apenas para domínio classificado como irrelevante e exige `success` quando relevante.
+
+**Executada:** PR #337; validação docs-only é o último aceite antes de marcar a Fase 3 como concluída.
 
 ### Casos de prova obrigatórios
 
@@ -378,7 +435,9 @@ PRs recentes já demonstram classes úteis para regressão do classificador:
 - #317: Companion isolado;
 - #318: runtime/Companion especializado;
 - #320: web/lore + mídia;
-- #325: workflow de delivery.
+- #325: workflow de delivery;
+- #334: contrato/classificador fail-safe, todos os domínios relevantes;
+- #337: Companion relevante com DB/mídia irrelevantes e `skipped` legítimo.
 
 ### O que não fazer na Fase 3
 
@@ -482,9 +541,9 @@ Usar medições simples:
 | --- | --- | --- |
 | duração do `validate` web comum | ~5m05s na PR #329 | ~37s na Fase 2 |
 | Chromium/E2E em `validate` comum | sim | não |
-| PostgreSQL em mudança web comum | sim | alvo F3: não |
-| MSI em mudança web comum | sim | alvo F3: não |
-| full media audit sem mudança de mídia | sim | alvo F3: não |
+| PostgreSQL em mudança web comum | sim | Fase 3: não quando `db=false` |
+| MSI em mudança web comum | sim | Fase 3: não quando `companion=false` |
+| full media audit sem mudança de mídia | sim | Fase 3: não no required CI |
 | branch longa além de `main` | `Preview` | alvo F4: nenhuma |
 | promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
 
@@ -517,5 +576,3 @@ Não implementar agora apenas por possibilidade futura:
 - ledger de release complexo;
 - receipts adicionais além do necessário para identificar SHA/deployment;
 - gates globais sem relação com a classe da mudança.
-
-Reavaliar quando número de contribuidores, criticidade, usuários ou dados justificar o custo.
