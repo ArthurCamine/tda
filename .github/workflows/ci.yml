@@ -154,8 +154,16 @@ jobs:
           cache: pnpm
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - name: Verify immutable public media
-        run: pnpm media:verify-public
+      - name: Validate media manifests and publication contracts locally
+        run: |
+          pnpm media:validate
+          node --test \
+            tools/media/recovery.test.mjs \
+            tools/media/publication-contract.test.mjs \
+            tools/media/lore-assets.test.mjs \
+            tools/media/pipeline.test.mjs \
+            tools/media/verify-public.test.mjs \
+            tools/world-entity-media-r2-policy.test.mjs
 
   required-ci:
     name: required-ci
