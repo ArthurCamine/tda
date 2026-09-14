@@ -31,6 +31,7 @@ def _json(path: Path, value: object) -> None:
 
 
 def _whisper_assets(root: Path, *, version: str = "1.1.1") -> tuple[Path, str]:
+    root.mkdir(parents=True, exist_ok=True)
     archive = root / f"TDAWhisperRuntime-{version}-windows-x64.zip"
     archive.write_bytes(b"whisper-runtime")
     digest = _sha(archive.read_bytes())
@@ -39,6 +40,7 @@ def _whisper_assets(root: Path, *, version: str = "1.1.1") -> tuple[Path, str]:
 
 
 def _qwen_assets(root: Path, *, version: str = "1.0.1") -> tuple[Path, str]:
+    root.mkdir(parents=True, exist_ok=True)
     part_name = f"TDAQwenRuntime-{version}-windows-x64.zip.part001"
     part = root / part_name
     part.write_bytes(b"qwen-runtime")
