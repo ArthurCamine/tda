@@ -6,6 +6,7 @@ import test from "node:test";
 import {
 	discoverManifests,
 	publishAll,
+	publicVerificationUrl,
 	readAssetBytes,
 	sha256,
 	validateAll,
@@ -115,4 +116,16 @@ test("rejects local integrity drift before publication", async () => {
 	const manifests = await discoverManifests({ repoRoot: root });
 	await writeFile(manifests[0].assets[0].sourcePath, Buffer.from("dGFtcGVyZWQ="));
 	await assert.rejects(() => readAssetBytes(manifests[0].assets[0]), /mismatch/);
+});
+
+
+test("public verification cache-busts readback without changing the canonical asset URL", () => {
+	const canonical = "https://media.dnd.faysk.dev/lore/yllith/abc/image.webp";
+	const first = publicVerificationUrl(canonical, 1, 123456);
+	const second = publicVerificationUrl(canonical, 2, 123456);
+	assert.equal(first.origin + first.pathname, canonical);
+	assert.equal(second.origin + second.pathname, canonical);
+	assert.equal(first.searchParams.get("tda_verify"), "123456-1");
+	assert.equal(second.searchParams.get("tda_verify"), "123456-2");
+	assert.notEqual(first.href, second.href);
 });
