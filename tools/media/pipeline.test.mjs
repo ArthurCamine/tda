@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import {
 	discoverManifests,
+	publishAll,
 	readAssetBytes,
 	sha256,
 	validateAll,
@@ -46,6 +47,15 @@ async function fixture({ encoding = "binary", namespace = "lore/example" } = {})
 	return { root, manifest, bytes, digest };
 }
 
+test("empty repositories validate and publish as a no-op without R2 credentials", async () => {
+	const root = await mkdtemp(join(tmpdir(), "tda-media-empty-"));
+	const validation = await validateAll({ repoRoot: root });
+	assert.deepEqual(validation, { manifests: 0, assets: 0, bytes: 0, projects: [] });
+	const receipt = await publishAll({ repoRoot: root });
+	assert.equal(receipt.summary.assets, 0);
+	assert.equal(receipt.summary.verified, 0);
+});
+
 test("discovers a manifest and derives immutable content-addressed keys", async () => {
 	const { root, digest } = await fixture();
 	const [manifest] = await discoverManifests({ repoRoot: root });
@@ -65,7 +75,7 @@ test("validates binary and base64 transport sources by exact bytes and sha256", 
 	}
 });
 
-test("rejects source path traversal and mutable/unsafe manifest identities", async () => {
+test("rejects source path traversal and mutable or unsafe identities", async () => {
 	const { root, manifest } = await fixture();
 	assert.throws(
 		() =>
@@ -81,6 +91,22 @@ test("rejects source path traversal and mutable/unsafe manifest identities", asy
 	assert.throws(
 		() => validateManifest({ ...manifest, namespace: "../bad" }, { repoRoot: root }),
 		/namespace is invalid/,
+	);
+	assert.throws(
+		() =>
+			validateManifest(
+				{ ...manifest, publicOrigin: "https://media.dnd.faysk.dev/other" },
+				{ repoRoot: root },
+			),
+		/bare https origin/,
+	);
+	assert.throws(
+		() =>
+			validateManifest(
+				{ ...manifest, bucket: "another-bucket" },
+				{ repoRoot: root },
+			),
+		/bucket must be tda-media-public/,
 	);
 });
 
