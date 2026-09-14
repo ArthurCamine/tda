@@ -61,6 +61,123 @@ function Wait-AgentReplacement([int]$PreviousPid, [int]$TimeoutSeconds = 30) {
     return $null
 }
 
+function Get-Sha256Text([string]$Value) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+        return -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") })
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-TdaBitsJobs {
+    try {
+        Import-Module BitsTransfer -ErrorAction Stop
+        $jobs = @(Get-BitsTransfer -ErrorAction SilentlyContinue)
+    } catch {
+        throw "BITS_EVIDENCE_UNAVAILABLE"
+    }
+    return @($jobs | Where-Object {
+        ([string]$_.DisplayName).StartsWith("TDA Companion ", [StringComparison]::Ordinal) -and @($_.FileList).Count -eq 1
+    })
+}
+
+function Get-TdaBitsSnapshot([object]$Job) {
+    $files = @($Job.FileList)
+    if ($files.Count -ne 1) { throw "BITS_EVIDENCE_FILELIST_INVALID" }
+    $remote = [string]$files[0].RemoteName
+    $local = [IO.Path]::GetFullPath([string]$files[0].LocalName)
+    try { $uri = [Uri]$remote } catch { throw "BITS_EVIDENCE_REMOTE_INVALID" }
+    if ($uri.Scheme -ne "https" -or $uri.Host -ne "github.com" -or -not $uri.AbsolutePath.StartsWith("/Faysk/tda/releases/download/", [StringComparison]::Ordinal)) {
+        throw "BITS_EVIDENCE_REMOTE_INVALID"
+    }
+    $cacheRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "TDA\Cache"))
+    $cachePrefix = $cacheRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $local.StartsWith($cachePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "BITS_EVIDENCE_DESTINATION_INVALID" }
+    $jobId = [string]$Job.JobId
+    if ($jobId -notmatch '^[0-9a-fA-F-]{36}$') { throw "BITS_EVIDENCE_JOB_ID_INVALID" }
+    $transferred = [int64]$Job.BytesTransferred
+    $total = [int64]$Job.BytesTotal
+    if ($transferred -lt 0 -or $total -le 0 -or $transferred -gt $total) { throw "BITS_EVIDENCE_BYTES_INVALID" }
+    return [pscustomobject]@{
+        JobId = $jobId
+        State = [string]$Job.JobState
+        BytesTransferred = $transferred
+        BytesTotal = $total
+    }
+}
+
+function Capture-BitsResumeEvidence([string]$Destination) {
+    Write-Host ""
+    Write-Host "[background_download_resume — prova medida]" -ForegroundColor Cyan
+    Write-Host "Inicie pelo Companion um download GRANDE que ainda não exista localmente (prefira Qwen)."
+    Write-Host "Durante a transferência, desligue temporariamente a Internet até a UI informar que o download continua em segundo plano."
+    [void](Read-Host "Quando esse estado aparecer, pressione ENTER; não religue a Internet ainda")
+
+    $before = $null
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+    while ([DateTimeOffset]::UtcNow -lt $deadline -and $null -eq $before) {
+        $jobs = @(Get-TdaBitsJobs)
+        if ($jobs.Count -gt 1) { throw "BITS_EVIDENCE_JOB_AMBIGUOUS" }
+        if ($jobs.Count -eq 1) {
+            try {
+                $candidate = Get-TdaBitsSnapshot $jobs[0]
+                if ($candidate.BytesTransferred -lt $candidate.BytesTotal) { $before = $candidate }
+            } catch {
+                if ($_.Exception.Message -notmatch '^BITS_EVIDENCE_') { throw }
+                throw
+            }
+        }
+        if ($null -eq $before) { Start-Sleep -Milliseconds 250 }
+    }
+    if ($null -eq $before) { throw "BITS_EVIDENCE_PENDING_JOB_NOT_FOUND" }
+
+    Write-Host "Job BITS pendente capturado. Bytes: $($before.BytesTransferred)/$($before.BytesTotal)" -ForegroundColor DarkYellow
+    Write-Host "Religue a Internet e acione novamente a instalação/download no Companion."
+    [void](Read-Host "Logo após acionar novamente, pressione ENTER para observar a retomada do mesmo job")
+
+    $after = $null
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+    while ([DateTimeOffset]::UtcNow -lt $deadline -and $null -eq $after) {
+        try {
+            $job = Get-BitsTransfer -JobId ([Guid]$before.JobId) -ErrorAction Stop
+            $candidate = Get-TdaBitsSnapshot $job
+            if ($candidate.JobId -ne $before.JobId) { throw "BITS_EVIDENCE_JOB_CHANGED" }
+            if ($candidate.BytesTotal -ne $before.BytesTotal) { throw "BITS_EVIDENCE_TOTAL_CHANGED" }
+            if ($candidate.BytesTransferred -gt $before.BytesTransferred -and $candidate.State -in @("Connecting", "Transferring", "Transferred")) {
+                $after = $candidate
+            }
+        } catch {
+            if ($_.Exception.Message -match '^BITS_EVIDENCE_') { throw }
+        }
+        if ($null -eq $after) { Start-Sleep -Milliseconds 200 }
+    }
+    if ($null -eq $after) { throw "BITS_EVIDENCE_SAME_JOB_PROGRESS_NOT_OBSERVED" }
+
+    $evidence = [ordered]@{
+        schema = "tda_bits_resume_evidence_v1"
+        pass = $true
+        job_id_sha256 = Get-Sha256Text $before.JobId.ToLowerInvariant()
+        bytes_before = [int64]$before.BytesTransferred
+        bytes_after = [int64]$after.BytesTransferred
+        bytes_total = [int64]$before.BytesTotal
+        state_before = [string]$before.State
+        state_after = [string]$after.State
+        same_job = $true
+        reused_job = $true
+        contains_paths = $false
+        contains_url = $false
+    }
+    $parent = Split-Path -Parent $Destination
+    if (-not $parent) { throw "BITS_EVIDENCE_DESTINATION_INVALID" }
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $temporary = "$Destination.partial"
+    $evidence | ConvertTo-Json -Compress | Set-Content -LiteralPath $temporary -Encoding UTF8 -NoNewline
+    Move-Item -LiteralPath $temporary -Destination $Destination -Force
+    return $evidence
+}
+
 if (-not $env:LOCALAPPDATA) { throw "LOCALAPPDATA_NOT_FOUND" }
 $candidate = Resolve-RequiredFile $CandidateMsi "CANDIDATE_MSI_NOT_FOUND"
 $payload = Resolve-RequiredFile $PayloadManifest "PAYLOAD_MANIFEST_NOT_FOUND"
@@ -69,6 +186,11 @@ if ([IO.Path]::GetExtension($candidate).ToLowerInvariant() -ne ".msi") { throw "
 if ([IO.Path]::GetExtension($payload).ToLowerInvariant() -ne ".json") { throw "PAYLOAD_MANIFEST_REQUIRED" }
 if ([IO.Path]::GetExtension($craig).ToLowerInvariant() -ne ".zip") { throw "CRAIG_ZIP_REQUIRED" }
 if ($candidate.Contains('"') -or $payload.Contains('"') -or $craig.Contains('"') -or $ReceiptPath.Contains('"')) { throw "UNSUPPORTED_QUOTE_IN_PATH" }
+
+$receiptDirectory = Split-Path -Parent ([IO.Path]::GetFullPath($ReceiptPath))
+$bitsEvidencePath = Join-Path $receiptDirectory "bits-resume-evidence.json"
+Remove-Item -LiteralPath $bitsEvidencePath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$bitsEvidencePath.partial" -Force -ErrorAction SilentlyContinue
 
 $companionRoot = Join-Path $env:LOCALAPPDATA "TDA\Companion"
 $marker = Join-Path $companionRoot "current-version.txt"
@@ -85,7 +207,7 @@ Write-Host "Source SHA candidato: $($SourceSha.ToLowerInvariant())"
 Write-Host "MSI SHA256: $((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
 Write-Host "Payload manifest SHA256: $((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant())"
 Write-Host ""
-Write-Host "As observações humanas são atestações; recovery e identidade do Agent também exigem prova medida via /health." -ForegroundColor DarkYellow
+Write-Host "As observações humanas são atestações; recovery, identidade do Agent e retomada BITS exigem prova medida." -ForegroundColor DarkYellow
 
 $observations = New-Object System.Collections.Generic.List[string]
 
@@ -120,11 +242,11 @@ Abra Diagnóstico na UI instalada. Confirme que o resumo por capability aparece,
 "@
 if (Confirm-Observation "diagnostics_ui" $diagnosticPrompt) { $observations.Add("diagnostics_ui") }
 
-$downloadPrompt = @"
-Teste um download grande real pelo Companion (Whisper ou Qwen) que ainda precise ser baixado nesta máquina.
-Interrompa temporariamente a Internet durante a transferência. O Companion deve informar amigavelmente que o download continua em segundo plano, sem WinError/URLError/BITS_* cru. Reconecte a Internet e acione a instalação novamente; a transferência deve retomar e só instalar depois de tamanho + SHA-256 válidos.
-"@
-if (Confirm-Observation "background_download_resume" $downloadPrompt) { $observations.Add("background_download_resume") }
+$bitsEvidence = Capture-BitsResumeEvidence $bitsEvidencePath
+if ($bitsEvidence.pass -eq $true) {
+    $observations.Add("background_download_resume")
+    Write-Host "Retomada BITS medida: mesmo job, $($bitsEvidence.bytes_before) -> $($bitsEvidence.bytes_after) bytes." -ForegroundColor Green
+}
 
 $closePrompt = @"
 Com a preferência 'Ao fechar: Ocultar a interface' e o tray ativo, clique no X. A janela deve desaparecer, o tray deve permanecer e o Agent deve continuar operacional.
@@ -164,6 +286,7 @@ $arguments = @(
     "--acceptance-payload-manifest", "`"$payload`"",
     "--acceptance-source-sha", $SourceSha.ToLowerInvariant(),
     "--acceptance-craig-zip", "`"$craig`"",
+    "--acceptance-bits-evidence", "`"$bitsEvidencePath`"",
     "--acceptance-result-file", "`"$ReceiptPath`"",
     "--port", [string]$Port
 )
@@ -182,4 +305,5 @@ if ([int]$process.ExitCode -ne 0 -or $receipt.pass -ne $true) {
 Write-Host ""
 Write-Host "ACEITE INSTALADO: PASS" -ForegroundColor Green
 Write-Host "Receipt sanitizado: $ReceiptPath"
+Write-Host "BITS evidence sanitizada: $bitsEvidencePath"
 exit 0
