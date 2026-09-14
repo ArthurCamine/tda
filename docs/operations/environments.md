@@ -2,9 +2,7 @@
 
 > Status: vigente
 > Owner: operations
-> Última revisão: 2026-09-13
-
-> Atualização operacional: 2026-09-14. O metadata será normalizado com o catálogo gerado na Fase 6.
+> Última revisão: 2026-09-14
 
 Este documento define os ambientes do TDA, seus limites de dados/segredos e o relacionamento com a esteira. Procedimentos de entrega estão em [CI/CD — operação, promoção e recuperação](ci-cd.md); configuração administrativa está em [CI/CD — configuração administrativa](cicd-admin-setup.md).
 
@@ -18,7 +16,7 @@ Há três ambientes lógicos, mas apenas uma branch longa necessária para a ent
 | Preview / homologação | SHA exato de cada PR | Vercel Preview durante CI | sem migration automática em Production |
 | Production | `main` | Vercel staged → smoke → promote | Supabase Production + R2 conforme lifecycle relevante |
 
-A antiga branch `Preview` é legado de transição e será apagada na Fase 6. Ela não participa mais da autorização lógica de novas releases web.
+A antiga branch Git `Preview` foi aposentada da entrega. O termo Preview agora representa somente o deployment de homologação de uma PR.
 
 ## Fluxo atual
 
@@ -70,7 +68,7 @@ Regras:
 
 ## Preview / homologação
 
-Preview agora significa **deployment de pull request**, não branch.
+Preview significa **deployment de pull request**, não branch.
 
 Fonte canônica de cada Preview:
 
@@ -116,7 +114,7 @@ Estar em `main` isoladamente ainda não basta para publicação automática. O `
 2. esse SHA é resultado de uma PR mergeada em `main`;
 3. o SHA atualmente informado por `dnd.faysk.dev/api/version` é ancestral da nova release.
 
-Não existe mais requisito de origem `Preview -> main`.
+Não existe requisito de origem `Preview -> main`.
 
 ### Recursos canônicos
 
@@ -168,7 +166,15 @@ SUPABASE_DB_PASSWORD
 
 `SUPABASE_ACCESS_TOKEN` precisa ser Personal Access Token da conta Supabase (`sbp_...`). Não confundir com anon key, secret key da aplicação ou service role key.
 
-Credenciais R2 de escrita pertencem ao lifecycle de publicação de mídia e só são exigidas quando o merge atual altera manifest canônico. A ausência delas não deve bloquear um deploy web comum sem mídia nova.
+Credenciais R2 de escrita pertencem ao lifecycle de publicação de mídia e só são exigidas quando o merge atual altera manifest canônico:
+
+```text
+R2_ACCOUNT_ID
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+```
+
+A ausência delas não deve bloquear deploy web comum sem mídia nova.
 
 Runtime secrets da aplicação continuam configurados na Vercel por ambiente.
 
@@ -210,7 +216,7 @@ APP_COMMIT_SHA
 TDA_RELEASE_ID
 ```
 
-O deployment staged e o canonical precisam retornar identidade coerente antes/depois do promote.
+O deployment staged e o canonical precisam retornar identidade coerente antes e depois do promote.
 
 ## Recuperação
 
@@ -233,6 +239,21 @@ Primeiro Production v3 completamente verde:
 ```text
 CI run:         34900494222
 Production run: 34900630352
+Supabase:       skipped
+mídia publish:  skipped
+stage/smoke:    success
+promote:        success
+canonical:      success
+receipt:        success
+```
+
+Prova posterior à remoção das dependências da antiga branch web:
+
+```text
+PR #347
+main:           a46e8292eaed7e1cff32addd181668d83fd76be4
+CI run:         34902095910
+Production run: 34902180398
 Supabase:       skipped
 mídia publish:  skipped
 stage/smoke:    success

@@ -2,9 +2,7 @@
 
 > Status: vigente
 > Owner: operations / release / dados
-> Última revisão: 2026-09-10
-
-> Atualização operacional: 2026-09-14. O metadata será normalizado com o catálogo gerado na limpeza final da Fase 6.
+> Última revisão: 2026-09-14
 
 ## Objetivo
 
@@ -57,9 +55,9 @@ Fonte canônica de Production:
 main
 ```
 
-Uma release automática só nasce depois de CI verde no push de `main`. O workflow de Production ainda confirma em runtime que o SHA atual é resultado de uma PR realmente mergeada em `main` e recusa SHA stale/arbitrário.
+Uma release automática só nasce depois de CI verde no push de `main`. O workflow de Production confirma em runtime que o SHA atual é resultado de uma PR realmente mergeada em `main` e recusa SHA stale/arbitrário.
 
-A branch `Preview` não é mais necessária para o fluxo web. Enquanto a Fase 6 não apagar a branch fisicamente, ela deve ser tratada como legado de transição, não como etapa de promoção.
+A antiga branch Git `Preview` foi aposentada da entrega web. Preview agora significa exclusivamente o deployment Vercel imutável criado para uma PR.
 
 ## CI de pull request
 
@@ -113,7 +111,7 @@ Smoke mínimo:
 
 Workflow: `.github/workflows/production.yml`.
 
-### 1. Identidade da release
+### Identidade da release
 
 O workflow aceita apenas o SHA que é atualmente o HEAD de `main`. `workflow_dispatch` existe para redeploy controlado do HEAD atual; não serve para publicar commit arbitrário antigo.
 
@@ -125,9 +123,9 @@ base = main
 merge_commit_sha = SHA da release
 ```
 
-Não existe mais requisito `head=Preview`.
+Não existe requisito `head=Preview`.
 
-### 2. Baseline real de Production
+### Baseline real de Production
 
 Antes de decidir trabalho destrutivo, o workflow consulta:
 
@@ -145,7 +143,7 @@ SHA realmente publicado .. novo main
 
 Uma release que falhou antes do promote não faz o pipeline esquecer migrations ainda pendentes.
 
-### 3. Migrations
+### Migrations
 
 Migration de Production só é acionada quando existe SQL em:
 
@@ -158,8 +156,8 @@ no intervalo ainda não publicado.
 Sem migration pendente:
 
 - Supabase CLI não é instalado;
-- `SUPABASE_ACCESS_TOKEN` e `SUPABASE_DB_PASSWORD` não são necessários para o caminho daquela release;
-- nenhum link/dry-run/apply/advisor é executado.
+- `SUPABASE_ACCESS_TOKEN` e `SUPABASE_DB_PASSWORD` não são necessários para aquela release;
+- nenhum link/dry-run/apply é executado.
 
 Com migration pendente, o lifecycle continua fail-closed em `tools/ci/apply-production-migrations.sh`:
 
@@ -175,7 +173,7 @@ migration policy
 
 Falha em qualquer etapa impede o promote.
 
-### 4. Mídia
+### Mídia
 
 Mídia e deploy web possuem ciclos independentes.
 
@@ -187,9 +185,9 @@ O Production workflow só tenta lifecycle de publicação quando **o merge atual
 media/manifests/*.json
 ```
 
-Isso evita que um asset histórico não relacionado bloqueie uma release web futura.
+Isso evita que asset histórico não relacionado bloqueie release web futura.
 
-Quando o merge atual realmente altera manifest, o caminho permanece fail-closed e exige as credenciais de escrita R2 configuradas para esse lifecycle. `tools/ci/publish-production-media.sh` cria um diretório temporário contendo somente os manifests alterados e chama `tools/media/pipeline.mjs publish`, que valida integridade, publica objeto imutável quando ausente, faz readback e valida entrega pública.
+Quando o merge realmente altera manifest, o caminho permanece fail-closed e exige credenciais R2. `tools/ci/publish-production-media.sh` seleciona somente os manifests alterados e chama `tools/media/pipeline.mjs publish`, que valida integridade, publica objeto imutável quando ausente, faz readback e valida entrega pública.
 
 Mudança apenas no tooling de mídia continua coberta pelo CI local, mas não republica automaticamente manifests antigos.
 
@@ -212,7 +210,7 @@ vercel deploy --prebuilt --prod --skip-domain
 
 O staged deployment ainda não recebe tráfego do domínio oficial.
 
-Smoke do staged verifica `health`, `version` e rotas principais. O SHA e release retornados precisam corresponder exatamente ao esperado.
+O smoke verifica `health`, `version` e rotas principais. SHA e release retornados precisam corresponder exatamente ao esperado.
 
 Somente então:
 
@@ -256,8 +254,6 @@ Workflow: `.github/workflows/rollback.yml`.
 
 Rollback é o mecanismo normal para falha recuperável depois de Production.
 
-Fluxo operacional:
-
 ```text
 identificar deployment anterior saudável
 -> rollback/promote anterior
@@ -287,32 +283,54 @@ GitHub Environment `production`:
 VERCEL_TOKEN
 ```
 
-Secrets Supabase continuam configurados porque são exigidos quando há migration:
+Quando existe migration:
 
 ```text
 SUPABASE_ACCESS_TOKEN
 SUPABASE_DB_PASSWORD
 ```
 
-Credenciais R2 de escrita só são necessárias quando um merge atual aciona o lifecycle de publicação de mídia. Não devem ser adicionadas apenas para fazer uma release web comum passar.
-
-## Falhas conhecidas que motivaram o desenho
-
-Production legado run `34896656582` instalou/autenticou Supabase mesmo sem migration nova e morreu antes do build ao fazer full public audit do asset antigo `backgroud_jornada.avif` com HTTP 403.
-
-Production v3 run `34899700811` falhou de forma segura no gate de credenciais antes de qualquer mutação porque o primeiro desenho confundia um manifest histórico no backlog com mídia do merge atual. A PR #345 separou os escopos.
-
-Primeiro aceite completo:
+Quando o merge atual exige publicação canônica de mídia:
 
 ```text
-PR main-only:   #345
+R2_ACCOUNT_ID
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+```
+
+Credencial condicional não deve ser adicionada apenas para fazer uma release não relacionada passar.
+
+## Evidência do desenho atual
+
+O Production legado `34896656582` instalou/autenticou Supabase mesmo sem migration nova e morreu antes do build ao fazer full public audit de asset antigo com HTTP 403.
+
+O primeiro Production v3 `34899700811` falhou de forma segura no gate de credenciais antes de qualquer mutação porque o desenho inicial confundia manifest histórico no backlog com mídia do merge atual. A PR #345 separou os escopos.
+
+Primeiro aceite main-only completo:
+
+```text
+PR:             #345
 main SHA:       a8a9253e13c159263fc1f4a4672d8690f4c62e33
 CI:             34900494222 success
 Production CD:  34900630352 success
 Supabase:       skipped
 mídia publish:  skipped
-stage:          success
-smoke:          success
+stage/smoke:    success
+promote:        success
+canonical:      success
+receipt:        success
+```
+
+Aceite após limpeza da antiga branch web:
+
+```text
+PR:             #347
+main SHA:       a46e8292eaed7e1cff32addd181668d83fd76be4
+CI:             34902095910 success
+Production CD:  34902180398 success
+Supabase:       skipped
+mídia publish:  skipped
+stage/smoke:    success
 promote:        success
 canonical:      success
 receipt:        success
