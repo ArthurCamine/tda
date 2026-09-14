@@ -167,35 +167,27 @@ jobs:
       - name: Pull Production configuration
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
-      - name: Pull Production media credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          MEDIA_ENV="$RUNNER_TEMP/tda-media-production.env"
-          vercel env pull "$MEDIA_ENV" --yes --environment=production --token="$VERCEL_TOKEN"
-          chmod 600 "$MEDIA_ENV"
-          echo "TDA_MEDIA_ENV=$MEDIA_ENV" >> "$GITHUB_ENV"
-
-      - name: Publish and verify immutable media
+      - name: Verify immutable public media
         id: media
         shell: bash
         run: |
           set -euo pipefail
-          node --env-file="$TDA_MEDIA_ENV" tools/media/pipeline.mjs publish \
-            --receipt .local/media-production-receipt.json
+          node tools/media/verify-public.mjs \
+            --receipt .local/media-production-verification-receipt.json
           node --input-type=module - <<'NODE'
           import fs from "node:fs";
-          const receipt = JSON.parse(fs.readFileSync(".local/media-production-receipt.json", "utf8"));
+          const receipt = JSON.parse(fs.readFileSync(".local/media-production-verification-receipt.json", "utf8"));
           const summary = receipt.summary;
           if (summary.assets !== summary.verified) {
             throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
           }
           const output = process.env.GITHUB_OUTPUT;
-          fs.appendFileSync(output, `assets=${summary.assets}\n`);
-          fs.appendFileSync(output, `published=${summary.published}\n`);
-          fs.appendFileSync(output, `reused=${summary.reused}\n`);
-          fs.appendFileSync(output, `verified=${summary.verified}\n`);
-          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}\n`);
+          fs.appendFileSync(output, `assets=${summary.assets}
+`);
+          fs.appendFileSync(output, `verified=${summary.verified}
+`);
+          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}
+`);
           NODE
 
       - name: Build Production artifact
@@ -332,6 +324,8 @@ jobs:
           vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
           vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith/historia.md --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
 
           node --input-type=module -e '
             import fs from "node:fs";
@@ -383,8 +377,6 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
           MEDIA_ASSETS: ${{ steps.media.outputs.assets }}
-          MEDIA_PUBLISHED: ${{ steps.media.outputs.published }}
-          MEDIA_REUSED: ${{ steps.media.outputs.reused }}
           MEDIA_VERIFIED: ${{ steps.media.outputs.verified }}
           MEDIA_MANIFEST_SET: ${{ steps.media.outputs.manifest_set }}
         run: |
@@ -398,12 +390,13 @@ jobs:
           - Canonical production: $PRODUCTION_ORIGIN
           - Supabase project: \`$SUPABASE_PROJECT_REF\`
           - Source provenance (Preview -> main): PASS
-          - Immutable media: $MEDIA_VERIFIED/$MEDIA_ASSETS verified (published=$MEDIA_PUBLISHED, reused=$MEDIA_REUSED)
+          - Immutable media: $MEDIA_VERIFIED/$MEDIA_ASSETS public assets verified
           - Media manifest set: \`$MEDIA_MANIFEST_SET\`
           - Migration overlay/history gate: PASS
           - Migration dry-run: PASS
           - Migration apply/exact verification: PASS
           - Staged smoke: PASS
+          - Yllith standalone staged smoke: PASS
           - Canonical smoke: PASS
           EOF
 

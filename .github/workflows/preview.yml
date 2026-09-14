@@ -88,33 +88,22 @@ jobs:
       - name: Pull Preview configuration
         run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
 
-      - name: Pull Preview media credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          MEDIA_ENV="$RUNNER_TEMP/tda-media-preview.env"
-          vercel env pull "$MEDIA_ENV" --yes --environment=preview --token="$VERCEL_TOKEN"
-          chmod 600 "$MEDIA_ENV"
-          echo "TDA_MEDIA_ENV=$MEDIA_ENV" >> "$GITHUB_ENV"
-
-      - name: Publish and verify immutable media
+      - name: Verify immutable public media
         id: media
         shell: bash
         run: |
           set -euo pipefail
-          node --env-file="$TDA_MEDIA_ENV" tools/media/pipeline.mjs publish \
-            --receipt .local/media-preview-receipt.json
+          node tools/media/verify-public.mjs \
+            --receipt .local/media-preview-verification-receipt.json
           node --input-type=module - <<'NODE'
           import fs from "node:fs";
-          const receipt = JSON.parse(fs.readFileSync(".local/media-preview-receipt.json", "utf8"));
+          const receipt = JSON.parse(fs.readFileSync(".local/media-preview-verification-receipt.json", "utf8"));
           const summary = receipt.summary;
           if (summary.assets !== summary.verified) {
             throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
           }
           const output = process.env.GITHUB_OUTPUT;
           fs.appendFileSync(output, `assets=${summary.assets}\n`);
-          fs.appendFileSync(output, `published=${summary.published}\n`);
-          fs.appendFileSync(output, `reused=${summary.reused}\n`);
           fs.appendFileSync(output, `verified=${summary.verified}\n`);
           fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}\n`);
           NODE
@@ -151,6 +140,8 @@ jobs:
           vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
           vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith/historia.md --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
 
           node --input-type=module -e '
             import fs from "node:fs";
@@ -170,8 +161,6 @@ jobs:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           MEDIA_ASSETS: ${{ steps.media.outputs.assets }}
-          MEDIA_PUBLISHED: ${{ steps.media.outputs.published }}
-          MEDIA_REUSED: ${{ steps.media.outputs.reused }}
           MEDIA_VERIFIED: ${{ steps.media.outputs.verified }}
           MEDIA_MANIFEST_SET: ${{ steps.media.outputs.manifest_set }}
         run: |
@@ -179,7 +168,8 @@ jobs:
             echo "## TDA Preview"
             echo "- Source: \`$SOURCE_SHA\`"
             echo "- Deployment: $DEPLOYMENT_URL"
-            echo "- Media: $MEDIA_VERIFIED/$MEDIA_ASSETS verified (published=$MEDIA_PUBLISHED, reused=$MEDIA_REUSED)"
+            echo "- Media: $MEDIA_VERIFIED/$MEDIA_ASSETS public assets verified"
             echo "- Media manifest set: \`$MEDIA_MANIFEST_SET\`"
+            echo "- Yllith standalone smoke: PASS"
             echo "- Smoke: PASS"
           } >> "$GITHUB_STEP_SUMMARY"
