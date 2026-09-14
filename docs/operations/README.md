@@ -15,7 +15,7 @@ Para CI/CD, a leitura deve seguir esta ordem:
 3. [Ambientes e configuração](environments.md): limites entre Development, Preview e Production;
 4. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão arquitetural que torna GitHub Actions o único controlador da entrega.
 
-Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) é o contrato da rodada de estabilização iniciada após o teste físico da v0.3.2. A [evidência de Reliability R2](companion-reliability-r2-evidence.md) registra o estado verificável do segundo bloco dessa estabilização. A [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) registra a fotografia adversarial que originou as remediações posteriores do candidato 0.3.4. Esses documentos complementam o runbook [Companion — operação, instalação e rollback](local-companion.md) e impedem que CI sintética seja confundida com aceite físico do produto instalado.
+Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) é o contrato da rodada de estabilização iniciada após o teste físico da v0.3.2. A [evidência de Reliability R2](companion-reliability-r2-evidence.md) registra o estado verificável do segundo bloco dessa estabilização. A [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) registra a fotografia adversarial que originou as remediações posteriores do candidato 0.3.4. O [contrato A-017 de integridade dos modelos ASR](companion-a017-model-integrity.md) separa metadata-ready de integridade SHA-256 comprovada no gate físico. Esses documentos complementam o runbook [Companion — operação, instalação e rollback](local-companion.md) e impedem que CI sintética seja confundida com aceite físico do produto instalado.
 
 Se uma seção histórica datada em outro documento descrever um estado anterior do bootstrap, ela deve ser lida como evidência daquele momento. O estado operacional corrente é o registrado nos runbooks acima com a revisão mais recente.
 
@@ -129,6 +129,7 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 - [Companion — confiabilidade, manutenção e aceite real](companion-reliability.md)
 - [Companion — evidência Reliability R2](companion-reliability-r2-evidence.md)
 - [Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](companion-0.3.3-heavy-audit.md)
+- [Companion — integridade dos modelos ASR / A-017](companion-a017-model-integrity.md)
 - [Companion — operação, instalação e rollback](local-companion.md)
 - [Release, deploy e rollback](release-runbook.md)
 - [Histórico de deployments](deployments.md)
