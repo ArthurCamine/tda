@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  workflow-contract:
+    name: workflow-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color -shellcheck= -pyflakes=
+
+  # Mantido nesta fase por compatibilidade com a branch protection atual.
+  # A Fase 3 tornará este job condicional a mudanças de banco/data layer.
   transcript-import-postgres:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -36,8 +49,9 @@ jobs:
       - run: python tools/world-entity-media-db.py
 
   validate:
+    name: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,8 +83,26 @@ jobs:
           fi
 
       - run: python -m unittest discover -s tools/media -p test_lore_svg.py
-      - run: pnpm check
-      - run: pnpm build
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm test:e2e
-      - run: pnpm test:processing
+      - name: Typecheck, lint, unit and repository checks
+        run: pnpm check
+      - name: Build application
+        run: pnpm build
+
+  required-ci:
+    name: required-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs:
+      - workflow-contract
+      - validate
+    steps:
+      - name: Require fast CI contract
+        env:
+          WORKFLOW_CONTRACT_RESULT: ${{ needs.workflow-contract.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$WORKFLOW_CONTRACT_RESULT" = "success"
+          test "$VALIDATE_RESULT" = "success"

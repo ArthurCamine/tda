@@ -1,9 +1,20 @@
 # CI/CD — plano de simplificação
 
-> Status: planejado
+> Status: em execução — Fases 1 e 2 concluídas; Fase 3 em planejamento
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
+
+## Progresso
+
+| Fase | Estado | Evidência principal |
+| --- | --- | --- |
+| 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
+| 2 — CI rápido | **concluída** | PR #332; merge `6352f73636aa5bc8040ad3ba7db22527d7591397`; `validate` ~5m05s → ~37s |
+| 3 — separar domínios pesados | **planejamento detalhado** | branch `ops/cicd-simplification-phase-3-plan` |
+| 4 — Preview por PR / main-only | planejada | — |
+| 5 — Production simples | planejada | — |
+| 6 — limpeza e documentação final | planejada | — |
 
 ## Objetivo
 
@@ -68,6 +79,8 @@ rollback -> corrigir -> publicar novamente
 
 ## Fase 1 — inventário e direção
 
+**Estado: concluída em 2026-09-14.**
+
 Entregas:
 
 - baseline com SHAs e protections;
@@ -77,51 +90,317 @@ Entregas:
 - ADR-0015;
 - plano das seis fases.
 
-Definition of Done:
+Evidência:
+
+```text
+PR:        #329
+Head:      931e5e37e6fe7f654fb0c44be2f950008761ebc2
+Merge:     fe9145631c21da064e9b9cb5dad0f2680722bed0
+Base:      Preview
+Runtime:   sem alteração funcional
+```
+
+Definition of Done atingida:
 
 - nenhuma mudança de runtime;
 - documentação distingue estado vigente de estado planejado;
 - baseline possui data e SHA;
-- branch de trabalho pode ser descartada sem impacto operacional.
+- branch de trabalho era descartável sem impacto operacional.
 
 ## Fase 2 — CI rápido
 
-Objetivo: criar o núcleo mínimo de validação para PR.
+**Estado: concluída em 2026-09-14.**
 
-Direção:
+Objetivo: criar o núcleo mínimo de validação web para PR, sem ainda desacoplar os domínios pesados que pertencem à Fase 3.
 
-- `actionlint` obrigatório;
-- typecheck;
-- lint;
-- unit tests;
-- build;
-- um check agregador estável, como `required-ci`;
-- testes pesados deixam de bloquear toda mudança sem necessidade.
+### Baseline real antes da mudança
 
-Definition of Done:
+A PR #329, que alterava somente documentação, forneceu uma amostra real do custo anterior:
 
-- alteração web comum não inicializa PostgreSQL nem MSI;
-- workflow inválido é detectado antes do merge;
-- branch protection depende de um check estável sem ficar presa a jobs condicionais.
+```text
+CI run:                  34876284417
+CI início:               2026-09-14T17:41:33Z
+CI fim:                  2026-09-14T17:46:43Z
+validate:                ~5m05s
+PostgreSQL job:          ~47s
+Playwright install:      ~25s
+E2E:                     ~3m50s
+processing:              ~7s
+Companion run:           34876284413
+Companion:               ~4m05s
+MSI para PR docs-only:   sim
+```
+
+### Resultado real da Fase 2
+
+Na PR #332:
+
+```text
+CI run inicial:            34877237056
+workflow-contract:         ~13s total; actionlint em ~1s após pull da imagem
+validate:                  ~37s
+required-ci:               ~2s
+transcript-import-postgres ~51s
+Chromium no validate:      não
+E2E completo no validate:  não
+processing no validate:    não
+Resultado CI final:        success
+Resultado Companion final: success
+Merge Preview:             6352f73636aa5bc8040ad3ba7db22527d7591397
+```
+
+Comparação do `validate` observado:
+
+```text
+antes: ~305s
+Fase 2: ~37s
+redução: ~268s / ~88%
+```
+
+`workflow-contract` executa `actionlint` em `.github/workflows`. `validate` permanece com migration safety policy, teste curto de SVG, `pnpm check` e `pnpm build`. `required-ci` introduz um nome estável para o contrato de merge.
+
+PostgreSQL e Companion foram preservados deliberadamente nesta fase porque a branch protection ainda exigia seus nomes diretamente.
+
+Definition of Done atingida:
+
+- `validate` comum não instala Chromium nem executa E2E/processing completo;
+- workflow inválido é detectado por `actionlint` antes do merge;
+- `required-ci` existe;
+- medições antes/depois foram registradas;
+- integração ocorreu em `Preview` sem contornar branch protection.
 
 ## Fase 3 — separar domínios pesados
 
-Objetivo: tirar mídia, banco e Companion do caminho comum quando não foram alterados.
+**Estado: planejamento detalhado. Nenhum filtro seletivo está ativo ainda.**
 
-Direção:
+### Objetivo
 
-- Companion por paths relevantes;
-- DB/integration tests por paths relevantes;
-- media pipeline própria, mantendo R2;
-- full media audit manual/agendado;
-- cada domínio falha fechado quando ele realmente mudou.
+Tirar PostgreSQL, Companion/MSI e auditoria pública global de mídia do caminho comum quando a mudança não toca esses riscos, sem transformar `skipped` legítimo em bypass de segurança.
 
-Definition of Done:
+A classificação deve ser feita pelos arquivos alterados, não pelo título, autor ou descrição da PR.
 
-- mudança CSS/UI não constrói MSI;
-- mudança sem DB não sobe PostgreSQL nem tenta migration;
-- mudança sem mídia não verifica globalmente o R2;
-- mudança de mídia continua validando hash, MIME, bytes e publicação do que mudou.
+### Regra central
+
+`required-ci` continuará sendo o único contrato genérico de merge.
+
+Na Fase 3 ele passa a agregar também resultados condicionais:
+
+```text
+workflow-contract  -> success obrigatório
+validate           -> success obrigatório
+DB                 -> success OU skipped legítimo
+Companion          -> success OU skipped legítimo
+media-local        -> success OU skipped legítimo
+                         |
+                         v
+                    required-ci
+```
+
+Se um domínio for classificado como relevante, falha desse domínio faz `required-ci` falhar. Se não for relevante, `skipped` é aceito explicitamente.
+
+### Classificador
+
+Implementar uma única regra testável em `tools/ci/classify-changes.mjs`, em vez de copiar listas de paths em vários YAMLs.
+
+Saídas previstas:
+
+```text
+web=true|false
+ db=true|false
+companion=true|false
+media=true|false
+```
+
+`web` não significa “somente frontend”; significa que o núcleo rápido (`workflow-contract`, `pnpm check`, build) continua sendo a validação comum da aplicação/repositório.
+
+O classificador deve aceitar um range Git explícito e produzir também um resumo legível dos arquivos/classes detectados. A mesma regra poderá ser reutilizada por Preview/Production nas fases seguintes.
+
+### Contrato inicial de relevância
+
+#### Sempre / CI rápido
+
+Toda PR continua executando:
+
+- `workflow-contract`;
+- `validate` com `pnpm check`;
+- `pnpm build`;
+- `required-ci`.
+
+Docs-only, CSS/UI, lore textual e alterações comuns de aplicação não acionam automaticamente PostgreSQL ou MSI.
+
+#### DB / integração PostgreSQL
+
+Classificar `db=true` quando houver mudança em:
+
+```text
+supabase/**
+src/features/transcript-sync/**
+tools/transcript-sync-db.py
+tools/world-layout-db.py
+tools/world-entity-media-db.py
+tools/test_world_layout_db.py
+tools/test_world_entity_media_db.py
+tools/ci/check-migrations.mjs
+tools/check-migration-naming.py
+tools/check-relation-migration-safety.py
+```
+
+`supabase/**` é intencionalmente amplo porque os synthetics carregam migrations e fixtures reais do repositório. O teste `src/features/transcript-sync/database.test.ts` importa cliente, consumer, HTTP, contrato e validação do próprio domínio, portanto mudança nessa feature inteira justifica o synthetic PostgreSQL.
+
+Documentação de banco, por si só, continua protegida por `db:docs:check` dentro de `pnpm check` e não precisa subir PostgreSQL.
+
+#### Companion
+
+Classificar `companion=true` quando houver mudança em:
+
+```text
+local-companion/**
+.github/workflows/companion.yml
+tools/check-companion-*.py
+```
+
+O `companion.yml` deverá aceitar `workflow_call` para ser chamado condicionalmente pelo CI. Seus synthetics Linux/Windows e MSI continuam iguais quando o domínio for relevante; a economia vem de não iniciá-los quando o domínio não mudou.
+
+Workflows especializados de RC/runtime (`companion-rc`, `companion-promote`, `runtime-*`, `qwen-*`, `whisper-*`) mantêm seus próprios contratos, paths e/ou dispatch. Alterá-los é sempre coberto pelo `workflow-contract`, mas não deve construir automaticamente o MSI genérico apenas por terem sido editados.
+
+`docs/companion/**` também não deve, isoladamente, construir MSI. Receipts e documentação continuam sujeitos aos validadores específicos de release quando forem usados para promoção.
+
+#### Mídia
+
+Classificar `media=true` quando houver mudança no contrato de armazenamento/publicação ou nos manifests/fontes canônicos:
+
+```text
+media/**
+tools/media/**
+tools/media-pipeline.py
+tools/check-canonical-media-usage.py
+tools/check-lore-assets.py
+tools/migrate-r2-keys.mjs
+tools/world-entity-media-r2-policy.test.mjs
+```
+
+O fast CI pode continuar executando os testes locais de mídia que já fazem parte de `pnpm check` enquanto seu custo permanecer pequeno. Não vale criar complexidade para economizar poucos segundos locais.
+
+O que deve sair do caminho comum é a verificação **pública/global via rede** de todos os objetos R2.
+
+Mudança em `public/lore/**` que apenas altera HTML/CSS/JS/texto e referencia mídia já publicada continua sendo web comum. Se a mesma PR altera `media/**` ou tooling de publicação, `media=true` naturalmente será acionado.
+
+### Lifecycle de mídia na Fase 3
+
+Separar três conceitos que hoje aparecem misturados:
+
+```text
+validação local do manifest/tooling
+    -> barata; pode continuar no CI
+
+publicação/alteração de mídia canônica
+    -> somente quando media=true
+
+full public audit do R2
+    -> manual/agendado + execução em mudança de mídia
+```
+
+Preview/Production comuns não devem falhar porque um asset antigo e não relacionado recebeu 403 temporário. Mudanças de mídia continuam fail-closed para MIME, bytes e SHA-256.
+
+### Transição segura da branch protection
+
+A ordem é parte do contrato; não inverter.
+
+#### Fase 3A — shadow mode
+
+1. promover a Fase 2 de `Preview` para `main` usando a topologia atual, para que `required-ci` exista também no default branch;
+2. adicionar o classificador com testes;
+3. estender `required-ci` para conhecer DB/Companion/media;
+4. tornar `companion.yml` reutilizável, mas manter temporariamente os triggers antigos;
+5. executar uma ou mais PRs de prova e comparar classificação esperada x observada;
+6. ainda não pular os checks hoje exigidos pela protection.
+
+Essa etapa pode duplicar temporariamente algum trabalho de Companion; é custo de transição, não estado final.
+
+#### Fase 3B — cutover administrativo
+
+Depois que `required-ci` estiver comprovado no mesmo SHA:
+
+`Preview` passa de:
+
+```text
+validate
+transcript-import-postgres
+synthetic ubuntu
+synthetic windows
+```
+
+para:
+
+```text
+required-ci
+```
+
+Enquanto `main` ainda usar promoção `Preview -> main`, manter:
+
+```text
+required-ci
+promotion-source
+```
+
+`promotion-source` só desaparece na Fase 4, junto com a topologia `Preview -> main`.
+
+A conexão GitHub usada pela automação pode não ter permissão administrativa para escrever branch protection. Se isso se confirmar na execução, essa troca será uma etapa administrativa explícita, única e documentada; não será simulada com bypass.
+
+#### Fase 3C — ativar seletividade
+
+Somente depois do cutover da protection:
+
+- `transcript-import-postgres` recebe `if: db == true`;
+- Companion deixa de disparar como workflow PR independente e passa a ser chamado pelo CI quando `companion == true`;
+- media job/pipeline executa somente quando `media == true`;
+- `required-ci` aceita `skipped` apenas para domínio classificado como irrelevante e exige `success` quando relevante.
+
+### Casos de prova obrigatórios
+
+Antes de concluir a Fase 3, provar pelo menos estes cenários:
+
+| Mudança | Fast CI | PostgreSQL | Companion/MSI | mídia pesada |
+| --- | --- | --- | --- | --- |
+| docs-only | sim | não | não | não |
+| CSS/UI/web comum | sim | não | não | não |
+| `local-companion/**` | sim | não, salvo mudança DB separada | sim | não |
+| `supabase/migrations/**` | sim | sim | não | não |
+| `src/features/transcript-sync/**` | sim | sim | não | não |
+| `media/**` / `tools/media/**` | sim | não, salvo DB separada | não | sim |
+| PR mista DB + Companion | sim | sim | sim | conforme arquivos |
+| PR mista web + mídia | sim | não, salvo DB separada | não | sim |
+
+PRs recentes já demonstram classes úteis para regressão do classificador:
+
+- #329: docs-only;
+- #326: tooling de mídia;
+- #317: Companion isolado;
+- #318: runtime/Companion especializado;
+- #320: web/lore + mídia;
+- #325: workflow de delivery.
+
+### O que não fazer na Fase 3
+
+- não usar título/label da PR para decidir segurança;
+- não tornar um workflow inteiro `paths:` se ele for required diretamente;
+- não criar três classificadores diferentes em YAML;
+- não mover testes locais baratos só para perseguir alguns segundos;
+- não misturar retirada da branch `Preview` nesta fase;
+- não remover `promotion-source` antes da Fase 4;
+- não enfraquecer DB/Companion/mídia quando realmente alterados.
+
+### Definition of Done da Fase 3
+
+- docs-only não sobe PostgreSQL nem constrói MSI;
+- web comum não sobe PostgreSQL nem constrói MSI;
+- mudança de Companion continua executando synthetics Linux/Windows + MSI;
+- mudança de DB continua executando synthetic PostgreSQL relevante;
+- deploy sem mudança de mídia não faz full public audit global do R2;
+- mudança de mídia continua validando/publicando fail-closed;
+- `required-ci` é o contrato estável de merge;
+- jobs especializados podem ser `skipped` sem deixar PR pendente e sem permitir falha quando classificados como relevantes;
+- classificação e transição ficam documentadas com evidências antes/depois.
 
 ## Fase 4 — Preview por PR e retirada da branch `Preview`
 
@@ -197,16 +476,17 @@ implementação
 + registro antes/depois
 ```
 
-Usar medições simples, por exemplo:
+Usar medições simples:
 
 | Sinal | Antes | Depois |
 | --- | --- | --- |
-| checks bloqueantes em PR web comum | medir | medir |
-| PostgreSQL em mudança web comum | sim | alvo: não |
-| MSI em mudança web comum | sim | alvo: não |
-| full media audit sem mudança de mídia | sim | alvo: não |
-| branch longa além de `main` | `Preview` | alvo: nenhuma |
-| promoção intermediária | `Preview -> main` | alvo: nenhuma |
+| duração do `validate` web comum | ~5m05s na PR #329 | ~37s na Fase 2 |
+| Chromium/E2E em `validate` comum | sim | não |
+| PostgreSQL em mudança web comum | sim | alvo F3: não |
+| MSI em mudança web comum | sim | alvo F3: não |
+| full media audit sem mudança de mídia | sim | alvo F3: não |
+| branch longa além de `main` | `Preview` | alvo F4: nenhuma |
+| promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
 
 Não criar dashboard novo apenas para acompanhar a migração.
 
