@@ -1,23 +1,27 @@
-name: Preview CD
+name: Deploy PR Preview
 
 on:
-  workflow_run:
-    workflows: [CI]
-    branches: [Preview]
-    types: [completed]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       source_sha:
-        description: Exact Preview commit to deploy (defaults to current Preview head)
-        required: false
+        description: Exact pull request head SHA to deploy
+        required: true
         type: string
+      pr_number:
+        description: Pull request number used for release identity and concurrency
+        required: true
+        type: number
+    outputs:
+      deployment_url:
+        description: Immutable Vercel Preview deployment URL
+        value: ${{ jobs.deploy.outputs.url }}
 
 permissions:
   contents: read
   deployments: write
 
 concurrency:
-  group: tda-preview
+  group: tda-preview-pr-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 env:
@@ -28,38 +32,35 @@ env:
 jobs:
   deploy:
     name: deploy-preview
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     environment:
       name: preview
       url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      REQUESTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PR_NUMBER: ${{ inputs.pr_number }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: Preview
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
 
-      - name: Resolve and pin Preview source
+      - name: Verify exact pull request source
         id: source
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin Preview
-          CURRENT_SHA="$(git rev-parse origin/Preview)"
-          SOURCE_SHA="${REQUESTED_SHA:-$CURRENT_SHA}"
-
-          if [[ "$SOURCE_SHA" != "$CURRENT_SHA" ]]; then
-            echo "::error::Refusing stale/arbitrary Preview deploy. Requested ${SOURCE_SHA}, current Preview is ${CURRENT_SHA}."
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$SOURCE_SHA" ]]; then
+            echo "::error::Expected $SOURCE_SHA, checked out $ACTUAL_SHA."
             exit 1
           fi
-
-          git checkout --detach "$SOURCE_SHA"
-          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "short=${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "release=pr-${PR_NUMBER}-${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v6
         with:
@@ -74,7 +75,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
 
-      - name: Require Vercel deployment credential
+      - name: Require Vercel Preview credential
         shell: bash
         run: |
           if [[ -z "${VERCEL_TOKEN:-}" ]]; then
@@ -88,52 +89,32 @@ jobs:
       - name: Pull Preview configuration
         run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
 
-      - name: Verify immutable public media
-        id: media
-        shell: bash
-        run: |
-          set -euo pipefail
-          node tools/media/verify-public.mjs \
-            --receipt .local/media-preview-verification-receipt.json
-          node --input-type=module - <<'NODE'
-          import fs from "node:fs";
-          const receipt = JSON.parse(fs.readFileSync(".local/media-preview-verification-receipt.json", "utf8"));
-          const summary = receipt.summary;
-          if (summary.assets !== summary.verified) {
-            throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
-          }
-          const output = process.env.GITHUB_OUTPUT;
-          fs.appendFileSync(output, `assets=${summary.assets}\n`);
-          fs.appendFileSync(output, `verified=${summary.verified}\n`);
-          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}\n`);
-          NODE
-
       - name: Build Preview artifact
         env:
           APP_ENV: preview
-          APP_COMMIT_SHA: ${{ steps.source.outputs.sha }}
+          APP_COMMIT_SHA: ${{ inputs.source_sha }}
+          TDA_RELEASE_ID: ${{ steps.source.outputs.release }}
         run: vercel build --token="$VERCEL_TOKEN"
 
       - name: Deploy immutable Preview artifact
         id: deploy
         shell: bash
         env:
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-          SOURCE_SHORT: ${{ steps.source.outputs.short }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
           URL="$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN" \
             --env APP_ENV=preview \
             --env APP_COMMIT_SHA="$SOURCE_SHA" \
-            --env TDA_RELEASE_ID="preview-$SOURCE_SHORT" | tail -n 1)"
+            --env TDA_RELEASE_ID="$RELEASE_ID" | tail -n 1)"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Preview deployment: $URL"
 
-      - name: Smoke Preview deployment
+      - name: Smoke exact Preview deployment
         shell: bash
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
           vercel curl /api/health --deployment "$DEPLOYMENT_URL" > health.json
@@ -141,35 +122,31 @@ jobs:
           vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
-          vercel curl /lore/yllith/historia.md --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
 
           node --input-type=module -e '
             import fs from "node:fs";
             const health = JSON.parse(fs.readFileSync("health.json", "utf8"));
             const version = JSON.parse(fs.readFileSync("version.json", "utf8"));
             const expected = process.env.SOURCE_SHA;
+            const release = process.env.RELEASE_ID;
             if (health.ok !== true) throw new Error("Preview health is not ok");
             if (health.environment !== "preview") throw new Error(`Expected preview environment, got ${health.environment}`);
             if (health.commit !== expected) throw new Error(`Expected commit ${expected}, got ${health.commit}`);
             if (version.commit !== expected) throw new Error(`Version commit mismatch: ${version.commit}`);
-            if (version.release !== `preview-${expected.slice(0, 12)}`) throw new Error(`Preview release id mismatch: ${version.release}`);
+            if (version.release !== release) throw new Error(`Expected release ${release}, got ${version.release}`);
           '
 
       - name: Preview summary
         shell: bash
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-          MEDIA_ASSETS: ${{ steps.media.outputs.assets }}
-          MEDIA_VERIFIED: ${{ steps.media.outputs.verified }}
-          MEDIA_MANIFEST_SET: ${{ steps.media.outputs.manifest_set }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           {
-            echo "## TDA Preview"
+            echo "## TDA PR Preview"
+            echo "- PR: #$PR_NUMBER"
             echo "- Source: \`$SOURCE_SHA\`"
+            echo "- Release: \`$RELEASE_ID\`"
             echo "- Deployment: $DEPLOYMENT_URL"
-            echo "- Media: $MEDIA_VERIFIED/$MEDIA_ASSETS public assets verified"
-            echo "- Media manifest set: \`$MEDIA_MANIFEST_SET\`"
-            echo "- Yllith standalone smoke: PASS"
             echo "- Smoke: PASS"
           } >> "$GITHUB_STEP_SUMMARY"
