@@ -1,16 +1,80 @@
 {
   "schemaVersion": 1,
-  "project": "yllith-recovered-batch-1",
+  "project": "yllith-canonical",
   "namespace": "lore/yllith",
   "bucket": "tda-media-public",
   "publicOrigin": "https://media.dnd.faysk.dev",
   "assets": [
+    {
+      "file": "backgroud_jornada.avif",
+      "source": "media/sources/yllith/backgroud_jornada.avif.base64",
+      "encoding": "base64",
+      "bytes": 44678,
+      "sha256": "04ae4968021a938e8a8e738bbe84fea20f8e0900bba0be2b6cba70bc635e06b5",
+      "contentType": "image/avif"
+    },
+    {
+      "file": "despedida_pais_background.avif",
+      "source": "media/sources/yllith/despedida_pais_background.avif.base64",
+      "encoding": "base64",
+      "bytes": 43481,
+      "sha256": "f096873034fe4cd14c1cfd24849dcf2fa127bcd65964dc9dd244846a7487421e",
+      "contentType": "image/avif"
+    },
+    {
+      "file": "despedida_pais_destaque.webp",
+      "source": "media/sources/yllith/despedida_pais_destaque.webp.base64",
+      "encoding": "base64",
+      "bytes": 56612,
+      "sha256": "88c7ce480d435e1f565faa2a257ea645da65d54d8a066a506b0672345f45484f",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "despedida_tios_backgroud.avif",
+      "source": "media/sources/yllith/despedida_tios_backgroud.avif.base64",
+      "encoding": "base64",
+      "bytes": 42002,
+      "sha256": "6e094723afb19b7be52115ecccfc291d699ead15e66bdea688befef07638c803",
+      "contentType": "image/avif"
+    },
+    {
+      "file": "despedida_tios_destaque-personagem.webp",
+      "source": "media/sources/yllith/despedida_tios_destaque-personagem.webp.base64",
+      "encoding": "base64",
+      "bytes": 32900,
+      "sha256": "8f06c91fc38b1ab98f918d390632b7859068f39e7664cf33842f5296def7ba9d",
+      "contentType": "image/webp"
+    },
     {
       "file": "maos_sobre_mapa_matilha.webp",
       "source": "media/sources/yllith/maos_sobre_mapa_matilha.webp.base64",
       "encoding": "base64",
       "bytes": 20272,
       "sha256": "4f76223c2b0b4065beb6457173bf8a3a684715c7fcf76a395ccc7e252c0734d4",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "mapa_matilha_sem_mao.avif",
+      "source": "media/sources/yllith/mapa_matilha_sem_mao.avif.base64",
+      "encoding": "base64",
+      "bytes": 84082,
+      "sha256": "84e87577d93d06b69e9b5d9ff644e2d860cae32ee4542b8e0a7c523124c6850c",
+      "contentType": "image/avif"
+    },
+    {
+      "file": "social-yllith.jpg",
+      "source": "media/sources/yllith/social-yllith.jpg.base64",
+      "encoding": "base64",
+      "bytes": 65609,
+      "sha256": "b9858046c31ddc338fafe822b8c6132d4b4a4383c5f11b7b6e536943f8509f48",
+      "contentType": "image/jpeg"
+    },
+    {
+      "file": "sonho-paralax_personagem.webp",
+      "source": "media/sources/yllith/sonho-paralax_personagem.webp.base64",
+      "encoding": "base64",
+      "bytes": 22930,
+      "sha256": "34a720045e7b9886d152e6b67cdb161c1f81194579cf693c4a0750ad2a055fab",
       "contentType": "image/webp"
     },
     {
@@ -27,6 +91,30 @@
       "encoding": "base64",
       "bytes": 18090,
       "sha256": "52dcd41179659ff80bb0b55bab50862a4d4449d726a5dd3a0b50af5db02800fd",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "sonho_paralax_nevoa.webp",
+      "source": "media/sources/yllith/sonho_paralax_nevoa.webp.base64",
+      "encoding": "base64",
+      "bytes": 22342,
+      "sha256": "1bc774679515e7524ed4db58738455554c8eeef298042a7cff365ca41ed05b2b",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "yllith.webp",
+      "source": "media/sources/yllith/yllith.webp.base64",
+      "encoding": "base64",
+      "bytes": 98122,
+      "sha256": "77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "yllith_jornada.webp",
+      "source": "media/sources/yllith/yllith_jornada.webp.base64",
+      "encoding": "base64",
+      "bytes": 34612,
+      "sha256": "24f564be0e4a17610dc2d6eaec92dcbcff139440dcf64ead30c982e0b2c5f886",
       "contentType": "image/webp"
     }
   ]

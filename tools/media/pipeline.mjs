@@ -308,11 +308,17 @@ async function inspectRemote(client, manifest, asset) {
 	}
 }
 
+export function publicVerificationUrl(publicUrl, attempt, now = Date.now()) {
+	const url = new URL(publicUrl);
+	url.searchParams.set("tda_verify", `${now}-${attempt}`);
+	return url;
+}
+
 async function verifyPublicDelivery(asset, attempts = 8) {
 	let lastError;
 	for (let attempt = 1; attempt <= attempts; attempt += 1) {
 		try {
-			const response = await fetch(asset.publicUrl, {
+			const response = await fetch(publicVerificationUrl(asset.publicUrl, attempt), {
 				cache: "no-store",
 				headers: { "cache-control": "no-cache" },
 			});

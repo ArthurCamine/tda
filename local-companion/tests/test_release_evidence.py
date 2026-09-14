@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tda_companion import VERSION
-from tda_companion.installed_acceptance import REQUIRED_OBSERVATIONS
+from tda_companion.installed_acceptance import INSTALLED_ACCEPTANCE_SCHEMA, REQUIRED_OBSERVATIONS
 from tda_companion.payload_evidence import create_payload_manifest
 from tda_companion.release_evidence import (
     ReleaseEvidenceError,
@@ -65,6 +65,23 @@ def _manifest(tmp_path: Path) -> dict[str, object]:
     )
 
 
+def _bits_evidence() -> dict[str, object]:
+    return {
+        "schema": "tda_bits_resume_evidence_v1",
+        "pass": True,
+        "job_id_sha256": "5" * 64,
+        "bytes_before": 1024,
+        "bytes_after": 4096,
+        "bytes_total": 8192,
+        "state_before": "Transferring",
+        "state_after": "Transferring",
+        "same_job": True,
+        "reused_job": True,
+        "contains_paths": False,
+        "contains_url": False,
+    }
+
+
 def _receipt(manifest: dict[str, object]) -> dict[str, object]:
     assets = manifest["assets"]
     assert isinstance(assets, dict)
@@ -72,7 +89,7 @@ def _receipt(manifest: dict[str, object]) -> dict[str, object]:
     payload = assets["payload_manifest"]
     assert isinstance(msi, dict) and isinstance(payload, dict)
     return {
-        "schema": "tda_installed_acceptance_v2",
+        "schema": INSTALLED_ACCEPTANCE_SCHEMA,
         "pass": True,
         "accepted_at": "2026-09-13T20:00:00+00:00",
         "stage": "completed",
@@ -91,6 +108,7 @@ def _receipt(manifest: dict[str, object]) -> dict[str, object]:
         },
         "checks": {
             "observations": {name: True for name in REQUIRED_OBSERVATIONS},
+            "background_download_resume": _bits_evidence(),
             "craig_fixture": {"track_count": 4, "zip_sha256": "4" * 64},
             "diagnostics": {
                 "overall": "degraded",
@@ -161,6 +179,19 @@ def test_acceptance_receipt_requires_every_physical_observation(tmp_path: Path):
     receipt = _receipt(manifest)
     receipt["checks"]["observations"]["agent_recovery"] = False
     with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID"):
+        verify_acceptance_receipt(receipt, manifest)
+
+
+def test_acceptance_receipt_requires_measured_same_job_bits_progress(tmp_path: Path):
+    manifest = _manifest(tmp_path)
+    receipt = _receipt(manifest)
+    receipt["checks"]["background_download_resume"]["same_job"] = False
+    with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_BITS_INVALID"):
+        verify_acceptance_receipt(receipt, manifest)
+
+    receipt = _receipt(manifest)
+    receipt["checks"]["background_download_resume"]["bytes_after"] = 1024
+    with pytest.raises(ReleaseEvidenceError, match="RELEASE_ACCEPTANCE_BITS_INVALID"):
         verify_acceptance_receipt(receipt, manifest)
 
 
