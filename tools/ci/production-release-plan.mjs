@@ -7,12 +7,15 @@ export function planProductionPaths(inputPaths) {
 	const migrations = classified.files.some(
 		(path) => path.startsWith("supabase/migrations/") && path.endsWith(".sql"),
 	);
-	return { ...classified, migrations };
+	const mediaPublish = classified.files.some(
+		(path) => path.startsWith("media/manifests/") && path.endsWith(".json"),
+	);
+	return { ...classified, migrations, mediaPublish };
 }
 
 function writeGithubOutputs(result) {
 	if (!process.env.GITHUB_OUTPUT) return;
-	for (const key of ["db", "media", "migrations"])
+	for (const key of ["db", "media", "migrations", "mediaPublish"])
 		appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${result[key]}\n`);
 	appendFileSync(
 		process.env.GITHUB_OUTPUT,
@@ -28,7 +31,8 @@ function writeSummary(range, result) {
 			"## Production release plan",
 			`- Range: \`${range}\``,
 			`- migrations: \`${result.migrations}\``,
-			`- media: \`${result.media}\``,
+			`- media relevant: \`${result.media}\``,
+			`- media publish: \`${result.mediaPublish}\``,
 			`- DB-related code: \`${result.db}\``,
 			`- Files (${result.files.length}): ${result.files.map((file) => `\`${file}\``).join(", ") || "none"}`,
 			"",
