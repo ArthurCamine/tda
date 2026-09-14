@@ -1,0 +1,13 @@
+name: Runtime Promote Stable
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo runtime-promotion-policy
