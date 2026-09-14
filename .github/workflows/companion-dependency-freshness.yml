@@ -15,7 +15,7 @@ on:
       - 'tools/check-companion-model-freshness.py'
       - 'docs/operations/companion-dependency-policy.md'
   push:
-    branches: [main, Preview]
+    branches: [main]
     paths:
       - '.github/workflows/companion.yml'
       - '.github/workflows/companion-dependency-freshness.yml'
