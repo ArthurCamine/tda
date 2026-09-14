@@ -4,461 +4,316 @@
 > Owner: operations / release / dados
 > Última revisão: 2026-09-10
 
+> Atualização operacional: 2026-09-14. O metadata será normalizado com o catálogo gerado na limpeza final da Fase 6.
+
 ## Objetivo
 
-Este é o runbook canônico da esteira de entrega do TDA. Ele define o contrato entre GitHub, Vercel e Supabase, as condições de promoção, as credenciais mínimas, os gates de segurança, a estratégia de migrations, os smoke tests e o procedimento de rollback.
+Este é o runbook canônico da entrega web do TDA. A arquitetura atual segue a direção recovery-oriented da [ADR-0015](../adr/0015-recovery-oriented-delivery.md): CI rápido, Preview imutável por PR, `main` como fonte de Production, gates pesados condicionais e rollback como mecanismo normal de recuperação.
 
-A decisão arquitetural de origem está em [ADR-0012](../adr/0012-github-actions-controlled-delivery.md).
-
-Princípios centrais:
-
-> **Preview verde publica homologação automaticamente.**
->
-> **Production só pode nascer de uma PR mergeada `Preview -> main`.**
->
-> **O domínio `dnd.faysk.dev` só muda depois de build, banco e smoke do mesmo artefato staged.**
-
-A integração Git da Vercel permanece sem auto-deploy. GitHub Actions é o controlador da entrega.
-
-## Topologia final
+Contrato atual:
 
 ```text
-feature/* | fix/* | refactor/* | ops/*
-        |
-        v
-      PR -> Preview
-        |
-        +--> CI
-        +--> Companion
-        |
-        v
-      Preview
-        |
-        +--> Preview CD automático
-        |      +--> build Preview
-        |      +--> deployment imutável
-        |      +--> /api/health
-        |      +--> /api/version
-        |      +--> smoke / e /sessoes
-        |
-        v
-   homologação
-        |
-        v
- PR Preview -> main
-        |
-        +--> Promotion Policy
-        +--> CI
-        +--> Companion
-        |
-        v
-      main
-        |
-        +--> Production CD automático
-               +--> prova de origem Preview -> main
-               +--> build Production
-               +--> deploy --prod --skip-domain
-               +--> Supabase overlay + dry-run/apply/verify
-               +--> advisors
-               +--> staged smoke
-               +--> vercel promote
-               +--> canonical smoke
-               +--> error scan
-               +--> GitHub Release receipt
+branch temporária
+      |
+      v
+    PR -> main
+      |
+      +-- workflow-contract / actionlint
+      +-- validate rápido
+      +-- DB somente se relevante
+      +-- Companion somente se relevante
+      +-- mídia local somente se relevante
+      +-- Preview Vercel do SHA exato
+      +-- smoke
+      |
+      v
+  required-ci
+      |
+      v
+ merge main
+      |
+      v
+ Production CD
+      |
+      +-- prova SHA atual + PR mergeada em main
+      +-- calcula baseline Production real
+      +-- migrations pendentes? executa lifecycle Supabase
+      +-- manifest canônico no merge atual? executa lifecycle de mídia
+      +-- build
+      +-- stage sem tráfego
+      +-- smoke
+      +-- promote mesmo artifact
+      +-- canonical health/version
+      +-- receipt
 ```
 
-## Ambientes
+## Fonte e controle
 
-Há três ambientes lógicos e dois targets cloud de publicação:
+GitHub Actions é o único controlador da entrega. Vercel Git auto-deploy permanece desligado.
 
-| Ambiente | Fonte | Publicação | Banco |
-| --- | --- | --- | --- |
-| Development | branch temporária | nenhuma | local/sintético/configurado deliberadamente |
-| Preview / homologação | `Preview` | Vercel Preview automática após CI verde | não executa migration em Production |
-| Production | `main` proveniente de `Preview -> main` | staged + promote para `dnd.faysk.dev` | Supabase Production com overlay controlado |
-
-Development não precisa de um terceiro projeto Vercel.
-
-## Branches e contrato de promoção
-
-### Branches temporárias
-
-Todo desenvolvimento normal nasce fora de `Preview` e `main`, em branches como `feat/*`, `fix/*`, `refactor/*` ou `ops/*`. O destino normal é uma PR para `Preview`.
-
-### `Preview`
-
-`Preview` representa o candidato de homologação.
-
-- recebe PRs de branches temporárias;
-- CI deve passar no HEAD exato;
-- CI verde dispara Preview CD automaticamente;
-- o deployment é imutável e identificado pelo SHA;
-- não executa `db push` contra Production;
-- não altera `dnd.faysk.dev`;
-- falha de credential/build/smoke deixa Production intacta.
-
-### `main`
-
-`main` representa código aprovado para Production, mas o commit só é publicável quando sua proveniência é comprovada.
-
-O caminho autorizado é `Preview -> main`.
-
-Há duas camadas de defesa:
-
-1. `Promotion Policy` falha PRs para `main` cuja origem não seja `Preview`;
-2. `Production CD` consulta as PRs associadas ao SHA e exige que o próprio SHA seja `merge_commit_sha` de uma PR mergeada com `head=Preview` e `base=main`.
-
-A segunda camada é fail-closed. Push direto ou PR de feature para `main` não pode alcançar credenciais, Vercel ou Supabase.
-
-Branch/ruleset protection continua fortemente recomendada para governança, mas não é a única barreira de publicação.
-
-## Workflows
-
-### `.github/workflows/ci.yml`
-
-Responsabilidades: instalação reproduzível, migration safety policy, typecheck, lint, testes, design system, docs/catalog/governance, build, Playwright/E2E, processing e PostgreSQL scratch.
-
-CI é gate de qualidade; não é autorização isolada de Production.
-
-### `.github/workflows/companion.yml`
-
-Valida o local companion em Linux e Windows, incluindo testes, wheel e installation plan.
-
-### `.github/workflows/promotion-policy.yml`
-
-Toda PR cujo destino é `main` deve ter:
+Fonte canônica de Production:
 
 ```text
-head = Preview
+main
+```
+
+Uma release automática só nasce depois de CI verde no push de `main`. O workflow de Production ainda confirma em runtime que o SHA atual é resultado de uma PR realmente mergeada em `main` e recusa SHA stale/arbitrário.
+
+A branch `Preview` não é mais necessária para o fluxo web. Enquanto a Fase 6 não apagar a branch fisicamente, ela deve ser tratada como legado de transição, não como etapa de promoção.
+
+## CI de pull request
+
+Workflow: `.github/workflows/ci.yml`.
+
+Toda PR executa o núcleo comum:
+
+- `classify-changes`;
+- `workflow-contract` com `actionlint` e testes dos classificadores;
+- `validate` com migration safety policy, `pnpm check` e `pnpm build`;
+- `ci-gate`;
+- Vercel Preview do SHA exato da PR;
+- `required-ci`.
+
+Jobs pesados são condicionais:
+
+```text
+DB relevante        -> synthetic PostgreSQL
+Companion relevante -> synthetics + MSI
+mídia relevante     -> contratos locais de publicação
+irrelevante         -> skipped legítimo
+```
+
+`required-ci` aceita `skipped` apenas quando o classificador marcou o domínio como irrelevante. Se o domínio é relevante, somente `success` satisfaz o agregador.
+
+## Preview por PR
+
+Workflow reutilizável: `.github/workflows/deploy-preview.yml`.
+
+Preview não é uma branch. Cada PR recebe um deployment Vercel construído do SHA exato informado pelo evento.
+
+O workflow confirma o SHA antes do deploy e injeta:
+
+```text
+APP_ENV=preview
+APP_COMMIT_SHA=<sha real da PR>
+TDA_RELEASE_ID=pr-<numero>-<sha curto>
+```
+
+Smoke mínimo:
+
+- `/api/health`;
+- `/api/version`;
+- `/`;
+- `/sessoes`;
+- `/lore/yllith`.
+
+`required-ci` só fica verde em PR depois que esse Preview passa. Em push, `preview-deployment=skipped` é o resultado esperado.
+
+## Production v3
+
+Workflow: `.github/workflows/production.yml`.
+
+### 1. Identidade da release
+
+O workflow aceita apenas o SHA que é atualmente o HEAD de `main`. `workflow_dispatch` existe para redeploy controlado do HEAD atual; não serve para publicar commit arbitrário antigo.
+
+Depois, a API do GitHub precisa confirmar:
+
+```text
+PR mergeada
 base = main
+merge_commit_sha = SHA da release
 ```
 
-Qualquer outra combinação falha `promotion-source`. A política não usa mais variável de bootstrap.
+Não existe mais requisito `head=Preview`.
 
-### `.github/workflows/preview.yml`
+### 2. Baseline real de Production
 
-Trigger primário: CI concluído com sucesso na branch `Preview`. Também existe `workflow_dispatch` para reexecução deliberada do HEAD atual.
-
-O workflow:
-
-1. busca o HEAD atual de `Preview`;
-2. recusa SHA stale ou arbitrário;
-3. faz checkout detached do SHA exato;
-4. exige `VERCEL_TOKEN`;
-5. instala Vercel CLI pinada;
-6. executa `vercel pull --environment=preview`;
-7. constrói com `APP_ENV=preview` e `APP_COMMIT_SHA=<sha>`;
-8. publica deployment imutável com `TDA_RELEASE_ID=preview-<shortsha>`;
-9. valida `/api/health` e `/api/version` contra o SHA exato;
-10. valida `/` e `/sessoes`;
-11. registra o deployment no summary do GitHub Environment `preview`.
-
-Preview não possui switch de enable. CI verde significa tentativa de homologação. Se a credencial estiver ausente, o workflow falha antes de publicar qualquer artefato.
-
-### `.github/workflows/production.yml`
-
-Trigger primário: CI concluído com sucesso na branch `main`. Há `workflow_dispatch`, mas dispatch não contorna provenance.
-
-Ordem fail-closed:
-
-1. resolve e fixa HEAD de `main`;
-2. recusa SHA stale/arbitrário;
-3. consulta `/commits/<sha>/pulls` no GitHub;
-4. exige PR mergeada `Preview -> main` cujo `merge_commit_sha` seja o SHA candidato;
-5. valida todos os secrets de release e reporta apenas as categorias ausentes;
-6. valida migration policy;
-7. instala CLIs pinadas;
-8. puxa configuração Production da Vercel;
-9. constrói com `APP_ENV=production`, `APP_COMMIT_SHA` e `TDA_RELEASE_ID`;
-10. publica com `--prod --skip-domain`;
-11. prepara overlay Supabase;
-12. compara history remoto TDA-era com migrations autoritativas;
-13. executa dry-run;
-14. aplica migrations pendentes;
-15. busca novamente history e exige igualdade exata;
-16. executa advisors;
-17. smokea o deployment staged;
-18. somente então executa `vercel promote`;
-19. valida `dnd.faysk.dev` contra SHA/release esperados;
-20. coleta erros recentes;
-21. grava GitHub Release receipt.
-
-Production não usa mais `TDA_CICD_BOOTSTRAP_READY` nem `TDA_PRODUCTION_CD_ENABLED`. A autorização vem da proveniência verificável da promoção e dos gates técnicos.
-
-### `.github/workflows/rollback.yml`
-
-Rollback é manual e independente do fluxo normal. Exige deployment explícito, confirmação `ROLLBACK_TDA` e `VERCEL_TOKEN`. O workflow inspeciona o candidato, lê `/api/version`, move o tráfego e valida health/version canônicos. Banco não sofre rollback automático.
-
-## Credenciais e GitHub Environments
-
-### `preview`
-
-Secret mínimo:
+Antes de decidir trabalho destrutivo, o workflow consulta:
 
 ```text
-VERCEL_TOKEN
+https://dnd.faysk.dev/api/version
 ```
 
-A credencial precisa permitir operar o team/projeto pinados no workflow.
+O `commit` retornado é o baseline canônico. Ele precisa existir no repositório e ser ancestral do novo SHA.
 
-### `production`
-
-Secrets mínimos:
+Isso permite calcular:
 
 ```text
-VERCEL_TOKEN
-SUPABASE_ACCESS_TOKEN
-SUPABASE_DB_PASSWORD
+SHA realmente publicado .. novo main
 ```
 
-`VERCEL_TOKEN` pode existir como repository secret, mas Environment secret é preferível quando se deseja separar escopo/governança. Os workflows nunca imprimem seu valor.
+Uma release que falhou antes do promote não faz o pipeline esquecer migrations ainda pendentes.
 
-Nunca colocar secrets em `NEXT_PUBLIC_*`, docs, PR body/comment, repository variables públicas, inputs de workflow ou logs.
+### 3. Migrations
 
-## Variáveis antigas de bootstrap
-
-As variáveis abaixo fizeram parte da montagem e não são mais requisito do contrato final:
+Migration de Production só é acionada quando existe SQL em:
 
 ```text
-TDA_CICD_BOOTSTRAP_READY
-TDA_PREVIEW_CD_ENABLED
-TDA_PRODUCTION_CD_ENABLED
-TDA_ENFORCE_PROMOTION_SOURCE
+supabase/migrations/*.sql
 ```
 
-Se ainda existirem, podem ser removidas depois da confirmação administrativa.
+no intervalo ainda não publicado.
 
-## Vercel — contrato operacional
+Sem migration pendente:
 
-Team pinado: `team_9wuTfarCQ3L63xtufPKUDzi0`.
+- Supabase CLI não é instalado;
+- `SUPABASE_ACCESS_TOKEN` e `SUPABASE_DB_PASSWORD` não são necessários para o caminho daquela release;
+- nenhum link/dry-run/apply/advisor é executado.
 
-Project pinado: `prj_hDiDvvRiesg3qCDekGWE8JQMkIyH`.
-
-Production canônica: `https://dnd.faysk.dev`.
-
-A integração Git da Vercel permanece sem auto-deploy.
-
-### Preview
+Com migration pendente, o lifecycle continua fail-closed em `tools/ci/apply-production-migrations.sh`:
 
 ```text
-vercel pull --environment=preview
-vercel build
-vercel deploy --prebuilt
+migration policy
+-> link/fetch remoto
+-> valida boundary/histórico
+-> dry-run
+-> apply
+-> fetch novamente
+-> compara histórico TDA exato
 ```
 
-O deployment recebe `APP_ENV=preview`, `APP_COMMIT_SHA=<sha>` e `TDA_RELEASE_ID=preview-<12 char sha>`. Nenhum alias Production é alterado.
+Falha em qualquer etapa impede o promote.
 
-### Production staged
+### 4. Mídia
+
+Mídia e deploy web possuem ciclos independentes.
+
+O web deploy comum não faz full public audit de todo o R2.
+
+O Production workflow só tenta lifecycle de publicação quando **o merge atual** altera manifest canônico em:
 
 ```text
-vercel pull --environment=production
+media/manifests/*.json
+```
+
+Isso evita que um asset histórico não relacionado bloqueie uma release web futura.
+
+Quando o merge atual realmente altera manifest, o caminho permanece fail-closed e exige as credenciais de escrita R2 configuradas para esse lifecycle. `tools/ci/publish-production-media.sh` cria um diretório temporário contendo somente os manifests alterados e chama `tools/media/pipeline.mjs publish`, que valida integridade, publica objeto imutável quando ausente, faz readback e valida entrega pública.
+
+Mudança apenas no tooling de mídia continua coberta pelo CI local, mas não republica automaticamente manifests antigos.
+
+## Staged deploy
+
+O artefato é construído uma vez com Vercel Production config:
+
+```text
+APP_ENV=production
+APP_COMMIT_SHA=<sha main>
+TDA_RELEASE_ID=prod-<sha curto>
+```
+
+Depois:
+
+```text
 vercel build --prod
 vercel deploy --prebuilt --prod --skip-domain
 ```
 
-`--skip-domain` é obrigatório no candidate inicial.
+O staged deployment ainda não recebe tráfego do domínio oficial.
 
-### Promote
+Smoke do staged verifica `health`, `version` e rotas principais. O SHA e release retornados precisam corresponder exatamente ao esperado.
 
-Somente depois de provenance, credentials, migration gates e staged smoke:
-
-```text
-vercel promote <deployment>
-```
-
-O artefato promovido é exatamente o artefato testado; não há rebuild entre smoke e promote.
-
-## Supabase — boundary e migration overlay
-
-Project ref: `dmrqnbdvbkfqzctcerbx`.
-
-Boundary do reboot TDA: `20260906210333`.
-
-O banco possui history legado anterior ao TDA que deliberadamente não é copiado para este repositório. Por isso `supabase db push` direto a partir do checkout canônico não é o procedimento de Production.
-
-### Semântica das pastas
+Somente então:
 
 ```text
-supabase/migrations/   = migration autorizada para Production
-supabase/candidates/   = SQL candidato ainda não autorizado
+vercel promote <deployment staged>
 ```
 
-### Overlay efêmero
+O mesmo artifact testado é o promovido.
 
-O runner cria workdir descartável e executa `supabase init`, `supabase link` e `supabase migration fetch`. Depois recusa filename inválido, migration local anterior ao boundary e migration remota TDA-era ausente do repo; por fim sobrepõe o conjunto TDA com `supabase/migrations`.
+## Verificação canônica
 
-O legado é contexto para a CLI, não autoria falsa no Git.
+Depois do promote, `tools/ci/verify-production-canonical.mjs` consulta o domínio oficial até confirmar convergência de:
 
-### Dry-run e apply
+- `health.ok=true`;
+- `health.environment=production`;
+- `health.commit=<SHA esperado>`;
+- `version.commit=<SHA esperado>`;
+- `version.release=<release esperado>`.
 
-Antes de write:
+A raiz do site também precisa responder.
 
-```text
-supabase db push --dry-run --skip-vault
-```
+## Receipt
 
-Se passar:
+Uma release GitHub pequena registra:
 
-```text
-supabase db push --skip-vault --yes
-```
+- SHA Production anterior;
+- SHA novo;
+- PR mergeada em `main`;
+- release id;
+- staged/tested deployment;
+- canonical origin;
+- se migrations foram executadas;
+- se lifecycle de mídia foi executado;
+- staged + canonical smoke PASS.
 
-Depois o workflow busca o history novamente e exige igualdade exata desde o boundary. Não há `migration repair` automático.
-
-### Estratégia de schema
-
-Preferir `expand -> migrate -> contract` para manter uma janela de compatibilidade com rollback do app.
-
-## Smoke gates
-
-### Preview
-
-Obrigatório:
-
-```text
-/api/health: ok=true
-/api/health: environment=preview
-/api/health: commit=<source sha>
-/api/version: commit=<source sha>
-/api/version: release=preview-<shortsha>
-/ responde
-/sessoes responde
-```
-
-### Production staged
-
-Obrigatório:
-
-```text
-/api/health: ok=true
-/api/health: environment=production
-/api/health: commit=<source sha>
-/api/version: commit=<source sha>
-/api/version: release=prod-<shortsha>
-/ responde
-/sessoes responde
-```
-
-### Production canônica
-
-Depois do promote, `/api/health`, `/api/version` e `/` em `https://dnd.faysk.dev` devem corresponder ao SHA/release promovidos.
-
-## Release receipt
-
-Depois de sucesso total, Production cria/atualiza GitHub Release `prod-<12-char-short-sha>` com source SHA, staged deployment, domínio canônico, Supabase ref, provenance, migration gates, dry-run/apply e smokes.
-
-## Branch protection / rulesets
-
-Configuração recomendada:
-
-### `Preview`
-
-- PR obrigatório para mudanças normais;
-- CI obrigatório;
-- Companion obrigatório quando aplicável;
-- impedir force push/deletion.
-
-### `main`
-
-- PR obrigatório;
-- `promotion-source` obrigatório;
-- CI obrigatório;
-- impedir force push/deletion.
-
-A conexão GitHub usada pela automação não possui administração de rulesets/protection/secrets. Logo, essas superfícies precisam de configuração administrativa separada e nunca devem ser descritas como configuradas sem evidência.
-
-Mesmo sem protection, Production CD permanece fail-closed graças ao provenance gate.
-
-## Falhas e resposta
-
-### Preview: `Missing GitHub Environment secret VERCEL_TOKEN`
-
-Nenhum deployment foi iniciado. Criar o secret no Environment `preview` ou como repository secret deliberado e reexecutar o ciclo. Não passar token por input.
-
-### Production source provenance falha
-
-O SHA de `main` não veio de `Preview -> main` ou a associação GitHub está inconsistente. Não contornar; criar a promoção correta.
-
-### Production credential validation falha
-
-O workflow lista somente os nomes dos secrets ausentes. Configurar no Environment `production`; valores nunca entram em docs/logs.
-
-### Migration TDA-era remota desconhecida
-
-Abortar e investigar drift/history antes de novo deploy.
-
-### Dry-run falha
-
-Não aplicar manualmente “só para testar”. Corrigir estado/migration e repetir a promoção.
-
-### Apply passa e history exato falha
-
-Não promover tráfego.
-
-### Staged smoke falha
-
-Não promover. `dnd.faysk.dev` continua no deployment anterior.
-
-### Promote passa e canonical smoke falha
-
-Tratar como incidente; se o deployment anterior for compatível com o schema atual, executar rollback manual.
+O receipt é histórico útil, não mecanismo de autorização.
 
 ## Rollback
 
-App-only usa `Production Rollback` com deployment conhecido como bom e `ROLLBACK_TDA`. Banco só pode permanecer mais novo se backward-compatible. Mídia/R2 e publicação de conteúdo possuem lifecycle separado do rollback do app.
+Workflow: `.github/workflows/rollback.yml`.
 
-## Evidência operacional — 2026-09-10
+Rollback é o mecanismo normal para falha recuperável depois de Production.
 
-### Infraestrutura inicial
-
-A PR #129 introduziu a esteira. CI/Companion ficaram verdes e Production CD foi observado como `skipped`, comprovando que o bootstrap não publicava por acidente.
-
-### Documentação
-
-A PR #136 integrou ADR-0012, runbooks, documentação de ambientes e correções encontradas pelos gates reais. O catálogo chegou a 100 documentos inventariados naquele estado.
-
-### Regressões encontradas pelos gates
-
-O processo encontrou e corrigiu regressões de layout/E2E, incluindo inspector do World Explorer em mobile e desktop 2K. Testes não foram removidos nem afrouxados para obter verde.
-
-### Ativação do Preview
-
-A PR #142 removeu switches de bootstrap do Preview CD e endureceu o smoke. Foi integrada como:
+Fluxo operacional:
 
 ```text
-652710bca720d8f07c54aa2d73fb204d9d160c7c
+identificar deployment anterior saudável
+-> rollback/promote anterior
+-> verificar canonical health/version
+-> corrigir em nova branch
+-> PR -> main
+-> novo Production v3
 ```
 
-`Preview` foi fast-forwarded para o mesmo SHA com `force=false`. CI passou integralmente, incluindo build, PostgreSQL, Playwright/E2E e processing; Companion passou em Linux e Windows.
+Não se tenta criar uma arquitetura que impossibilite todo incidente recuperável. O objetivo é detectar cedo quando barato e recuperar rápido quando algo escapar.
 
-O primeiro Preview CD real executou e falhou antes de qualquer deploy, no gate `Require Vercel deployment credential`. Instalação da Vercel CLI, build, deploy e smoke foram skipped. Isso prova que `VERCEL_TOKEN` não estava disponível ao job naquele momento.
+## Secrets mínimos
 
-### Production antes da primeira release controlada
+### Preview
 
-Durante o bootstrap, `/api/health` em `dnd.faysk.dev` estava saudável, mas com `commit=null`; `/api/version` também retornava `commit=null` e `release=null`. Logo a Production ainda não era rastreável a um SHA/release da nova esteira.
+GitHub Environment `preview`:
 
-### Supabase observado
+```text
+VERCEL_TOKEN
+```
 
-O conjunto TDA autorizado desde o boundary permaneceu alinhado com 13 migrations no momento da auditoria. Candidatas deliberadamente não aplicadas ficaram fora de `supabase/migrations`.
+### Production web comum
 
-## Critério de 100% operacional
+GitHub Environment `production`:
 
-- [x] CI versionado e verde;
-- [x] Companion versionado e verde;
-- [x] Preview e main alinhadas no bootstrap;
-- [x] Preview CD automático versionado;
-- [x] Production staged/promote versionada;
-- [x] provenance gate `Preview -> main` versionado;
-- [x] migration overlay versionado;
-- [x] health/version/release identity versionados;
-- [x] rollback versionado;
-- [x] documentação/ADR/runbook integrados;
-- [ ] `VERCEL_TOKEN` disponível ao Preview;
-- [ ] Preview CD real com smoke PASS e SHA/release corretos;
-- [ ] secrets de Production disponíveis;
-- [ ] primeira PR real `Preview -> main` validada;
-- [ ] Production staged + DB gates + smoke + promote PASS;
-- [ ] `dnd.faysk.dev/api/version` mostra SHA/release da promoção;
-- [ ] branch protection/rulesets configurados administrativamente ou explicitamente aceitos como dívida de governança.
+```text
+VERCEL_TOKEN
+```
 
-Não declarar 100% antes disso.
+Secrets Supabase continuam configurados porque são exigidos quando há migration:
+
+```text
+SUPABASE_ACCESS_TOKEN
+SUPABASE_DB_PASSWORD
+```
+
+Credenciais R2 de escrita só são necessárias quando um merge atual aciona o lifecycle de publicação de mídia. Não devem ser adicionadas apenas para fazer uma release web comum passar.
+
+## Falhas conhecidas que motivaram o desenho
+
+Production legado run `34896656582` instalou/autenticou Supabase mesmo sem migration nova e morreu antes do build ao fazer full public audit do asset antigo `backgroud_jornada.avif` com HTTP 403.
+
+Production v3 run `34899700811` falhou de forma segura no gate de credenciais antes de qualquer mutação porque o primeiro desenho confundia um manifest histórico no backlog com mídia do merge atual. A PR #345 separou os escopos.
+
+Primeiro aceite completo:
+
+```text
+PR main-only:   #345
+main SHA:       a8a9253e13c159263fc1f4a4672d8690f4c62e33
+CI:             34900494222 success
+Production CD:  34900630352 success
+Supabase:       skipped
+mídia publish:  skipped
+stage:          success
+smoke:          success
+promote:        success
+canonical:      success
+receipt:        success
+```
