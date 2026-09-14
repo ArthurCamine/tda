@@ -136,9 +136,16 @@ jobs:
 
       - name: Plan conditional Production work
         id: plan
+        shell: bash
         env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
           RELEASE_RANGE: ${{ steps.baseline.outputs.range }}
-        run: node tools/ci/production-release-plan.mjs "$RELEASE_RANGE"
+        run: |
+          set -euo pipefail
+          CURRENT_PARENT="$(git rev-parse "${SOURCE_SHA}^1")"
+          CURRENT_RANGE="${CURRENT_PARENT}..${SOURCE_SHA}"
+          echo "current_range=$CURRENT_RANGE" >> "$GITHUB_OUTPUT"
+          node tools/ci/production-release-plan.mjs "$RELEASE_RANGE" "$CURRENT_RANGE"
 
       - name: Validate only required release credentials
         shell: bash
@@ -206,8 +213,8 @@ jobs:
       - name: Publish and read back changed canonical media
         if: ${{ steps.plan.outputs.media_publish == 'true' }}
         env:
-          RELEASE_RANGE: ${{ steps.baseline.outputs.range }}
-        run: bash tools/ci/publish-production-media.sh "$RELEASE_RANGE"
+          MEDIA_RANGE: ${{ steps.plan.outputs.current_range }}
+        run: bash tools/ci/publish-production-media.sh "$MEDIA_RANGE"
 
       - name: Smoke staged Production artifact
         shell: bash
