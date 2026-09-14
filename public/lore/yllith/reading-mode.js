@@ -1,6 +1,4 @@
 (() => {
-  'use strict';
-
   const toggle = document.querySelector('#loreModeToggle');
   const readingView = document.querySelector('#reading-view');
   const content = document.querySelector('#reading-content');
@@ -44,6 +42,10 @@
     return html;
   }
 
+  function headingText(value) {
+    return value.replace(/\*+/g, '').trim();
+  }
+
   function slugify(value) {
     return value
       .normalize('NFD')
@@ -82,7 +84,7 @@
 
       if (line.startsWith('# ')) {
         flushBlocks();
-        const title = line.slice(2).trim();
+        const title = headingText(line.slice(2));
         current = { title, slug: slugify(title), blocks: [] };
         chapters.push(current);
         continue;
@@ -229,7 +231,9 @@
       if (active) updateReadingCurrent(active.target.id);
     }, { rootMargin: '-18% 0px -62% 0px', threshold: [0, .08, .2] });
 
-    content.querySelectorAll('[data-reading-chapter]').forEach((chapter) => readingObserver.observe(chapter));
+    content.querySelectorAll('[data-reading-chapter]').forEach((chapter) => {
+      readingObserver.observe(chapter);
+    });
   }
 
   async function enterReading() {
@@ -237,7 +241,9 @@
     const targetId = cinematicToReading[activeCinematicChapter()] || 'read-nascida-para-conquistar';
 
     document.body.classList.add('reading-mode');
-    cinematicTargets.forEach((element) => element.setAttribute('aria-hidden', 'true'));
+    cinematicTargets.forEach((element) => {
+      element.setAttribute('aria-hidden', 'true');
+    });
     readingView.hidden = false;
     readingView.removeAttribute('aria-hidden');
     updateToggle(true);
@@ -254,7 +260,9 @@
 
   function leaveReading() {
     document.body.classList.remove('reading-mode');
-    cinematicTargets.forEach((element) => element.removeAttribute('aria-hidden'));
+    cinematicTargets.forEach((element) => {
+      element.removeAttribute('aria-hidden');
+    });
     readingView.hidden = true;
     readingView.setAttribute('aria-hidden', 'true');
     updateToggle(false);
