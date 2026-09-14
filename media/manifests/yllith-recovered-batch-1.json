@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "project": "yllith-recovered-batch-1",
+  "namespace": "lore/yllith",
+  "bucket": "tda-media-public",
+  "publicOrigin": "https://media.dnd.faysk.dev",
+  "assets": [
+    {
+      "file": "maos_sobre_mapa_matilha.webp",
+      "source": "media/sources/yllith/maos_sobre_mapa_matilha.webp.base64",
+      "encoding": "base64",
+      "bytes": 20272,
+      "sha256": "4f76223c2b0b4065beb6457173bf8a3a684715c7fcf76a395ccc7e252c0734d4",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "sonho_paralax_backgroud.avif",
+      "source": "media/sources/yllith/sonho_paralax_backgroud.avif.base64",
+      "encoding": "base64",
+      "bytes": 16786,
+      "sha256": "bcf5985f7f43bb50e40d36fc40a6e35192343cf39d9159a479ad0a62f3bab655",
+      "contentType": "image/avif"
+    },
+    {
+      "file": "sonho_paralax_espirito.webp",
+      "source": "media/sources/yllith/sonho_paralax_espirito.webp.base64",
+      "encoding": "base64",
+      "bytes": 18090,
+      "sha256": "52dcd41179659ff80bb0b55bab50862a4d4449d726a5dd3a0b50af5db02800fd",
+      "contentType": "image/webp"
+    }
+  ]
+}
