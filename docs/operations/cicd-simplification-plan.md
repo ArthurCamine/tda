@@ -5,6 +5,17 @@
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
 
+## Progresso
+
+| Fase | Estado | Evidência principal |
+| --- | --- | --- |
+| 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
+| 2 — CI rápido | **validada; aguardando merge** | PR #332; CI run `34877237056` |
+| 3 — separar domínios pesados | planejada | — |
+| 4 — Preview por PR / main-only | planejada | — |
+| 5 — Production simples | planejada | — |
+| 6 — limpeza e documentação final | planejada | — |
+
 ## Objetivo
 
 Simplificar a entrega do TDA para o risco real do projeto: aplicação pessoal/de jogo, operada por uma pessoa com apoio de automação, sem requisito atual de alta disponibilidade ou compliance.
@@ -68,6 +79,8 @@ rollback -> corrigir -> publicar novamente
 
 ## Fase 1 — inventário e direção
 
+**Estado: concluída em 2026-09-14.**
+
 Entregas:
 
 - baseline com SHAs e protections;
@@ -77,32 +90,97 @@ Entregas:
 - ADR-0015;
 - plano das seis fases.
 
-Definition of Done:
+Evidência:
+
+```text
+PR:        #329
+Head:      931e5e37e6fe7f654fb0c44be2f950008761ebc2
+Merge:     fe9145631c21da064e9b9cb5dad0f2680722bed0
+Base:      Preview
+Runtime:   sem alteração funcional
+```
+
+Definition of Done atingida:
 
 - nenhuma mudança de runtime;
 - documentação distingue estado vigente de estado planejado;
 - baseline possui data e SHA;
-- branch de trabalho pode ser descartada sem impacto operacional.
+- branch de trabalho era descartável sem impacto operacional.
 
 ## Fase 2 — CI rápido
 
-Objetivo: criar o núcleo mínimo de validação para PR.
+**Estado: validada na PR #332; conclusão formal no merge.**
 
-Direção:
+Objetivo: criar o núcleo mínimo de validação web para PR, sem ainda desacoplar os domínios pesados que pertencem à Fase 3.
 
-- `actionlint` obrigatório;
-- typecheck;
-- lint;
-- unit tests;
-- build;
-- um check agregador estável, como `required-ci`;
-- testes pesados deixam de bloquear toda mudança sem necessidade.
+### Baseline real antes da mudança
 
-Definition of Done:
+A PR #329, que alterava somente documentação, forneceu uma amostra real do custo anterior:
 
-- alteração web comum não inicializa PostgreSQL nem MSI;
-- workflow inválido é detectado antes do merge;
-- branch protection depende de um check estável sem ficar presa a jobs condicionais.
+```text
+CI run:                  34876284417
+CI início:               2026-09-14T17:41:33Z
+CI fim:                  2026-09-14T17:46:43Z
+validate:                ~5m05s
+PostgreSQL job:          ~47s
+Playwright install:      ~25s
+E2E:                     ~3m50s
+processing:              ~7s
+Companion run:           34876284413
+Companion:               ~4m05s
+MSI para PR docs-only:   sim
+```
+
+Essa medição não é benchmark universal; é uma execução real do estado anterior usada para comparar a própria PR da Fase 2.
+
+### Resultado real da primeira execução da Fase 2
+
+Na PR #332, head `bdea998c4b1806b14fc7190df018948ecc51ab54`:
+
+```text
+CI run:                    34877237056
+workflow-contract:         ~13s total; actionlint em ~1s após pull da imagem
+validate:                  ~37s
+required-ci:               ~2s
+transcript-import-postgres ~51s
+Chromium no validate:      não
+E2E completo no validate:  não
+processing no validate:    não
+Resultado CI:              success
+```
+
+Comparação do `validate` observado:
+
+```text
+antes: ~305s
+Fase 2: ~37s
+redução: ~268s / ~88%
+```
+
+O ganho não depende de cache especial nem de pular `pnpm check`/build: ambos continuaram verdes. O que saiu foi a bateria pesada que não precisa bloquear toda alteração.
+
+### Mudança da Fase 2
+
+`workflow-contract` executa `actionlint` em `.github/workflows`. Nesta primeira adoção, shellcheck e pyflakes ficam desligados para a introdução do contrato YAML/expressions não virar uma rodada paralela de lint de todos os scripts inline legados.
+
+`validate` permanece com migration safety policy, o teste curto de SVG, `pnpm check` e `pnpm build`. Saem do caminho comum a instalação do Chromium, `pnpm test:e2e` e `pnpm test:processing`. Essas suítes continuam disponíveis como scripts e serão reposicionadas por relevância/smoke nas fases seguintes.
+
+`required-ci` é um agregador de nome estável e só passa quando `workflow-contract` e `validate` passam. Ele prepara a branch protection para a Fase 3, quando jobs especializados poderão ser pulados legitimamente sem deixar required checks pendentes.
+
+### Dívida explicitamente preservada para a Fase 3
+
+`transcript-import-postgres` continua rodando nesta fase porque ainda é required check na proteção atual. O Companion também continua intocado e ainda pode construir MSI em uma PR sem mudança de Companion.
+
+Isso é temporário e intencional: a Fase 2 prova primeiro o contrato rápido; a Fase 3 troca a proteção e torna os domínios pesados condicionais sem misturar riscos.
+
+Definition of Done da implementação:
+
+- `validate` comum não instala Chromium nem executa a suíte E2E/processing completa: **atingido**;
+- workflow inválido é detectado por `actionlint` antes do merge: **atingido**;
+- `required-ci` existe e depende de `workflow-contract` + `validate`: **atingido**;
+- tempo/etapas antes e depois registrados: **atingido**;
+- PostgreSQL e Companion permanecem explicitamente como dívida temporária: **atingido**;
+- integração em `Preview` sem contornar branch protection: **pendente somente do merge da PR #332**.
 
 ## Fase 3 — separar domínios pesados
 
@@ -114,14 +192,16 @@ Direção:
 - DB/integration tests por paths relevantes;
 - media pipeline própria, mantendo R2;
 - full media audit manual/agendado;
-- cada domínio falha fechado quando ele realmente mudou.
+- cada domínio falha fechado quando ele realmente mudou;
+- atualizar branch protection para depender do check agregador estável, evitando required checks presos por jobs legitimamente pulados.
 
 Definition of Done:
 
-- mudança CSS/UI não constrói MSI;
+- mudança CSS/UI/docs não constrói MSI;
 - mudança sem DB não sobe PostgreSQL nem tenta migration;
 - mudança sem mídia não verifica globalmente o R2;
-- mudança de mídia continua validando hash, MIME, bytes e publicação do que mudou.
+- mudança de mídia continua validando hash, MIME, bytes e publicação do que mudou;
+- `required-ci` é o contrato estável de merge e jobs condicionais podem ser skipped sem deixar a PR pendente.
 
 ## Fase 4 — Preview por PR e retirada da branch `Preview`
 
@@ -201,12 +281,13 @@ Usar medições simples, por exemplo:
 
 | Sinal | Antes | Depois |
 | --- | --- | --- |
-| checks bloqueantes em PR web comum | medir | medir |
-| PostgreSQL em mudança web comum | sim | alvo: não |
-| MSI em mudança web comum | sim | alvo: não |
-| full media audit sem mudança de mídia | sim | alvo: não |
-| branch longa além de `main` | `Preview` | alvo: nenhuma |
-| promoção intermediária | `Preview -> main` | alvo: nenhuma |
+| duração do `validate` web comum | ~5m05s na PR #329 | ~37s na primeira execução da PR #332 |
+| Chromium/E2E em `validate` comum | sim | não |
+| PostgreSQL em mudança web comum | sim | alvo F3: não |
+| MSI em mudança web comum | sim | alvo F3: não |
+| full media audit sem mudança de mídia | sim | alvo F3: não |
+| branch longa além de `main` | `Preview` | alvo F4: nenhuma |
+| promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
 
 Não criar dashboard novo apenas para acompanhar a migração.
 
