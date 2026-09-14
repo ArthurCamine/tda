@@ -11,7 +11,8 @@ import {
 } from "@aws-sdk/client-s3";
 
 export const DEFAULT_MANIFEST_DIR = "media/manifests";
-const DEFAULT_PUBLIC_ORIGIN = "https://media.dnd.faysk.dev";
+export const DEFAULT_PUBLIC_ORIGIN = "https://media.dnd.faysk.dev";
+const PUBLIC_BUCKET = "tda-media-public";
 const MAX_ASSET_BYTES = 128 * 1024 * 1024;
 const ALLOWED_ENCODINGS = new Set(["binary", "base64"]);
 const ALLOWED_MEDIA_TYPE =
@@ -23,9 +24,16 @@ export function sha256(bytes) {
 
 function normalizePublicOrigin(value) {
 	const url = new URL(value);
-	if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
-		throw new Error("publicOrigin must be an https origin");
-	return url.href.replace(/\/$/, "");
+	if (
+		url.protocol !== "https:" ||
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash ||
+		url.pathname !== "/"
+	)
+		throw new Error("publicOrigin must be a bare https origin");
+	return url.origin;
 }
 
 function safeRepoPath(root, value, label) {
@@ -38,10 +46,16 @@ function safeRepoPath(root, value, label) {
 	return absolute;
 }
 
-export function validateManifest(manifest, { repoRoot = process.cwd(), manifestPath = null } = {}) {
+export function validateManifest(
+	manifest,
+	{ repoRoot = process.cwd(), manifestPath = null } = {},
+) {
 	if (!manifest || manifest.schemaVersion !== 1)
 		throw new Error("media manifest schemaVersion must be 1");
-	if (typeof manifest.project !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(manifest.project))
+	if (
+		typeof manifest.project !== "string" ||
+		!/^[a-z0-9][a-z0-9-]{1,63}$/.test(manifest.project)
+	)
 		throw new Error("media manifest project is invalid");
 	if (
 		typeof manifest.namespace !== "string" ||
@@ -51,8 +65,8 @@ export function validateManifest(manifest, { repoRoot = process.cwd(), manifestP
 		manifest.namespace.endsWith("/")
 	)
 		throw new Error("media manifest namespace is invalid");
-	if (manifest.bucket !== "tda-media-public")
-		throw new Error("media manifest bucket must be tda-media-public");
+	if (manifest.bucket !== PUBLIC_BUCKET)
+		throw new Error(`media manifest bucket must be ${PUBLIC_BUCKET}`);
 	const publicOrigin = normalizePublicOrigin(
 		manifest.publicOrigin ?? DEFAULT_PUBLIC_ORIGIN,
 	);
@@ -72,7 +86,8 @@ export function validateManifest(manifest, { repoRoot = process.cwd(), manifestP
 			asset.file === ".."
 		)
 			throw new Error("asset file must be a plain filename");
-		if (seenFiles.has(asset.file)) throw new Error(`duplicate asset file: ${asset.file}`);
+		if (seenFiles.has(asset.file))
+			throw new Error(`duplicate asset file: ${asset.file}`);
 		seenFiles.add(asset.file);
 
 		if (
@@ -81,20 +96,32 @@ export function validateManifest(manifest, { repoRoot = process.cwd(), manifestP
 			asset.bytes > MAX_ASSET_BYTES
 		)
 			throw new Error(`invalid byte size for ${asset.file}`);
-		if (typeof asset.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(asset.sha256))
+		if (
+			typeof asset.sha256 !== "string" ||
+			!/^[a-f0-9]{64}$/.test(asset.sha256)
+		)
 			throw new Error(`invalid sha256 for ${asset.file}`);
 		const encoding = asset.encoding ?? "binary";
 		if (!ALLOWED_ENCODINGS.has(encoding))
 			throw new Error(`invalid source encoding for ${asset.file}`);
-		if (typeof asset.contentType !== "string" || !ALLOWED_MEDIA_TYPE.test(asset.contentType))
+		if (
+			typeof asset.contentType !== "string" ||
+			!ALLOWED_MEDIA_TYPE.test(asset.contentType)
+		)
 			throw new Error(`unsupported contentType for ${asset.file}`);
-		const sourcePath = safeRepoPath(repoRoot, asset.source, `source for ${asset.file}`);
+
+		const sourcePath = safeRepoPath(
+			repoRoot,
+			asset.source,
+			`source for ${asset.file}`,
+		);
 		const sourceRelative = relative(repoRoot, sourcePath).split(sep).join("/");
 		if (!sourceRelative.startsWith("media/sources/"))
 			throw new Error(`source for ${asset.file} must live under media/sources`);
 
 		const objectKey = `${manifest.namespace}/${asset.sha256}/${asset.file}`;
-		if (seenKeys.has(objectKey)) throw new Error(`duplicate object key: ${objectKey}`);
+		if (seenKeys.has(objectKey))
+			throw new Error(`duplicate object key: ${objectKey}`);
 		seenKeys.add(objectKey);
 
 		return {
@@ -120,7 +147,11 @@ export function validateManifest(manifest, { repoRoot = process.cwd(), manifestP
 
 function decodeBase64Strict(text, label) {
 	const compact = text.replace(/\s+/g, "");
-	if (!compact || compact.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact))
+	if (
+		!compact ||
+		compact.length % 4 === 1 ||
+		!/^[A-Za-z0-9+/]*={0,2}$/.test(compact)
+	)
 		throw new Error(`invalid base64 source for ${label}`);
 	const bytes = Buffer.from(compact, "base64");
 	const canonical = bytes.toString("base64").replace(/=+$/, "");
@@ -154,12 +185,15 @@ export async function discoverManifests({
 	const absoluteDir = safeRepoPath(repoRoot, manifestDir, "manifest directory");
 	let names;
 	try {
-		names = (await readdir(absoluteDir)).filter((name) => name.endsWith(".json")).sort();
+		names = (await readdir(absoluteDir))
+			.filter((name) => name.endsWith(".json"))
+			.sort();
 	} catch (error) {
-		if (error?.code === "ENOENT") throw new Error(`media manifest directory not found: ${manifestDir}`);
+		if (error?.code === "ENOENT") return [];
 		throw error;
 	}
-	if (names.length === 0) throw new Error("no media manifests found");
+	if (names.length === 0) return [];
+
 	const manifests = [];
 	const projects = new Set();
 	const objectKeys = new Set();
@@ -191,7 +225,22 @@ export async function validateAll(options = {}) {
 			bytes += payload.length;
 		}
 	}
-	return { manifests: manifests.length, assets, bytes, projects: manifests.map((m) => m.project) };
+	return {
+		manifests: manifests.length,
+		assets,
+		bytes,
+		projects: manifests.map((manifest) => manifest.project),
+	};
+}
+
+function manifestSetSha256(manifests) {
+	const lines = manifests.flatMap((manifest) =>
+		manifest.assets.map(
+			(asset) =>
+				`${manifest.project}\t${asset.objectKey}\t${asset.bytes}\t${asset.contentType}`,
+		),
+	);
+	return sha256(Buffer.from(lines.sort().join("\n"), "utf8"));
 }
 
 function r2Config() {
@@ -199,7 +248,7 @@ function r2Config() {
 	const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
 	const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
 	const bucket = process.env.R2_PUBLIC_BUCKET?.trim();
-	if (bucket !== "tda-media-public" || !accountId || !accessKeyId || !secretAccessKey)
+	if (bucket !== PUBLIC_BUCKET || !accountId || !accessKeyId || !secretAccessKey)
 		throw new Error("R2 public media configuration is incomplete");
 	return { accountId, accessKeyId, secretAccessKey, bucket };
 }
@@ -217,18 +266,9 @@ function r2Client(config) {
 }
 
 async function bodyBytes(body) {
-	if (!body?.transformToByteArray) throw new Error("R2 response body is not byte-readable");
+	if (!body?.transformToByteArray)
+		throw new Error("R2 response body is not byte-readable");
 	return Buffer.from(await body.transformToByteArray());
-}
-
-async function getRemoteBytes(client, bucket, key) {
-	const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-	if (!result.Body) throw new Error(`R2 object has no body: ${key}`);
-	return {
-		bytes: await bodyBytes(result.Body),
-		contentType: result.ContentType ?? null,
-		cacheControl: result.CacheControl ?? null,
-	};
 }
 
 function isNotFound(error) {
@@ -248,17 +288,20 @@ async function inspectRemote(client, manifest, asset) {
 			throw new Error(
 				`immutable R2 object size mismatch for ${asset.objectKey}; refusing overwrite`,
 			);
-		const remote = await getRemoteBytes(client, manifest.bucket, asset.objectKey);
-		const digest = sha256(remote.bytes);
-		if (digest !== asset.sha256)
+		const result = await client.send(
+			new GetObjectCommand({ Bucket: manifest.bucket, Key: asset.objectKey }),
+		);
+		if (!result.Body) throw new Error(`R2 object has no body: ${asset.objectKey}`);
+		const bytes = await bodyBytes(result.Body);
+		if (sha256(bytes) !== asset.sha256)
 			throw new Error(
 				`immutable R2 object sha256 mismatch for ${asset.objectKey}; refusing overwrite`,
 			);
-		if (remote.contentType !== asset.contentType)
+		if (result.ContentType !== asset.contentType)
 			throw new Error(
 				`immutable R2 object content-type mismatch for ${asset.objectKey}; refusing overwrite`,
 			);
-		return { exists: true, bytes: remote.bytes.length };
+		return { exists: true };
 	} catch (error) {
 		if (isNotFound(error)) return { exists: false };
 		throw error;
@@ -274,7 +317,10 @@ async function verifyPublicDelivery(asset, attempts = 8) {
 				headers: { "cache-control": "no-cache" },
 			});
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			const actualType = response.headers.get("content-type")?.split(";")[0]?.trim();
+			const actualType = response.headers
+				.get("content-type")
+				?.split(";")[0]
+				?.trim();
 			if (actualType !== asset.contentType)
 				throw new Error(
 					`content-type ${actualType ?? "missing"} != ${asset.contentType}`,
@@ -282,16 +328,26 @@ async function verifyPublicDelivery(asset, attempts = 8) {
 			const bytes = Buffer.from(await response.arrayBuffer());
 			if (bytes.length !== asset.bytes)
 				throw new Error(`bytes ${bytes.length} != ${asset.bytes}`);
-			const digest = sha256(bytes);
-			if (digest !== asset.sha256)
-				throw new Error(`sha256 ${digest} != ${asset.sha256}`);
-			return { httpStatus: response.status, contentType: actualType, bytes: bytes.length };
+			if (sha256(bytes) !== asset.sha256)
+				throw new Error(`sha256 mismatch for ${asset.publicUrl}`);
+			return { httpStatus: response.status, contentType: actualType };
 		} catch (error) {
 			lastError = error;
-			if (attempt < attempts) await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 750));
+			if (attempt < attempts)
+				await new Promise((resolveDelay) =>
+					setTimeout(resolveDelay, attempt * 750),
+				);
 		}
 	}
-	throw new Error(`public media verification failed for ${asset.publicUrl}: ${lastError?.message}`);
+	throw new Error(
+		`public media verification failed for ${asset.publicUrl}: ${lastError?.message}`,
+	);
+}
+
+async function writeReceipt(repoRoot, receiptPath, receipt) {
+	const absoluteReceipt = safeRepoPath(repoRoot, receiptPath, "receipt path");
+	await mkdir(dirname(absoluteReceipt), { recursive: true });
+	await writeFile(absoluteReceipt, `${JSON.stringify(receipt, null, 2)}\n`);
 }
 
 export async function publishAll({
@@ -300,29 +356,33 @@ export async function publishAll({
 	receiptPath = ".local/media-publication-receipt.json",
 } = {}) {
 	const manifests = await discoverManifests({ repoRoot, manifestDir });
-
-	// Fail closed locally before creating the remote client or issuing a write.
 	const prepared = [];
 	for (const manifest of manifests) {
-		for (const asset of manifest.assets) {
+		for (const asset of manifest.assets)
 			prepared.push({ manifest, asset, bytes: await readAssetBytes(asset) });
-		}
 	}
 
-	const config = r2Config();
-	const client = r2Client(config);
 	const receipt = {
 		schemaVersion: 1,
 		kind: "tda-media-publication-receipt",
 		createdAt: new Date().toISOString(),
-		bucket: config.bucket,
+		bucket: PUBLIC_BUCKET,
 		publicOrigin: DEFAULT_PUBLIC_ORIGIN,
+		manifestSetSha256: manifestSetSha256(manifests),
 		manifests: manifests.length,
 		assets: [],
 	};
 
-	for (const item of prepared) {
-		const { manifest, asset, bytes } = item;
+	if (prepared.length === 0) {
+		receipt.summary = { projects: 0, assets: 0, published: 0, reused: 0, verified: 0 };
+		await writeReceipt(repoRoot, receiptPath, receipt);
+		console.log("MEDIA_PUBLISH_OK 0 assets; nothing to publish");
+		return receipt;
+	}
+
+	const config = r2Config();
+	const client = r2Client(config);
+	for (const { manifest, asset, bytes } of prepared) {
 		const state = await inspectRemote(client, manifest, asset);
 		let action = "reused";
 		if (!state.exists) {
@@ -333,7 +393,10 @@ export async function publishAll({
 					Body: bytes,
 					ContentType: asset.contentType,
 					CacheControl: "public, max-age=31536000, immutable",
-					Metadata: { sha256: asset.sha256, "tda-project": manifest.project },
+					Metadata: {
+						sha256: asset.sha256,
+						"tda-project": manifest.project,
+					},
 				}),
 			);
 			action = "published";
@@ -365,10 +428,7 @@ export async function publishAll({
 		reused: receipt.assets.filter((asset) => asset.action === "reused").length,
 		verified: receipt.assets.filter((asset) => asset.publicDeliveryVerified).length,
 	};
-
-	const absoluteReceipt = safeRepoPath(repoRoot, receiptPath, "receipt path");
-	await mkdir(dirname(absoluteReceipt), { recursive: true });
-	await writeFile(absoluteReceipt, `${JSON.stringify(receipt, null, 2)}\n`);
+	await writeReceipt(repoRoot, receiptPath, receipt);
 	console.log(
 		`MEDIA_PUBLISH_OK ${receipt.summary.assets} assets; published=${receipt.summary.published}; reused=${receipt.summary.reused}; verified=${receipt.summary.verified}`,
 	);
@@ -382,7 +442,10 @@ export async function main(args = process.argv.slice(2)) {
 		strict: true,
 		options: {
 			"manifest-dir": { type: "string", default: DEFAULT_MANIFEST_DIR },
-			receipt: { type: "string", default: ".local/media-publication-receipt.json" },
+			receipt: {
+				type: "string",
+				default: ".local/media-publication-receipt.json",
+			},
 		},
 	});
 	if (command === "validate") {
@@ -392,18 +455,22 @@ export async function main(args = process.argv.slice(2)) {
 		);
 		return result;
 	}
-	if (command === "publish") {
+	if (command === "publish")
 		return publishAll({
 			manifestDir: values["manifest-dir"],
 			receiptPath: values.receipt,
 		});
-	}
 	throw new Error(`unknown media pipeline command: ${command}`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+	process.argv[1] &&
+	resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
 	main().catch((error) => {
-		console.error(`MEDIA_PIPELINE_FAILED ${error instanceof Error ? error.message : String(error)}`);
+		console.error(
+			`MEDIA_PIPELINE_FAILED ${error instanceof Error ? error.message : String(error)}`,
+		);
 		process.exitCode = 1;
 	});
 }
