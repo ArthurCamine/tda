@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 const SOCIAL =
 	"https://media.dnd.faysk.dev/lore/yllith/b9858046c31ddc338fafe822b8c6132d4b4a4383c5f11b7b6e536943f8509f48/social-yllith.jpg";
+const HERO =
+	"https://media.dnd.faysk.dev/lore/yllith/77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f/yllith.webp";
 
 test("Yllith is a direct-only standalone lore with cinematic and reading modes", async ({ page, request }) => {
 	test.setTimeout(120000);
@@ -27,7 +29,8 @@ test("Yllith is a direct-only standalone lore with cinematic and reading modes",
 
 	const hero = page.locator(".hero-character");
 	await expect(hero).toBeVisible();
-	await expect.poll(() => hero.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(1000);
+	await expect(hero).toHaveAttribute("src", HERO);
+	await expect.poll(() => hero.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
 
 	const toggle = page.locator("#loreModeToggle");
 	await expect(toggle).toHaveAttribute("aria-checked", "false");
