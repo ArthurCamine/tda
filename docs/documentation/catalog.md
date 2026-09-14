@@ -35,6 +35,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0012 — GitHub Actions controla a entrega; Vercel Git auto-deploy permanece desligado](../adr/0012-github-actions-controlled-delivery.md) | operations / arquitetura / dados | accepted | Não declarado |
 | [ADR-0013 — TDA Companion como Agent local, Desktop de controle e runtime ASR multi-engine](../adr/0013-companion-agent-desktop-asr.md) | local-companion / processing | accepted | Não declarado |
 | [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md) | Não declarado | Não declarado | Não declarado |
+| [ADR-0015 — Entrega simples orientada a recuperação](../adr/0015-recovery-oriented-delivery.md) | operations / architecture | accepted | 2026-09-14 |
 | [Architecture Decision Records](../adr/README.md) | arquitetura | vigente | Não declarado |
 
 ## docs/architecture
@@ -177,9 +178,11 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
-| [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-13 |
+| [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-14 |
 | [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-10 |
 | [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
+| [CI/CD — baseline da simplificação](../operations/cicd-simplification-baseline.md) | operations / architecture | auditoria | 2026-09-14 |
+| [CI/CD — plano de simplificação](../operations/cicd-simplification-plan.md) | operations / architecture | planejado | 2026-09-14 |
 | [TDA Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](../operations/companion-0.3.3-heavy-audit.md) | local-companion / processing / operations / security | auditoria concluída; 0.3.3 aposentada para certificação; remediação integrada na linha 0.3.4 | 2026-09-13 |
 | [TDA Companion — A-017 integridade dos modelos ASR](../operations/companion-a017-model-integrity.md) | local-companion / processing / operations / security | implementado em candidato; integração condicionada aos gates automáticos e ao aceite físico | 2026-09-14 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |
@@ -201,8 +204,8 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
-| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations/media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
+| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations-media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
 
 ## Cobertura
 
-129 páginas inventariadas, além deste catálogo gerado. 14 sem Owner e 23 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
+132 páginas inventariadas, além deste catálogo gerado. 14 sem Owner e 23 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
