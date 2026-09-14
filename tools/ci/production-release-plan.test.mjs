@@ -6,6 +6,7 @@ test("docs-only does not require migrations or media publication", () => {
 	const plan = planProductionPaths(["docs/operations/ci-cd.md"]);
 	assert.equal(plan.migrations, false);
 	assert.equal(plan.media, false);
+	assert.equal(plan.mediaPublish, false);
 });
 
 test("database code without a migration does not mutate Production schema", () => {
@@ -22,8 +23,15 @@ test("Supabase migration requires Production migration lifecycle", () => {
 	assert.equal(plan.migrations, true);
 });
 
-test("canonical media changes require Production media publication", () => {
+test("changed canonical manifest requires Production media publication", () => {
 	const plan = planProductionPaths(["media/manifests/yllith.json"]);
 	assert.equal(plan.media, true);
+	assert.equal(plan.mediaPublish, true);
 	assert.equal(plan.migrations, false);
+});
+
+test("media tooling change is relevant but does not republish old manifests", () => {
+	const plan = planProductionPaths(["tools/media/pipeline.mjs"]);
+	assert.equal(plan.media, true);
+	assert.equal(plan.mediaPublish, false);
 });
