@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  deployments: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -165,8 +166,8 @@ jobs:
             tools/media/verify-public.test.mjs \
             tools/world-entity-media-r2-policy.test.mjs
 
-  required-ci:
-    name: required-ci
+  ci-gate:
+    name: ci-gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
@@ -212,4 +213,38 @@ jobs:
             test "$MEDIA_RESULT" = "success"
           else
             test "$MEDIA_RESULT" = "skipped"
+          fi
+
+  preview-deployment:
+    name: preview-deployment
+    needs: ci-gate
+    if: ${{ github.event_name == 'pull_request' && needs.ci-gate.result == 'success' }}
+    uses: ./.github/workflows/deploy-preview.yml
+    with:
+      source_sha: ${{ github.event.pull_request.head.sha }}
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  required-ci:
+    name: required-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs:
+      - ci-gate
+      - preview-deployment
+    steps:
+      - name: Require CI gate and PR Preview when applicable
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CI_GATE_RESULT: ${{ needs.ci-gate.result }}
+          PREVIEW_RESULT: ${{ needs.preview-deployment.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CI_GATE_RESULT" = "success"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$PREVIEW_RESULT" = "success"
+          else
+            test "$PREVIEW_RESULT" = "skipped"
           fi
