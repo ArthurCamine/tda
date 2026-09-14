@@ -213,7 +213,7 @@ main:
   promotion-source
 ```
 
-`promotion-source` continua temporariamente porque a topologia `Preview -> main` ainda existe até a Fase 4.
+`promotion-source` continua temporariamente porque a topologia `Preview -> main` ainda existe até o cutover Production/main-only.
 
 #### 3C — seletividade ativa
 
@@ -381,7 +381,7 @@ required-ci
 promotion-source
 ```
 
-`promotion-source` só desaparece na Fase 4, junto com a topologia `Preview -> main`.
+`promotion-source` desaparece somente quando Production deixar de exigir provenance `Preview -> main`.
 
 **Executada:** protections verificadas após o cutover com os contexts acima.
 
@@ -431,33 +431,120 @@ PRs usadas como regressão/evidência:
 - jobs especializados podem ser `skipped` sem deixar PR pendente e sem permitir falha quando classificados como relevantes;
 - classificação e transição estão documentadas com evidências antes/depois.
 
-## Fase 4 — Preview por PR e retirada da branch `Preview`
+## Fase 4 — Preview por PR e transição para main-only
 
-Objetivo: separar o conceito de Preview do conceito de branch.
+Objetivo: separar o conceito de Preview do conceito de branch e provar o deployment imutável por PR antes de alterar a provenance de Production.
 
-Direção:
+### Fase 4A — Preview imutável por PR
 
-- cada PR recebe deployment Preview do SHA daquela PR;
-- smoke pequeno confirma SHA e superfícies básicas;
-- PR normal passa a ter `main` como base;
-- remover `workflow_run` da entrega web;
-- remover `promotion-policy.yml`;
-- remover `preview-branch-guard.yml`;
-- aposentar `Preview` somente depois de provar o fluxo novo.
+**Implementação comprovada na PR #341.**
 
-Definition of Done:
+O antigo `.github/workflows/preview.yml`, disparado por `workflow_run` no HEAD mutável de `Preview`, foi substituído por `.github/workflows/deploy-preview.yml` reutilizável. O `CI` passou a usar a sequência:
+
+```text
+fast/domain checks
+       |
+       v
+    ci-gate
+       |
+       v
+Preview exato da PR
+       |
+       v
+  required-ci
+```
+
+Em PR, `required-ci` somente fica verde depois que o Preview do SHA exato faz build, deploy e smoke. Em push sem PR, o Preview é `skipped` legitimamente.
+
+Evidência principal:
+
+```text
+PR:              #341
+Head comprovado: c86f519b4b2e4a12916779729a8131f90790d656
+CI run:          34895256681
+release Preview: pr-341-c86f519b4b2e
+Vercel Preview:  https://tda-ox3wglak9-projeto-desenv-6905s-projects.vercel.app
+ci-gate:         success
+PostgreSQL:      skipped
+Companion:       skipped
+mídia pesada:    skipped
+Preview deploy:  success
+required-ci:     success
+```
+
+O smoke verificou `/api/health`, `/api/version`, `/`, `/sessoes` e `/lore/yllith`, exigindo `environment=preview`, commit igual ao SHA da PR e release igual a `pr-<numero>-<shortsha>`.
+
+O full public audit global de R2 não participa mais do Preview web. A validação de mídia continua no domínio próprio definido na Fase 3.
+
+### Falha encontrada e contrato corrigido
+
+As duas primeiras tentativas da PR #341 falharam de forma segura antes de alcançar Vercel: `ci-gate` estava verde, mas `preview-deployment` apareceu como `skipped` porque GitHub Actions propaga o estado de ancestrais `skipped` através de `needs` com o `success()` implícito.
+
+A condição final ficou explícita:
+
+```text
+always()
++ evento pull_request
++ ci-gate == success
+```
+
+Isso permite ignorar somente os skips legítimos de DB/Companion/mídia enquanto continua impedindo Preview quando `ci-gate` falha. `required-ci` permaneceu fail-closed nas tentativas anteriores e só ficou verde depois do Preview real passar.
+
+### Dependência descoberta: Production legado
+
+A retirada imediata da branch `Preview` foi adiada deliberadamente depois de inspecionar o `production.yml` vigente. Ele ainda prova provenance procurando uma PR mergeada com:
+
+```text
+head = Preview
+base = main
+merge_commit_sha = SHA de Production
+```
+
+Apagar `Preview`, `promotion-source` e `preview-branch-guard` antes de substituir esse contrato faria todo deploy novo de Production falhar por design.
+
+Por isso a sequência segura passa a ser:
+
+```text
+Fase 4A
+Preview por PR comprovado
+antigo Preview CD removido
+        |
+        v
+Fase 5
+Production v3 aceita SHA exato de PR mergeada em main
+Production fica condicional por DB/mídia
+        |
+        v
+cutover main-only
+retira promotion-source
+PRs normais passam a mirar main
+        |
+        v
+Fase 6
+apaga branch Preview + guard e referências residuais
+```
+
+Até esse cutover, a branch `Preview` permanece apenas como compatibilidade da provenance de Production; ela não representa mais a implementação desejada de homologação.
+
+### Critério atualizado da Fase 4
+
+A parte de Preview da fase é considerada comprovada quando:
 
 - Preview de uma PR não depende do HEAD mutável de outra branch;
-- não existe promoção `Preview -> main`;
-- não existe necessidade de sincronizar `main -> Preview`;
-- branch protection da `main` reflete apenas checks do fluxo novo.
+- o SHA exato é usado no checkout, build, deploy, health e version;
+- `required-ci` depende do Preview verde em PR;
+- `workflow_run` deixa de controlar o Preview web;
+- full public audit global de mídia não bloqueia Preview web comum.
+
+A remoção física da branch `Preview` e da promoção intermediária fica condicionada ao Production v3 da Fase 5, para preservar deploy funcional durante a migração.
 
 ## Fase 5 — Production simples e recuperável
 
-Objetivo: reduzir `production.yml` ao necessário para publicar com segurança proporcional ao projeto.
+Objetivo: reduzir `production.yml` ao necessário para publicar com segurança proporcional ao projeto e concluir o cutover main-only sem quebrar provenance.
 
 Direção:
 
+- aceitar como fonte o SHA exato de uma PR realmente mergeada em `main`, sem exigir branch de origem chamada `Preview`;
 - build Production;
 - staged deploy;
 - smoke básico;
@@ -466,12 +553,15 @@ Direção:
 - promote do mesmo deployment testado;
 - health/version canônico;
 - registro simples do SHA/deployment;
-- rollback permanece caminho oficial de recuperação.
+- rollback permanece caminho oficial de recuperação;
+- depois da prova do Production v3, retirar `promotion-source` e fazer PR normal mirar `main`.
 
 Definition of Done:
 
 - release web sem DB/mídia não executa a bateria desses domínios;
 - deploy ruim pode ser revertido sem reconstrução;
+- provenance exige merge real em `main`, mas não uma branch intermediária artificial;
+- PR normal pode usar `main` como base depois do cutover;
 - workflow fica legível como orquestração, com lógica longa movida para scripts quando necessário.
 
 ## Fase 6 — limpeza e documentação final
@@ -481,6 +571,7 @@ Objetivo: remover o legado depois que o fluxo novo estiver provado.
 Direção:
 
 - apagar workflows/gates/branches obsoletos;
+- apagar a branch `Preview` e seu branch guard depois do cutover Production/main-only;
 - retirar referências à topologia antiga dos runbooks atuais;
 - atualizar branch protections;
 - revisar configurações não utilizadas;
@@ -513,9 +604,10 @@ Usar medições simples:
 | Chromium/E2E em `validate` comum | sim | não |
 | PostgreSQL em mudança web comum | sim | Fase 3: não quando `db=false` |
 | MSI em mudança web comum | sim | Fase 3: não quando `companion=false` |
-| full media audit sem mudança de mídia | sim | Fase 3: não no required CI |
-| branch longa além de `main` | `Preview` | alvo F4: nenhuma |
-| promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
+| full media audit sem mudança de mídia | sim | Fase 3/4: não no required CI nem no Preview web |
+| Preview ligado ao HEAD de branch intermediária | sim | Fase 4A: não; Preview usa SHA exato da PR |
+| branch longa além de `main` | `Preview` | compatibilidade temporária até Production v3; remoção final na Fase 6 |
+| promoção intermediária | `Preview -> main` | compatibilidade temporária até cutover main-only da Fase 5 |
 
 Não criar dashboard novo apenas para acompanhar a migração.
 
@@ -528,8 +620,8 @@ estado atual
   -> CI novo comprovado
   -> domínios pesados desacoplados
   -> Preview por PR comprovado
+  -> Production v3 comprovado
   -> main-only
-  -> Production simplificada
   -> remoção do legado
 ```
 
