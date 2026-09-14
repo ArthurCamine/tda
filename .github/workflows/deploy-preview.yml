@@ -1,0 +1,152 @@
+name: Deploy PR Preview
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact pull request head SHA to deploy
+        required: true
+        type: string
+      pr_number:
+        description: Pull request number used for release identity and concurrency
+        required: true
+        type: number
+    outputs:
+      deployment_url:
+        description: Immutable Vercel Preview deployment URL
+        value: ${{ jobs.deploy.outputs.url }}
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: tda-preview-pr-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+env:
+  VERCEL_ORG_ID: team_9wuTfarCQ3L63xtufPKUDzi0
+  VERCEL_PROJECT_ID: prj_hDiDvvRiesg3qCDekGWE8JQMkIyH
+  VERCEL_CLI_VERSION: 59.11.7
+
+jobs:
+  deploy:
+    name: deploy-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact pull request source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$SOURCE_SHA" ]]; then
+            echo "::error::Expected $SOURCE_SHA, checked out $ACTUAL_SHA."
+            exit 1
+          fi
+          echo "short=${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "release=pr-${PR_NUMBER}-${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.3.4
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Require Vercel Preview credential
+        shell: bash
+        run: |
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            echo "::error::Missing GitHub Environment secret VERCEL_TOKEN for preview."
+            exit 1
+          fi
+
+      - name: Install pinned Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      - name: Pull Preview configuration
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      - name: Build Preview artifact
+        env:
+          APP_ENV: preview
+          APP_COMMIT_SHA: ${{ inputs.source_sha }}
+          TDA_RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: vercel build --token="$VERCEL_TOKEN"
+
+      - name: Deploy immutable Preview artifact
+        id: deploy
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          set -euo pipefail
+          URL="$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN" \
+            --env APP_ENV=preview \
+            --env APP_COMMIT_SHA="$SOURCE_SHA" \
+            --env TDA_RELEASE_ID="$RELEASE_ID" | tail -n 1)"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview deployment: $URL"
+
+      - name: Smoke exact Preview deployment
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          set -euo pipefail
+          vercel curl /api/health --deployment "$DEPLOYMENT_URL" > health.json
+          vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
+          vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const health = JSON.parse(fs.readFileSync("health.json", "utf8"));
+            const version = JSON.parse(fs.readFileSync("version.json", "utf8"));
+            const expected = process.env.SOURCE_SHA;
+            const release = process.env.RELEASE_ID;
+            if (health.ok !== true) throw new Error("Preview health is not ok");
+            if (health.environment !== "preview") throw new Error(`Expected preview environment, got ${health.environment}`);
+            if (health.commit !== expected) throw new Error(`Expected commit ${expected}, got ${health.commit}`);
+            if (version.commit !== expected) throw new Error(`Version commit mismatch: ${version.commit}`);
+            if (version.release !== release) throw new Error(`Expected release ${release}, got ${version.release}`);
+          '
+
+      - name: Preview summary
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          {
+            echo "## TDA PR Preview"
+            echo "- PR: #$PR_NUMBER"
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo "- Release: \`$RELEASE_ID\`"
+            echo "- Deployment: $DEPLOYMENT_URL"
+            echo "- Smoke: PASS"
+          } >> "$GITHUB_STEP_SUMMARY"
