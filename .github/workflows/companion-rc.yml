@@ -1,0 +1,175 @@
+name: Companion RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character source SHA from a successful Companion workflow run
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-rc:
+    name: publish immutable Companion RC
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::source_sha must be one exact lowercase 40-character commit SHA"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Confirm exact source checkout
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          TREE_SHA="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$ACTUAL_SHA" == "$SOURCE_SHA" ]] || { echo "::error::Checkout resolved to $ACTUAL_SHA instead of $SOURCE_SHA"; exit 1; }
+          [[ "$TREE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          test -f local-companion/tda_companion/release_evidence.py
+          echo "tree_sha=$TREE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve successful exact-source Companion workflow run
+        id: validated_run
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow companion.yml --commit "$SOURCE_SHA" --status success --limit 50 \
+            --json databaseId,headSha,conclusion,status,workflowName,createdAt > companion-runs.json
+          RUN_ID="$(python - <<'PY'
+          import json, os
+          source = os.environ['SOURCE_SHA']
+          rows = json.load(open('companion-runs.json', encoding='utf-8'))
+          exact = [r for r in rows if r.get('headSha') == source and r.get('conclusion') == 'success' and r.get('status') == 'completed']
+          if not exact:
+              raise SystemExit('NO_SUCCESSFUL_COMPANION_RUN_FOR_SOURCE')
+          exact.sort(key=lambda r: (r.get('createdAt') or '', int(r.get('databaseId') or 0)))
+          print(exact[-1]['databaseId'])
+          PY
+          )"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact validated Windows artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ steps.validated_run.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" --name TDACompanion-windows-x64 --dir dist
+          test -f dist/TDACompanion-x64.msi
+          test -f dist/TDACompanion-x64.msi.sha256
+          test -f dist/TDACompanion-payload-manifest.json
+          ZIP_COUNT="$(find dist -maxdepth 1 -type f -name 'TDACompanion-*-windows-x64.zip' | wc -l | tr -d ' ')"
+          [[ "$ZIP_COUNT" == "1" ]] || { echo "::error::Expected exactly one Companion Windows ZIP, found $ZIP_COUNT"; exit 1; }
+
+      - name: Build immutable candidate manifest v2
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_PATH="$(find dist -maxdepth 1 -type f -name 'TDACompanion-*-windows-x64.zip' -print -quit)"
+          RC_TAG="$(PYTHONPATH=local-companion python -m tda_companion.release_evidence candidate-manifest \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "${{ steps.source.outputs.tree_sha }}" \
+            --workflow-run-id "${{ steps.validated_run.outputs.run_id }}" \
+            --msi dist/TDACompanion-x64.msi \
+            --checksum dist/TDACompanion-x64.msi.sha256 \
+            --zip "$ZIP_PATH" \
+            --payload-manifest dist/TDACompanion-payload-manifest.json \
+            --output dist/TDACompanion-candidate.json)"
+          [[ "$RC_TAG" =~ ^companion-rc-v[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$ ]] || exit 1
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Detect existing RC
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.candidate.outputs.rc_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish immutable prerelease candidate
+        if: steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          RC_TAG="${{ steps.candidate.outputs.rc_tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$RC_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $RC_TAG exists without a release; refusing ambiguous identity"
+            exit 1
+          fi
+          VERSION="$(PYTHONPATH=local-companion python -c 'import tda_companion; print(tda_companion.VERSION)')"
+          MSI_SHA="$(python -c "import json; print(json.load(open('dist/TDACompanion-candidate.json'))['assets']['msi']['sha256'])")"
+          cat > release-notes.md <<EOF
+          Candidato imutável do TDA Companion v${VERSION} para teste pesado real.
+
+          - Source SHA: ${SOURCE_SHA}
+          - Source tree SHA: ${{ steps.source.outputs.tree_sha }}
+          - Companion workflow run: ${{ steps.validated_run.outputs.run_id }}
+          - MSI SHA-256: ${MSI_SHA}
+          - Canal: RC / prerelease
+          - Promoção exige receipt v2 do mesmo source/tree/MSI/payload manifest.
+          EOF
+          ZIP_PATH="$(find dist -maxdepth 1 -type f -name 'TDACompanion-*-windows-x64.zip' -print -quit)"
+          gh release create "$RC_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "TDA Companion v${VERSION} RC ${SOURCE_SHA:0:12}" --notes-file release-notes.md --prerelease \
+            dist/TDACompanion-x64.msi dist/TDACompanion-x64.msi.sha256 "$ZIP_PATH" \
+            dist/TDACompanion-payload-manifest.json dist/TDACompanion-candidate.json
+
+      - name: Verify existing or freshly published RC
+        shell: bash
+        env:
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          EXPECTED_TREE: ${{ steps.source.outputs.tree_sha }}
+        run: |
+          set -euo pipefail
+          gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > rc-release.json
+          python - <<'PY'
+          import json, os
+          value = json.load(open('rc-release.json', encoding='utf-8'))
+          if value.get('tagName') != os.environ['RC_TAG'] or value.get('isDraft') is not False or value.get('isPrerelease') is not True:
+              raise SystemExit('RC_RELEASE_STATE_INVALID')
+          if value.get('targetCommitish') != os.environ['SOURCE_SHA']:
+              raise SystemExit('RC_RELEASE_TARGET_MISMATCH')
+          PY
+          rm -rf rc-check && mkdir rc-check
+          gh release download "$RC_TAG" --repo "$GITHUB_REPOSITORY" --dir rc-check
+          PYTHONPATH=local-companion python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from tda_companion.release_evidence import verify_candidate_files, verify_candidate_manifest
+          manifest = json.loads(Path('rc-check/TDACompanion-candidate.json').read_text(encoding='utf-8'))
+          verify_candidate_manifest(manifest)
+          verify_candidate_files(manifest, Path('rc-check'))
+          if manifest['source_sha'] != os.environ['SOURCE_SHA']:
+              raise SystemExit('RC_SOURCE_MISMATCH')
+          if manifest['source_tree_sha'] != os.environ['EXPECTED_TREE']:
+              raise SystemExit('RC_TREE_MISMATCH')
+          current = json.loads(Path('dist/TDACompanion-candidate.json').read_text(encoding='utf-8'))
+          for key in ('msi', 'checksum', 'zip', 'payload_manifest'):
+              a, b = manifest['assets'][key], current['assets'][key]
+              if a['sha256'] != b['sha256'] or a['size'] != b['size']:
+                  raise SystemExit(f'RC_RETRY_BYTES_MISMATCH:{key}')
+          PY
+          git fetch --force origin "refs/tags/$RC_TAG:refs/tags/$RC_TAG"
+          [[ "$(git rev-list -n 1 "$RC_TAG")" == "$SOURCE_SHA" ]] || { echo "::error::RC tag target mismatch"; exit 1; }
+          echo "RC_READY tag=$RC_TAG source=$SOURCE_SHA tree=$EXPECTED_TREE run=${{ steps.validated_run.outputs.run_id }}"

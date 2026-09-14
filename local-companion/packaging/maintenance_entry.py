@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 import winreg
 from ctypes import wintypes
 from pathlib import Path
@@ -24,7 +27,18 @@ PROCESS_TERMINATE = 0x0001
 SYNCHRONIZE = 0x00100000
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+WAIT_OBJECT_0 = 0x00000000
 WAIT_TIMEOUT = 0x00000102
+ERROR_INVALID_PARAMETER = 87
+MAINTENANCE_SCHEMA_VERSION = 1
+_OPERATION_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+class MaintenanceError(RuntimeError):
+    def __init__(self, code: str, *, msi_exit_code: int | None = None):
+        super().__init__(code)
+        self.code = code
+        self.msi_exit_code = msi_exit_code
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -45,8 +59,112 @@ class PROCESSENTRY32W(ctypes.Structure):
 def local_root() -> Path:
     value = os.environ.get("LOCALAPPDATA")
     if not value:
-        raise RuntimeError("LOCALAPPDATA_NOT_FOUND")
+        raise MaintenanceError("LOCALAPPDATA_NOT_FOUND")
     return Path(value).resolve() / "TDA"
+
+
+def _maintenance_root(root: Path) -> Path:
+    return root / "Cache" / "maintenance"
+
+
+def _operation_path(root: Path, operation_id: str) -> Path:
+    return _maintenance_root(root) / "operations" / f"{operation_id}.json"
+
+
+def _msi_log_path(root: Path, operation_id: str) -> Path:
+    return _maintenance_root(root) / "logs" / f"{operation_id}.msi.log"
+
+
+def _normalize_operation_id(value: str | None) -> str:
+    candidate = value or uuid.uuid4().hex
+    if not _OPERATION_ID.fullmatch(candidate):
+        raise MaintenanceError("MAINTENANCE_OPERATION_ID_INVALID")
+    return candidate
+
+
+def _atomic_json(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _sanitized_error_code(exc: BaseException) -> str:
+    if isinstance(exc, MaintenanceError):
+        return exc.code
+    text = str(exc).strip()
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", text):
+        return text
+    return type(exc).__name__.upper()
+
+
+class MaintenanceJournal:
+    def __init__(
+        self,
+        root: Path,
+        operation_id: str,
+        action: str,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        if action not in {"update", "uninstall"}:
+            raise MaintenanceError("MAINTENANCE_ACTION_INVALID")
+        self.root = root
+        self.operation_id = _normalize_operation_id(operation_id)
+        self.path = _operation_path(root, self.operation_id)
+        now = time.time()
+        self.value: dict[str, object] = {
+            "schema_version": MAINTENANCE_SCHEMA_VERSION,
+            "operation_id": self.operation_id,
+            "action": action,
+            "status": "running",
+            "stage": "accepted",
+            "created_at": now,
+            "updated_at": now,
+            "error_code": None,
+            "failure_stage": None,
+            "msi_exit_code": None,
+            "msi_log": str(Path("Cache") / "maintenance" / "logs" / f"{self.operation_id}.msi.log"),
+        }
+        if metadata:
+            self.value.update(metadata)
+        self._persist()
+
+    def _persist(self) -> None:
+        _atomic_json(self.path, self.value)
+        _atomic_json(_maintenance_root(self.root) / "last-operation.json", self.value)
+
+    def stage(self, stage: str, **fields: object) -> None:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{2,80}", stage):
+            raise MaintenanceError("MAINTENANCE_STAGE_INVALID")
+        self.value.update(fields)
+        self.value["status"] = "running"
+        self.value["stage"] = stage
+        self.value["updated_at"] = time.time()
+        self._persist()
+
+    def complete(self, **fields: object) -> None:
+        self.value.update(fields)
+        self.value["status"] = "completed"
+        self.value["stage"] = "completed"
+        self.value["error_code"] = None
+        self.value["failure_stage"] = None
+        self.value["updated_at"] = time.time()
+        self._persist()
+
+    def fail(self, exc: BaseException) -> None:
+        failed_at = str(self.value.get("stage") or "accepted")
+        self.value["status"] = "failed"
+        self.value["stage"] = "failed"
+        self.value["failure_stage"] = failed_at
+        self.value["error_code"] = _sanitized_error_code(exc)
+        if isinstance(exc, MaintenanceError) and exc.msi_exit_code is not None:
+            self.value["msi_exit_code"] = exc.msi_exit_code
+        self.value["updated_at"] = time.time()
+        self._persist()
 
 
 def _token(root: Path) -> str | None:
@@ -61,6 +179,10 @@ def _token(root: Path) -> str | None:
         if len(value) >= 43:
             return value
     return None
+
+
+def _loopback_opener():
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _agent_post(root: Path, port: int, *, force: bool) -> bool:
@@ -80,7 +202,7 @@ def _agent_post(root: Path, port: int, *, force: bool) -> bool:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:  # noqa: S310 - fixed loopback URL
+        with _loopback_opener().open(request, timeout=3) as response:
             return response.status == 200
     except (OSError, urllib.error.URLError, urllib.error.HTTPError):
         return False
@@ -92,7 +214,7 @@ def _health(port: int) -> bool:
         headers={"Cache-Control": "no-store"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=0.4) as response:  # noqa: S310 - fixed loopback URL
+        with _loopback_opener().open(request, timeout=0.4) as response:
             return response.status == 200
     except Exception:
         return False
@@ -184,10 +306,18 @@ def _wait_parent(pid: int | None, timeout: float = 30.0) -> None:
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
     if not handle:
-        return
+        error = int(kernel32.GetLastError())
+        if error == ERROR_INVALID_PARAMETER:
+            return
+        raise MaintenanceError("PARENT_WAIT_FAILED")
     try:
         milliseconds = max(0, int(timeout * 1000))
-        kernel32.WaitForSingleObject(handle, milliseconds)
+        result = int(kernel32.WaitForSingleObject(handle, milliseconds))
+        if result == WAIT_OBJECT_0:
+            return
+        if result == WAIT_TIMEOUT:
+            raise MaintenanceError("PARENT_EXIT_TIMEOUT")
+        raise MaintenanceError("PARENT_WAIT_FAILED")
     finally:
         kernel32.CloseHandle(handle)
 
@@ -200,24 +330,32 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _run_msiexec(arguments: list[str]) -> None:
-    completed = subprocess.run(
-        ["msiexec.exe", *arguments, "/norestart"],
-        check=False,
-        timeout=600,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    if completed.returncode not in (0, 3010):
-        raise RuntimeError(f"MSI_EXIT_CODE:{completed.returncode}")
+def _run_msiexec(arguments: list[str], log_path: Path) -> int:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "msiexec.exe",
+        *arguments,
+        "/norestart",
+        "/L*v",
+        str(log_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            timeout=600,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MaintenanceError("MSI_TIMEOUT") from exc
+    code = int(completed.returncode)
+    if code not in (0, 3010):
+        raise MaintenanceError("MSI_FAILED", msi_exit_code=code)
+    return code
 
 
 def _write_receipt(root: Path, name: str, value: dict[str, object]) -> None:
-    folder = root / "Cache" / "maintenance"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / name
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, path)
+    _atomic_json(_maintenance_root(root) / name, value)
 
 
 def install_update(
@@ -227,33 +365,74 @@ def install_update(
     expected_version: str,
     parent_pid: int | None,
     port: int,
+    operation_id: str | None = None,
 ) -> None:
-    _wait_parent(parent_pid)
-    if not msi.is_file() or _sha256(msi).casefold() != expected_sha256.casefold():
-        raise RuntimeError("UPDATE_HASH_MISMATCH")
-    prepare_uninstall(root, port)
-    _run_msiexec(["/i", str(msi), "/passive"])
-    marker = root / "Companion" / "current-version.txt"
-    installed = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
-    if installed != expected_version:
-        raise RuntimeError("UPDATE_VERSION_MISMATCH")
-    executable = root / "Companion" / "versions" / expected_version / "TDACompanion.exe"
-    if not executable.is_file():
-        raise RuntimeError("UPDATED_EXECUTABLE_MISSING")
-    subprocess.Popen(
-        [str(executable), "--agent", "--startup"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
-    )
-    _write_receipt(
+    operation_id = _normalize_operation_id(operation_id)
+    journal = MaintenanceJournal(
         root,
-        "last-update.json",
-        {"version": expected_version, "sha256": expected_sha256, "status": "installed", "at": time.time()},
+        operation_id,
+        "update",
+        metadata={
+            "target_version": expected_version,
+            "expected_sha256": expected_sha256.casefold(),
+        },
     )
-    subprocess.Popen([str(executable), "--ui"], close_fds=True)
+    log_path = _msi_log_path(root, operation_id)
+    try:
+        journal.stage("waiting_for_ui_exit")
+        _wait_parent(parent_pid)
+
+        journal.stage("verifying_asset")
+        if not msi.is_file() or _sha256(msi).casefold() != expected_sha256.casefold():
+            raise MaintenanceError("UPDATE_HASH_MISMATCH")
+
+        journal.stage("stopping_agent")
+        prepare_uninstall(root, port)
+
+        journal.stage("running_msi")
+        msi_exit_code = _run_msiexec(["/i", str(msi), "/passive"], log_path)
+        journal.stage("verifying_install", msi_exit_code=msi_exit_code)
+
+        marker = root / "Companion" / "current-version.txt"
+        installed = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+        if installed != expected_version:
+            raise MaintenanceError("UPDATE_VERSION_MISMATCH")
+        executable = root / "Companion" / "versions" / expected_version / "TDACompanion.exe"
+        if not executable.is_file():
+            raise MaintenanceError("UPDATED_EXECUTABLE_MISSING")
+
+        journal.stage("restarting_agent")
+        subprocess.Popen(
+            [str(executable), "--agent", "--startup"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            ),
+        )
+        journal.stage("restarting_ui")
+        subprocess.Popen([str(executable), "--ui"], close_fds=True)
+
+        journal.complete(msi_exit_code=msi_exit_code, installed_version=expected_version)
+        _write_receipt(
+            root,
+            "last-update.json",
+            {
+                "operation_id": operation_id,
+                "version": expected_version,
+                "sha256": expected_sha256.casefold(),
+                "status": "installed",
+                "msi_exit_code": msi_exit_code,
+                "msi_log": str(Path("Cache") / "maintenance" / "logs" / f"{operation_id}.msi.log"),
+                "at": time.time(),
+            },
+        )
+    except BaseException as exc:
+        journal.fail(exc)
+        raise
 
 
 def _product_code() -> str:
@@ -261,12 +440,12 @@ def _product_code() -> str:
         value, _kind = winreg.QueryValueEx(key, "ProductCode")
     text = str(value).strip()
     if not text.startswith("{") or not text.endswith("}"):
-        raise RuntimeError("PRODUCT_CODE_INVALID")
+        raise MaintenanceError("PRODUCT_CODE_INVALID")
     return text
 
 
 def _purge_user_data(root: Path) -> None:
-    for name in ("State", "Data", "Logs", "Cache", "Models", "Runtime"):
+    for name in ("State", "Data", "Logs", "Models", "Runtime", "Cache"):
         shutil.rmtree(root / name, ignore_errors=True)
     # MSI owns Companion. Remove it only after msiexec completed and only if it
     # still contains generated leftovers rather than another installed version.
@@ -277,15 +456,102 @@ def _purge_user_data(root: Path) -> None:
         root.rmdir()
     except OSError:
         pass
+    if root.exists():
+        raise MaintenanceError("PURGE_INCOMPLETE")
 
 
-def uninstall(root: Path, *, purge: bool, parent_pid: int | None, port: int) -> None:
-    _wait_parent(parent_pid)
-    product_code = _product_code()
-    prepare_uninstall(root, port)
-    _run_msiexec(["/x", product_code, "/passive"])
-    if purge:
-        _purge_user_data(root)
+def uninstall(
+    root: Path,
+    *,
+    purge: bool,
+    parent_pid: int | None,
+    port: int,
+    operation_id: str | None = None,
+) -> None:
+    operation_id = _normalize_operation_id(operation_id)
+    journal = MaintenanceJournal(
+        root,
+        operation_id,
+        "uninstall",
+        metadata={"purge": bool(purge)},
+    )
+    log_path = _msi_log_path(root, operation_id)
+    try:
+        journal.stage("waiting_for_ui_exit")
+        _wait_parent(parent_pid)
+
+        journal.stage("resolving_product")
+        product_code = _product_code()
+
+        journal.stage("stopping_agent")
+        prepare_uninstall(root, port)
+
+        journal.stage("running_msi")
+        msi_exit_code = _run_msiexec(["/x", product_code, "/passive"], log_path)
+        if purge:
+            # Full purge intentionally removes its own Cache/maintenance evidence.
+            # If purge fails, the exception handler recreates a sanitized failed
+            # operation receipt so the user has something actionable to inspect.
+            journal.stage("purging_data", msi_exit_code=msi_exit_code)
+            _purge_user_data(root)
+            return
+
+        journal.complete(msi_exit_code=msi_exit_code)
+        _write_receipt(
+            root,
+            "last-uninstall.json",
+            {
+                "operation_id": operation_id,
+                "status": "uninstalled",
+                "purge": False,
+                "msi_exit_code": msi_exit_code,
+                "msi_log": str(Path("Cache") / "maintenance" / "logs" / f"{operation_id}.msi.log"),
+                "at": time.time(),
+            },
+        )
+    except BaseException as exc:
+        journal.fail(exc)
+        raise
+
+
+def _schedule_self_cleanup(operation_id: str) -> None:
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return
+    executable = Path(sys.executable).resolve()
+    staging = executable.parent
+    if (
+        staging.name != operation_id
+        or staging.parent.name != "TDACompanionMaintenance"
+        or executable.name.casefold() != "tdacompanionmaintenance.exe"
+    ):
+        return
+    path_b64 = base64.b64encode(str(staging).encode("utf-8")).decode("ascii")
+    script = (
+        "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"
+        + path_b64
+        + "')); Start-Sleep -Milliseconds 900; "
+        "Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            encoded,
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=(
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        ),
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -297,6 +563,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--root", type=Path)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--parent-pid", type=int)
+    parser.add_argument("--operation-id")
+    parser.add_argument("--cleanup-self", action="store_true")
     parser.add_argument("--msi", type=Path)
     parser.add_argument("--sha256")
     parser.add_argument("--version")
@@ -307,22 +575,53 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = (args.root or local_root()).resolve()
+    operation_id: str | None = None
     try:
+        operation_id = _normalize_operation_id(args.operation_id) if not args.prepare_uninstall else None
         if args.prepare_uninstall:
             prepare_uninstall(root, args.port)
         elif args.install_update:
             if args.msi is None or not args.sha256 or not args.version:
-                raise RuntimeError("UPDATE_ARGUMENTS_REQUIRED")
-            install_update(root, args.msi.resolve(), args.sha256, args.version, args.parent_pid, args.port)
+                raise MaintenanceError("UPDATE_ARGUMENTS_REQUIRED")
+            install_update(
+                root,
+                args.msi.resolve(),
+                args.sha256,
+                args.version,
+                args.parent_pid,
+                args.port,
+                operation_id,
+            )
         else:
-            uninstall(root, purge=bool(args.purge), parent_pid=args.parent_pid, port=args.port)
+            uninstall(
+                root,
+                purge=bool(args.purge),
+                parent_pid=args.parent_pid,
+                port=args.port,
+                operation_id=operation_id,
+            )
         return 0
     except BaseException as exc:
         try:
-            _write_receipt(root, "last-maintenance-error.json", {"error": type(exc).__name__, "at": time.time()})
+            _write_receipt(
+                root,
+                "last-maintenance-error.json",
+                {
+                    "operation_id": operation_id,
+                    "error_code": _sanitized_error_code(exc),
+                    "error_type": type(exc).__name__,
+                    "at": time.time(),
+                },
+            )
         except Exception:
             pass
         return 1
+    finally:
+        if args.cleanup_self and operation_id is not None:
+            try:
+                _schedule_self_cleanup(operation_id)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

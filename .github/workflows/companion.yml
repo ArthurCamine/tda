@@ -5,6 +5,8 @@ on:
     branches: [main, Preview]
 permissions:
   contents: read
+env:
+  TDA_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 jobs:
   synthetic:
     strategy:
@@ -17,12 +19,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TDA_SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact source checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$TDA_SOURCE_SHA"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: '0.12.13'
       - run: uv venv --python 3.12.14
       - run: uv pip install -c local-companion/requirements-test.lock -e ./local-companion[test]
+      - run: ${{ matrix.python }} local-companion/packaging/verify_dependency_lock.py local-companion/requirements-test.lock
       - run: ${{ matrix.python }} -m pytest local-companion/tests -q
       - run: uv build local-companion --wheel --out-dir wheelhouse
       - name: Installation plan safety check
@@ -34,29 +44,37 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TDA_SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact source checkout
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:TDA_SOURCE_SHA.ToLowerInvariant()) { throw "BUILD_SOURCE_SHA_MISMATCH:$actual" }
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: '0.12.13'
       - run: uv venv --python 3.12.14
       - run: uv pip install -c local-companion/requirements-test.lock -e ./local-companion[test,packaging,desktop]
-      - name: Validate physical setup scripts syntax
+      - run: .venv/Scripts/python.exe local-companion/packaging/verify_dependency_lock.py local-companion/requirements-test.lock --require-all
+      - name: Validate PowerShell harness syntax
         shell: pwsh
         run: |
           foreach ($script in @(
             "local-companion/packaging/install-rc-runtimes.ps1",
-            "local-companion/packaging/run-physical-acceptance.ps1"
+            "local-companion/packaging/run-physical-acceptance.ps1",
+            "local-companion/packaging/run-installed-acceptance.ps1",
+            "local-companion/packaging/smoke-windows-lifecycle.ps1"
           )) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $script),
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
-              throw "PHYSICAL_SETUP_SCRIPT_INVALID"
+              throw "POWERSHELL_HARNESS_INVALID"
             }
           }
       - name: Install WiX Toolset 5
@@ -65,6 +83,17 @@ jobs:
       - name: Build Windows bundle and MSI
         shell: pwsh
         run: ./local-companion/packaging/build-windows.ps1
+      - name: Generate exact payload evidence
+        shell: pwsh
+        run: |
+          $version = (& .venv/Scripts/python.exe -c "import tda_companion; print(tda_companion.VERSION)").Trim()
+          $tree = (git rev-parse "HEAD^{tree}").Trim().ToLowerInvariant()
+          .venv/Scripts/python.exe -m tda_companion.payload_evidence `
+            --app-root "local-companion/out/windows/TDACompanion-$version/app" `
+            --version $version `
+            --source-sha $env:TDA_SOURCE_SHA `
+            --source-tree-sha $tree `
+            --output "local-companion/out/windows/TDACompanion-payload-manifest.json"
       - name: Smoke packaged executable
         shell: pwsh
         run: |
@@ -75,82 +104,22 @@ jobs:
         run: |
           $version = (& .venv/Scripts/python.exe -c "import tda_companion; print(tda_companion.VERSION)").Trim()
           ./local-companion/packaging/smoke-windows-msi.ps1 -MsiPath "local-companion/out/windows/TDACompanion-x64.msi" -Version $version
-      - name: Smoke real previous-release upgrade, preserve uninstall and purge
+      - name: Smoke rollback, real upgrade, preserve uninstall and purge
         shell: pwsh
         run: |
           $version = (& .venv/Scripts/python.exe -c "import tda_companion; print(tda_companion.VERSION)").Trim()
-          ./local-companion/packaging/smoke-windows-lifecycle.ps1 -CurrentMsiPath "local-companion/out/windows/TDACompanion-x64.msi" -CurrentVersion $version
+          ./local-companion/packaging/smoke-windows-lifecycle.ps1 `
+            -CurrentMsiPath "local-companion/out/windows/TDACompanion-x64.msi" `
+            -RollbackProbeMsiPath "local-companion/out/windows/TDACompanion-rollback-probe-x64.msi" `
+            -CurrentVersion $version
       - name: Upload Windows package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: TDACompanion-windows-x64
           path: |
             local-companion/out/windows/TDACompanion-x64.msi
             local-companion/out/windows/TDACompanion-x64.msi.sha256
+            local-companion/out/windows/TDACompanion-payload-manifest.json
             local-companion/out/windows/TDACompanion-*-windows-x64.zip
           if-no-files-found: error
-          retention-days: 14
-
-  release:
-    name: publish-companion-release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [synthetic, windows-app]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-      - name: Detect companion changes
-        id: changes
-        shell: bash
-        run: |
-          if git diff --quiet "${{ github.event.before }}" "$GITHUB_SHA" -- local-companion; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Download validated Windows package
-        if: steps.changes.outputs.publish == 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: TDACompanion-windows-x64
-          path: dist
-      - name: Publish versioned GitHub release
-        if: steps.changes.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          VERSION=$(python - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path('local-companion/pyproject.toml').read_text(encoding='utf-8'))
-          print(data['project']['version'])
-          PY
-          )
-          TAG="companion-v${VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::error::Release $TAG already exists. Bump local-companion version before changing/releasing the companion."
-            exit 1
-          fi
-          SHA256=$(awk '{print $1}' dist/TDACompanion-x64.msi.sha256)
-          cat > release-notes.md <<EOF
-          Instalador oficial do TDA Companion para Windows x64.
-
-          - Instalação por usuário, sem privilégios administrativos.
-          - Aplicativo em %LOCALAPPDATA%\\TDA\\Companion.
-          - Dados locais preservados em %LOCALAPPDATA%\\TDA\\Data.
-          - Desktop local via WebView2 e Agent independente em segundo plano.
-          - O antigo DnDScribeCompanion.exe não é usado ou modificado.
-
-          SHA256 do MSI: ${SHA256}
-          EOF
-          gh release create "$TAG" \
-            dist/TDACompanion-x64.msi \
-            dist/TDACompanion-x64.msi.sha256 \
-            dist/TDACompanion-${VERSION}-windows-x64.zip \
-            --target "$GITHUB_SHA" \
-            --title "TDA Companion v${VERSION}" \
-            --notes-file release-notes.md
+          retention-days: 90

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from tda_companion.installed_acceptance import REQUIRED_OBSERVATIONS
 from tda_companion.pairing import TOKEN_PATTERN, ensure_pairing_token
 from tda_companion.windows_app import (
     PRODUCTION_ORIGIN,
@@ -38,12 +39,7 @@ def test_invalid_existing_pairing_token_fails_closed(tmp_path: Path):
 
 @pytest.mark.parametrize(
     "origin",
-    [
-        PRODUCTION_ORIGIN,
-        "https://preview.example.test",
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ],
+    [PRODUCTION_ORIGIN, "https://preview.example.test", "http://127.0.0.1:3000", "http://localhost:3000"],
 )
 def test_allowed_origin_shapes(origin: str):
     assert validate_origin(origin) == origin
@@ -51,12 +47,7 @@ def test_allowed_origin_shapes(origin: str):
 
 @pytest.mark.parametrize(
     "origin",
-    [
-        "http://example.com",
-        "https://example.com/path",
-        "https://*.example.com",
-        "file:///tmp/index.html",
-    ],
+    ["http://example.com", "https://example.com/path", "https://*.example.com", "file:///tmp/index.html"],
 )
 def test_disallowed_origin_shapes(origin: str):
     with pytest.raises(ValueError, match="EXACT_HTTPS_OR_LOOPBACK_ORIGIN_REQUIRED"):
@@ -78,3 +69,28 @@ def test_headless_remains_compatibility_alias_for_agent(monkeypatch, tmp_path: P
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     args = parse_args(["--headless"])
     assert args.agent is True
+
+
+def test_installed_acceptance_requires_candidate_payload_source_craig_and_result(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    with pytest.raises(SystemExit):
+        parse_args(["--installed-acceptance"])
+
+
+def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    argv = [
+        "--installed-acceptance",
+        "--acceptance-candidate-msi", str(tmp_path / "candidate.msi"),
+        "--acceptance-payload-manifest", str(tmp_path / "payload.json"),
+        "--acceptance-source-sha", "0" * 40,
+        "--acceptance-craig-zip", str(tmp_path / "craig.zip"),
+        "--acceptance-result-file", str(tmp_path / "receipt.json"),
+    ]
+    for observation in sorted(REQUIRED_OBSERVATIONS):
+        argv.extend(["--acceptance-observation", observation])
+    args = parse_args(argv)
+    assert args.installed_acceptance is True
+    assert args.acceptance_payload_manifest == tmp_path / "payload.json"
+    assert args.acceptance_craig_zip == tmp_path / "craig.zip"
+    assert frozenset(args.acceptance_observation or ()) == REQUIRED_OBSERVATIONS

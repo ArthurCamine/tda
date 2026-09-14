@@ -66,12 +66,11 @@ class TrayController:
         except Exception as exc:
             self._notify(f"Agent não foi reiniciado: {exc}")
 
-    def _shutdown_agent(self, _icon=None, _item=None) -> None:
+    def _exit_ui(self, _icon=None, _item=None) -> None:
         try:
-            self.bridge.client.post("/agent/control", {"action": "shutdown"})
-            self._notify("Agent encerrando.")
+            self.bridge.close_desktop()
         except Exception as exc:
-            self._notify(f"Agent não foi encerrado: {exc}")
+            self._notify(f"A interface não foi encerrada: {exc}")
 
     def start(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -85,7 +84,7 @@ class TrayController:
             pystray.MenuItem("Pausar/retomar fila", self._toggle_queue),
             pystray.MenuItem("Reiniciar Agent", self._restart),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Encerrar Agent", self._shutdown_agent),
+            pystray.MenuItem("Sair da interface", self._exit_ui),
         )
         self.icon = pystray.Icon("tda-companion", self._image(), "TDA Companion", menu)
         # The Companion targets Windows; pystray's Win32 backend supports a tray

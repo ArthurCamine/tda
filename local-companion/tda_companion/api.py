@@ -23,6 +23,7 @@ from .system_log import SystemLog
 from .telemetry import SystemTelemetry
 from .worker_supervisor import WorkerProcessError, WorkerSupervisor
 
+_PRODUCT_ID = "tda-companion"
 _ID_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -408,8 +409,11 @@ def create_app(
 
     def health_value():
         return dict(
+            product_id=_PRODUCT_ID,
             api_version="1",
             service_version=VERSION,
+            pid=os.getpid(),
+            port=port,
             lifecycle="preparing"
             if not worker_healthy
             else "paused"
@@ -423,7 +427,7 @@ def create_app(
 
     @app.get("/api/v1/version")
     def version():
-        return dict(api_version="1", service_version=VERSION)
+        return dict(product_id=_PRODUCT_ID, api_version="1", service_version=VERSION)
 
     @app.get("/api/v1/capabilities")
     def capabilities():
@@ -470,8 +474,6 @@ def create_app(
     def agent():
         return {
             **health_value(),
-            "pid": os.getpid(),
-            "port": port,
             "uptime_seconds": max(0, round(time.time() - started_at, 1)),
         }
 

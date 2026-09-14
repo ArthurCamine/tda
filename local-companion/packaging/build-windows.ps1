@@ -66,12 +66,13 @@ Copy-Item (Join-Path $dist "TDACompanion") $appRoot -Recurse
     --distpath $maintenanceDist `
     --workpath (Join-Path $work "maintenance") `
     --specpath (Join-Path $work "maintenance") `
-    (Join-Path $PSScriptRoot "maintenance_entry.py")
+    (Join-Path $PSScriptRoot "maintenance_secure_entry.py")
 if ($LASTEXITCODE -ne 0) { throw "MAINTENANCE_PYINSTALLER_FAILED" }
 $maintenanceExe = Join-Path $maintenanceDist "TDACompanionMaintenance.exe"
 if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_NOT_CREATED" }
 Copy-Item $maintenanceExe (Join-Path $appRoot "TDACompanionMaintenance.exe")
 Copy-Item (Join-Path $PSScriptRoot "run-physical-acceptance.ps1") (Join-Path $appRoot "run-physical-acceptance.ps1")
+Copy-Item (Join-Path $PSScriptRoot "run-installed-acceptance.ps1") (Join-Path $appRoot "run-installed-acceptance.ps1")
 Copy-Item (Join-Path $PSScriptRoot "install-rc-runtimes.ps1") (Join-Path $appRoot "install-rc-runtimes.ps1")
 
 Copy-Item (Join-Path $PSScriptRoot "install-windows.ps1") (Join-Path $packageRoot "install.ps1")
@@ -110,6 +111,8 @@ O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashe
 
 Depois, app\run-physical-acceptance.ps1 executa o gate físico local dos perfis ASR sem enviar áudio ao cloud. Os modelos pinados são materializados separadamente em Models na primeira execução. Por padrão o gate grava somente receipts sanitizados; transcrições exigem -WriteTranscripts explícito.
 
+Para o aceite da jornada Desktop instalada, use app\run-installed-acceptance.ps1 com o MSI candidato, o source SHA do candidato e um Craig ZIP real. O roteiro não executa ações destrutivas automaticamente: recovery do Agent, conflito da porta, X/tray e preservação da sessão Craig exigem observação física explícita antes de o próprio EXE instalado emitir o receipt sanitizado.
+
 O token, a fila e os dados locais não são removidos durante atualização do aplicativo.
 Este aplicativo NÃO usa, inicia, modifica ou depende do antigo DnDScribeCompanion.exe.
 "@
@@ -118,11 +121,13 @@ Set-Content -Path (Join-Path $packageRoot "README.txt") -Value $readme -Encoding
 $zip = Join-Path $output "TDACompanion-$version-windows-x64.zip"
 Compress-Archive -Path (Join-Path $packageRoot "*") -DestinationPath $zip -CompressionLevel Optimal
 
+$wxs = Join-Path $PSScriptRoot "TDACompanion.wxs"
 $msi = Join-Path $output "TDACompanion-x64.msi"
 & $wixPath build `
-    (Join-Path $PSScriptRoot "TDACompanion.wxs") `
+    $wxs `
     -arch x64 `
     -d "Version=$version" `
+    -d "RollbackProbe=0" `
     -bindpath "App=$appRoot" `
     -bindpath "Metadata=$metadataRoot" `
     -pdbtype none `
@@ -130,10 +135,26 @@ $msi = Join-Path $output "TDACompanion-x64.msi"
 if ($LASTEXITCODE -ne 0) { throw "WIX_BUILD_FAILED" }
 if (-not (Test-Path $msi)) { throw "MSI_NOT_CREATED" }
 
+# Test-only MSI: identical payload/version, but with a Type 19 failure scheduled
+# immediately after RemoveExistingProducts. It is never uploaded or published.
+$rollbackProbeMsi = Join-Path $output "TDACompanion-rollback-probe-x64.msi"
+& $wixPath build `
+    $wxs `
+    -arch x64 `
+    -d "Version=$version" `
+    -d "RollbackProbe=1" `
+    -bindpath "App=$appRoot" `
+    -bindpath "Metadata=$metadataRoot" `
+    -pdbtype none `
+    -o $rollbackProbeMsi
+if ($LASTEXITCODE -ne 0) { throw "WIX_ROLLBACK_PROBE_BUILD_FAILED" }
+if (-not (Test-Path $rollbackProbeMsi)) { throw "ROLLBACK_PROBE_MSI_NOT_CREATED" }
+
 $msiHash = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
 Set-Content -Path (Join-Path $output "TDACompanion-x64.msi.sha256") -Value "$msiHash  TDACompanion-x64.msi" -Encoding ascii -NoNewline
 
 Write-Host "TDA Companion package: $packageRoot"
 Write-Host "ZIP: $zip"
 Write-Host "MSI: $msi"
+Write-Host "Rollback probe MSI (test-only): $rollbackProbeMsi"
 Write-Host "MSI SHA256: $msiHash"

@@ -107,7 +107,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | --- | --- | --- | --- |
 | [Especificações de features](../features/README.md) | produto + domínios | vivo | 2026-09-12 |
 | [Feature — Personagens e NPCs](../features/characters-and-npcs.md) | entities/narrative-memory | preparado | 2026-09-06 |
-| [TDA Companion v0.3 — Desktop, Agent e ASR](../features/companion-desktop-asr-v0.3.md) | local-companion / processing | especificação aceita para implementação | 2026-09-11 |
+| [TDA Companion v0.3 — Desktop, Agent e ASR](../features/companion-desktop-asr-v0.3.md) | local-companion / processing | especificação aceita para implementação; estabilização R1–R4 em andamento | 2026-09-13 |
 | [Feature — Assistente Discord](../features/discord-assistant.md) | integrations/discord + narrative query | histórico/planejado | 2026-09-06 |
 | [Edit — consulta de permissões](../features/edit-permissions.md) | identity/access + Edit | implementação candidata, somente leitura | 2026-09-07 |
 | [Edit — slice server-side de transcrição](../features/edit-transcript-server-slice.md) | Edit / aplicação + dados | leitura autorizada implementada com revision; mutation canônica preparada; persistence atômica pendente; bypass temporário de UI separado | 2026-09-07 |
@@ -175,16 +175,19 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
-| [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-11 |
+| [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-13 |
 | [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-10 |
 | [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
+| [TDA Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](../operations/companion-0.3.3-heavy-audit.md) | local-companion / processing / operations / security | auditoria concluída; 0.3.3 aposentada para certificação; remediação integrada na linha 0.3.4 | 2026-09-13 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |
+| [TDA Companion — Reliability R2 evidence](../operations/companion-reliability-r2-evidence.md) | Não declarado | Não declarado | Não declarado |
+| [TDA Companion — confiabilidade, manutenção e aceite real](../operations/companion-reliability.md) | local-companion / processing / operations | R1/R2 implementados; R3 C-12/C-13/C-14 implementados em candidato; stable bloqueada até aceite físico do artefato exato | 2026-09-13 |
 | [Runbook operacional do banco / Supabase](../operations/database-runbook.md) | dados/Supabase | vigente | 2026-09-07 |
 | [Histórico de deployments](../operations/deployments.md) | operations | vigente | 2026-09-11 |
 | [Login Discord: configuração e verificação](../operations/discord-auth.md) | identity/access | publicado na Production #006; OAuth real, acesso e logout verificados | 2026-09-07 |
 | [Ambientes e configuração](../operations/environments.md) | operations | vigente | 2026-09-13 |
 | [Retirada do projeto Vercel legado](../operations/legacy-retirement.md) | infraestrutura/operação | executado e verificado | 2026-09-07 |
-| [Companion — operação, instalação e rollback](../operations/local-companion.md) | local-companion/processing | candidato RC v0.3 validado em CI; validação física pendente | 2026-09-12 |
+| [Companion — operação, instalação e rollback](../operations/local-companion.md) | local-companion/processing | candidato v0.3 em estabilização; CI técnica válida, aceite físico da 0.3.2 reprovado | 2026-09-13 |
 | [R2 — checklists de mídia](../operations/r2-media-checklists.md) | integrations/media | vigente | 2026-09-11 |
 | [R2 e mídia — runbook operacional](../operations/r2-media-runbook.md) | integrations/media + operations | vigente | 2026-09-12 |
 | [Runbook — release, deploy e rollback](../operations/release-runbook.md) | operations/release | vigente | 2026-09-08 |
@@ -199,4 +202,4 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 ## Cobertura
 
-123 páginas inventariadas, além deste catálogo gerado. 12 sem Owner e 21 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
+126 páginas inventariadas, além deste catálogo gerado. 13 sem Owner e 22 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.

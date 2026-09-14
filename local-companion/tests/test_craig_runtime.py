@@ -38,7 +38,7 @@ def test_load_staged_package_revalidates_tracks_and_hashes(tmp_path: Path):
     assert package.recording_id == "123"
     assert [track.number for track in package.tracks] == [1, 2]
     assert [track.speaker for track in package.tracks] == ["Alice", "Bob"]
-    assert package.tracks[0].path == "tracks/1-Alice.flac"
+    assert package.tracks[0].path == "tracks/track-000001.flac"
     assert package.tracks[0].identity is not None
     assert package.tracks[0].identity.discord_id == "1"
 
@@ -55,7 +55,7 @@ def test_load_staged_package_rejects_manifest_path_override(tmp_path: Path):
 
 def test_load_staged_package_rejects_track_tampering(tmp_path: Path):
     root = _stage_package(tmp_path)
-    (root / "tracks" / "1-Alice.flac").write_bytes(b"changed!!!")
+    (root / "tracks" / "track-000001.flac").write_bytes(b"changed!!!")
     with pytest.raises(CraigPackageError, match="CRAIG_MANIFEST_TRACK_(SIZE|HASH)_MISMATCH"):
         load_craig_package(root)
 

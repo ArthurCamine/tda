@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import threading
 import time
-import urllib.request
 from pathlib import Path
 
 import uvicorn
 
+from . import VERSION
 from .__main__ import RootLock
+from .agent_connection import probe_agent
 from .api import create_app
 from .craig_ingest_http import CraigIngestBoundary
 from .system_log import SystemLog
@@ -17,16 +18,26 @@ def health_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/api/v1/health"
 
 
-def wait_until_ready(port: int, timeout: float = 8.0) -> bool:
+def wait_until_ready(
+    port: int,
+    timeout: float = 8.0,
+    *,
+    expected_version: str | None = None,
+) -> bool:
+    """Wait for a verified TDA Agent, never for an arbitrary HTTP 200 listener."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            request = urllib.request.Request(health_url(port), headers={"Cache-Control": "no-store"})
-            with urllib.request.urlopen(request, timeout=0.5) as response:  # noqa: S310 - fixed loopback URL
-                if response.status == 200:
-                    return True
-        except Exception:
-            time.sleep(0.1)
+        remaining = max(0.05, min(0.5, deadline - time.monotonic()))
+        probe = probe_agent(
+            port,
+            expected_version=expected_version,
+            timeout=remaining,
+        )
+        if probe.state == "exact":
+            return True
+        if probe.state in {"foreign", "incompatible"}:
+            return False
+        time.sleep(0.1)
     return False
 
 
@@ -102,7 +113,7 @@ class AgentController:
             self.server_error = None
             self.thread = threading.Thread(target=self._serve, name="tda-companion-http", daemon=True)
             self.thread.start()
-            if not wait_until_ready(self.port):
+            if not wait_until_ready(self.port, expected_version=VERSION):
                 error = self.server_error
                 self.stop()
                 if isinstance(error, ModuleNotFoundError):

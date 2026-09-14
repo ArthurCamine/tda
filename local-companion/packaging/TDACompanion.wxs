@@ -8,6 +8,7 @@
     Compressed="yes">
 
     <MajorUpgrade
+      Schedule="afterInstallInitialize"
       DowngradeErrorMessage="Já existe uma versão mais recente do TDA Companion instalada." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
@@ -95,8 +96,21 @@
       Impersonate="yes"
       Return="ignore" />
 
+    <?if $(RollbackProbe) = "1" ?>
+    <!-- Test-only Type 19 failure. It is compiled only into the rollback-probe
+         MSI and runs after the old product has been removed. Because
+         RemoveExistingProducts is now inside the transaction, this failure must
+         restore the previous product. Production builds pass RollbackProbe=0. -->
+    <CustomAction
+      Id="RollbackProbeFailure"
+      Error="TDA Companion rollback probe: forced upgrade failure." />
+    <?endif ?>
+
     <InstallExecuteSequence>
       <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+      <?if $(RollbackProbe) = "1" ?>
+      <Custom Action="RollbackProbeFailure" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
+      <?endif ?>
     </InstallExecuteSequence>
 
     <Feature Id="MainFeature" Title="TDA Companion" Level="1">

@@ -3,61 +3,97 @@ import {
 	selectWhisperRuntimeAsset,
 } from "@/features/edit/processing/companion-release";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const TAGS_URL =
 	"https://api.github.com/repos/Faysk/tda/git/matching-refs/tags/companion-whisper-runtime-v";
 const RELEASE_BY_TAG_URL = "https://api.github.com/repos/Faysk/tda/releases/tags/";
+const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 const GITHUB_HEADERS = {
 	Accept: "application/vnd.github+json",
 	"X-GitHub-Api-Version": "2022-11-28",
 };
+const NO_STORE_HEADERS = {
+	"Cache-Control": "no-store, max-age=0",
+	Pragma: "no-cache",
+};
 
-export async function GET() {
+async function latestTag(): Promise<string | null> {
+	const tagsResponse = await fetch(TAGS_URL, {
+		headers: GITHUB_HEADERS,
+		cache: "no-store",
+	});
+	if (!tagsResponse.ok) throw new Error("WHISPER_RUNTIME_RELEASE_LOOKUP_FAILED");
+	return selectLatestWhisperRuntimeTag(await tagsResponse.json());
+}
+
+export async function GET(request: Request) {
 	try {
-		const tagsResponse = await fetch(TAGS_URL, {
-			headers: GITHUB_HEADERS,
-			next: { revalidate: 300 },
-		});
-		if (!tagsResponse.ok) {
+		const requestUrl = new URL(request.url);
+		const versions = requestUrl.searchParams.getAll("version");
+		const unexpectedQuery = Array.from(requestUrl.searchParams.keys()).some(
+			(key) => key !== "version",
+		);
+		if (versions.length > 1 || unexpectedQuery) {
 			return Response.json(
-				{ error: "WHISPER_RUNTIME_RELEASE_LOOKUP_FAILED" },
-				{ status: 503, headers: { "Cache-Control": "no-store" } },
+				{ error: "WHISPER_RUNTIME_RELEASE_REQUEST_INVALID" },
+				{ status: 400, headers: NO_STORE_HEADERS },
 			);
 		}
-		const tag = selectLatestWhisperRuntimeTag(await tagsResponse.json());
+
+		const requestedVersion = versions[0] ?? null;
+		if (requestedVersion !== null && !VERSION_PATTERN.test(requestedVersion)) {
+			return Response.json(
+				{ error: "WHISPER_RUNTIME_RELEASE_REQUEST_INVALID" },
+				{ status: 400, headers: NO_STORE_HEADERS },
+			);
+		}
+
+		const tag = requestedVersion
+			? `companion-whisper-runtime-v${requestedVersion}`
+			: await latestTag();
 		if (!tag) {
 			return Response.json(
 				{ error: "WHISPER_RUNTIME_RELEASE_NOT_FOUND" },
-				{ status: 404, headers: { "Cache-Control": "no-store" } },
+				{ status: 404, headers: NO_STORE_HEADERS },
 			);
 		}
+
 		const releaseResponse = await fetch(`${RELEASE_BY_TAG_URL}${encodeURIComponent(tag)}`, {
 			headers: GITHUB_HEADERS,
-			next: { revalidate: 300 },
+			cache: "no-store",
 		});
+		if (releaseResponse.status === 404 && requestedVersion) {
+			return Response.json(
+				{ error: "WHISPER_RUNTIME_RELEASE_NOT_FOUND" },
+				{ status: 404, headers: NO_STORE_HEADERS },
+			);
+		}
 		if (!releaseResponse.ok) {
 			return Response.json(
 				{ error: "WHISPER_RUNTIME_RELEASE_LOOKUP_FAILED" },
-				{ status: 503, headers: { "Cache-Control": "no-store" } },
+				{ status: 503, headers: NO_STORE_HEADERS },
 			);
 		}
 		const downloadUrl = selectWhisperRuntimeAsset(await releaseResponse.json(), tag);
 		if (!downloadUrl) {
 			return Response.json(
 				{ error: "WHISPER_RUNTIME_RELEASE_INVALID" },
-				{ status: 503, headers: { "Cache-Control": "no-store" } },
+				{ status: 503, headers: NO_STORE_HEADERS },
 			);
 		}
 		return new Response(null, {
 			status: 307,
 			headers: {
 				Location: downloadUrl,
-				"Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
+				...NO_STORE_HEADERS,
 			},
 		});
 	} catch {
 		return Response.json(
 			{ error: "WHISPER_RUNTIME_RELEASE_LOOKUP_FAILED" },
-			{ status: 503, headers: { "Cache-Control": "no-store" } },
+			{ status: 503, headers: NO_STORE_HEADERS },
 		);
 	}
 }

@@ -9,6 +9,7 @@
   let selectedProfileId = null;
   let processBusy = false;
   let submittedJobId = null;
+  let lastConnectionState = null;
 
   const FRIENDLY_ERRORS = {
     CRAIG_FILE_PICKER_UNAVAILABLE: "O seletor de arquivos do Windows não está disponível.",
@@ -30,6 +31,19 @@
     QWEN_MODEL_NOT_GPU_RESIDENT: "O modelo Qwen não coube integralmente na GPU.",
     QWEN_ALIGNER_NOT_GPU_RESIDENT: "O alinhador Qwen não coube integralmente na GPU.",
     QWEN_ACCEPTANCE_GPU_NAME_MISMATCH: "O gate físico não foi executado na RTX 4070 esperada.",
+    AGENT_CONNECTION_REFUSED: "O Agent local não está respondendo.",
+    AGENT_CONNECTION_TIMEOUT: "O Agent local demorou demais para responder.",
+    AGENT_CONNECTION_FAILED: "Não foi possível conectar ao Agent local.",
+    AGENT_RECONNECT_BACKOFF: "O Agent continua indisponível. Uma nova tentativa será feita automaticamente.",
+    AGENT_RECOVERY_FAILED: "O Agent não voltou após a tentativa de recuperação.",
+    AGENT_START_FAILED: "O Agent local não pôde ser iniciado.",
+    AGENT_STOPPED_BY_USER: "O Agent foi parado deliberadamente neste computador.",
+    AGENT_PORT_CONFLICT: "A porta local 8765 está sendo usada por outro processo. O Companion não enviou seu token para ele.",
+    AGENT_API_INCOMPATIBLE: "O Agent em execução usa uma API incompatível com esta interface.",
+    AGENT_VERSION_MISMATCH: "A interface e o Agent são de versões diferentes. Reinicie o Agent antes de alterar o estado local.",
+    AGENT_RESTART_VERSION_MISMATCH: "O Agent reiniciado ainda não corresponde à versão desta interface.",
+    AGENT_RESTART_FAILED: "O Agent não voltou corretamente após o reinício.",
+    AGENT_SHUTDOWN_TIMEOUT: "O Agent não encerrou dentro do tempo esperado.",
   };
 
   function errorText(error) {
@@ -83,7 +97,7 @@
     document.querySelectorAll(".nav-item").forEach((node) => {
       node.classList.toggle("active", node.dataset.view === name);
     });
-    if (name === "logs") refreshLogs();
+    if (name === "logs") refreshLogs(false);
   }
 
   function setProcessStatus(title, detail, state = "waiting") {
@@ -136,6 +150,27 @@
       target.append(line);
     });
     if (!compact) target.scrollTop = target.scrollHeight;
+  }
+
+  function renderLogsUnavailable(result) {
+    allLogs = [];
+    const message = `Logs indisponíveis enquanto o Agent não responde. ${errorText(result?.error || "AGENT_CONNECTION_FAILED")}`;
+    [$("full-logs"), $("overview-logs")].forEach((target) => {
+      target.replaceChildren();
+      const row = document.createElement("div");
+      row.className = "log-row";
+      const level = document.createElement("span");
+      level.className = "log-level warning";
+      level.textContent = "warning";
+      const component = document.createElement("span");
+      component.className = "log-component";
+      component.textContent = "agent";
+      const text = document.createElement("span");
+      text.className = "log-message";
+      text.textContent = message;
+      row.append(level, component, text);
+      target.append(row);
+    });
   }
 
   function renderWhisperRuntime(result, checkedRemote = false) {
@@ -267,6 +302,20 @@
     profileState = Array.isArray(result?.profiles) ? result.profiles : [];
     const target = $("profile-list");
     target.replaceChildren();
+    if (result?.unavailable) {
+      const unavailable = document.createElement("div");
+      unavailable.className = "profile-loading";
+      unavailable.textContent = `Sessão validada. ${errorText(result.error || "AGENT_CONNECTION_FAILED")} Os perfis serão verificados após a reconexão.`;
+      target.append(unavailable);
+      selectedProfileId = null;
+      updateProcessControls();
+      setProcessStatus(
+        "Sessão validada.",
+        `O ZIP continua pronto. ${errorText(result.error || "AGENT_CONNECTION_FAILED")}`,
+        "warning",
+      );
+      return;
+    }
     if (!profileState.length) {
       const empty = document.createElement("div");
       empty.className = "profile-loading";
@@ -326,9 +375,10 @@
   }
 
   async function refreshProfiles() {
-    if (!api || !selectedSession) return;
+    if (!api || !selectedSession) return null;
     const result = await api.transcription_profiles();
     renderProfiles(result);
+    return result;
   }
 
   async function selectCraigSession() {
@@ -337,18 +387,34 @@
     button.disabled = true;
     button.textContent = "Validando…";
     setProcessStatus("Validando sessão…", "O Companion está conferindo o ZIP e as faixas localmente.", "busy");
+    let result = null;
     try {
-      const result = await api.select_craig_session();
+      result = await api.select_craig_session();
+    } catch (error) {
+      setProcessStatus("Não foi possível validar esse ZIP.", errorText(error), "warning");
+      toast(`Sessão rejeitada: ${errorText(error)}`, true);
+      button.disabled = false;
+      button.textContent = selectedSession ? "Trocar ZIP" : "Selecionar ZIP";
+      return;
+    }
+
+    try {
       if (!result?.selected) {
         if (!selectedSession) setProcessStatus("Nenhuma sessão selecionada.", "Escolha o ZIP multitrack original do Craig.");
         return;
       }
       renderSession(result);
-      await refreshProfiles();
-      toast(`${result.source_name || "Sessão"} pronta para configurar.`);
-    } catch (error) {
-      setProcessStatus("Não foi possível usar esse ZIP.", errorText(error), "warning");
-      toast(`Sessão rejeitada: ${errorText(error)}`, true);
+      try {
+        const profiles = await refreshProfiles();
+        if (profiles?.unavailable) {
+          toast(`${result.source_name || "Sessão"} validada; aguardando o Agent para verificar os perfis.`);
+        } else {
+          toast(`${result.source_name || "Sessão"} pronta para configurar.`);
+        }
+      } catch (error) {
+        renderProfiles({ profiles: [], unavailable: true, error: String(error || "AGENT_CONNECTION_FAILED").replace(/^Error:\s*/, "") });
+        toast(`${result.source_name || "Sessão"} foi validada, mas o Agent ainda não respondeu.`, true);
+      }
     } finally {
       button.disabled = false;
       button.textContent = selectedSession ? "Trocar ZIP" : "Selecionar ZIP";
@@ -424,6 +490,41 @@
     }
   }
 
+  function connectionFamily(state) {
+    if (state === "ready") return "ready";
+    if (state === "reconnecting" || state === "unavailable" || state === "starting") return "recovering";
+    if (state === "stopped_by_user") return "stopped";
+    if (state === "port_conflict" || state === "incompatible") return "blocked";
+    return "unknown";
+  }
+
+  function announceConnectionTransition(connection) {
+    const state = connection?.state || "ready";
+    if (lastConnectionState === null) {
+      lastConnectionState = state;
+      return;
+    }
+    const previousFamily = connectionFamily(lastConnectionState);
+    const nextFamily = connectionFamily(state);
+    lastConnectionState = state;
+    if (previousFamily === nextFamily) return;
+    if (nextFamily === "ready") {
+      toast("Agent local recuperado.");
+      return;
+    }
+    if (nextFamily === "recovering") {
+      toast("Agent local indisponível. O Companion está tentando recuperar a conexão.", true);
+      return;
+    }
+    if (nextFamily === "stopped") {
+      toast("Agent local está parado e não será reiniciado automaticamente.", true);
+      return;
+    }
+    if (nextFamily === "blocked") {
+      toast(errorText(connection?.error || "AGENT_PORT_CONFLICT"), true);
+    }
+  }
+
   function renderSnapshot(value) {
     lastSnapshot = value;
     const version = value.version || "—";
@@ -432,11 +533,36 @@
     $("settings-version").textContent = `TDA Companion ${version}`;
 
     const agent = value.agent || {};
-    const lifecycle = agent.lifecycle || "preparing";
-    $("agent-pill").textContent = lifecycle === "ready" ? "● Agente local ativo" : lifecycle === "paused" ? "● Fila pausada" : "● Preparando";
-    $("agent-pill").classList.toggle("warning", lifecycle !== "ready");
-    $("machine-state").textContent = lifecycle === "ready" ? "Online" : lifecycle === "paused" ? "Pausado" : "Preparando";
-    $("agent-detail").textContent = `TDA local · API v${agent.api_version || "1"} · 127.0.0.1:${agent.port || 8765} · ativo há ${duration(agent.uptime_seconds)}`;
+    const connection = value.connection || { state: agent.lifecycle || "ready" };
+    const connectionState = connection.state || "ready";
+    const lifecycle = agent.lifecycle || connectionState || "starting";
+    const queuePaused = connectionState === "ready" && lifecycle === "paused";
+    const labels = {
+      ready: ["● Agente local ativo", "Online"],
+      starting: ["● Iniciando Agent", "Iniciando"],
+      reconnecting: ["● Reconectando Agent", "Reconectando"],
+      unavailable: ["● Agent indisponível", "Indisponível"],
+      stopped_by_user: ["● Agent parado", "Parado"],
+      port_conflict: ["● Conflito na porta local", "Conflito"],
+      incompatible: ["● Agent incompatível", "Incompatível"],
+    };
+    const [pillText, machineText] = queuePaused
+      ? ["● Fila pausada", "Pausado"]
+      : labels[connectionState] || labels.starting;
+    $("agent-pill").textContent = pillText;
+    $("agent-pill").classList.toggle("warning", connectionState !== "ready" || queuePaused);
+    $("machine-state").textContent = machineText;
+    $("machine-state").classList.toggle("warning", connectionState !== "ready" || queuePaused);
+
+    if (connectionState === "ready") {
+      const mismatch = connection.compatibility === "compatible" ? ` · Agent v${connection.service_version || "?"} precisa ser reiniciado` : "";
+      $("agent-detail").textContent = `TDA local · API v${agent.api_version || "1"} · 127.0.0.1:${agent.port || 8765} · ativo há ${duration(agent.uptime_seconds)}${mismatch}`;
+    } else {
+      const retry = Number(connection.retry_after_seconds || 0);
+      const retryText = retry > 0 ? ` · nova tentativa em ${retry.toFixed(0)} s` : "";
+      $("agent-detail").textContent = `${errorText(connection.error || agent.error || "AGENT_CONNECTION_FAILED")}${retryText}`;
+    }
+    announceConnectionTransition(connection);
 
     const system = value.system || {};
     const host = system.host || {};
@@ -461,7 +587,9 @@
     $("count-completed").textContent = counts.completed ?? 0;
     $("count-attention").textContent = counts.attention ?? 0;
     $("last-update").textContent = `Atualizado ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-    $("toggle-queue").textContent = lifecycle === "paused" ? "Retomar fila" : "Pausar fila";
+    $("toggle-queue").textContent = queuePaused ? "Retomar fila" : "Pausar fila";
+    $("toggle-queue").disabled = connectionState !== "ready";
+    $("restart-agent").disabled = connectionState === "port_conflict" || connectionState === "incompatible";
 
     const active = (value.jobs || []).find((job) => job.status === "running");
     const summary = $("work-summary");
@@ -469,6 +597,9 @@
       summary.querySelector("h3").textContent = "Processamento em andamento";
       const progress = active.progress || {};
       summary.querySelector("p").textContent = `${active.kind || "Trabalho local"} · ${progress.completed ?? 0} de ${progress.total ?? "—"} ${progress.unit || "itens"}`;
+    } else if (connectionState !== "ready") {
+      summary.querySelector("h3").textContent = "Agent local indisponível.";
+      summary.querySelector("p").textContent = "A interface continua ativa. O Companion tentará recuperar o Agent sem descartar a sessão Craig já selecionada.";
     } else {
       summary.querySelector("h3").textContent = "Nenhum processamento em andamento.";
       summary.querySelector("p").textContent = counts.queued ? `${counts.queued} trabalho(s) aguardando na fila.` : "A fila está livre. Selecione um ZIP do Craig para iniciar uma transcrição local.";
@@ -487,24 +618,39 @@
 
   async function refreshSnapshot() {
     if (!api) return;
+    const previousState = lastConnectionState;
     try {
-      renderSnapshot(await api.snapshot());
+      const snapshot = await api.snapshot();
+      renderSnapshot(snapshot);
+      const currentState = snapshot?.connection?.state || snapshot?.agent?.lifecycle || "ready";
+      if (previousState && previousState !== "ready" && currentState === "ready" && selectedSession) {
+        try {
+          await refreshProfiles();
+        } catch {
+          // The next background cycle will retry; do not turn recovery into toast spam.
+        }
+      }
     } catch {
-      $("agent-pill").textContent = "● Agente indisponível";
+      $("agent-pill").textContent = "● Agent indisponível";
       $("agent-pill").classList.add("warning");
     }
   }
 
-  async function refreshLogs() {
+  async function refreshLogs(announce = false) {
     if (!api) return;
     try {
       const level = $("log-level")?.value || null;
       const result = await api.logs(level, null, 300);
+      if (result?.unavailable) {
+        renderLogsUnavailable(result);
+        if (announce) toast(`Logs indisponíveis: ${errorText(result.error)}`, true);
+        return;
+      }
       allLogs = Array.isArray(result.logs) ? result.logs : [];
       renderLogRows($("full-logs"), allLogs, false);
       renderLogRows($("overview-logs"), allLogs, true);
     } catch (error) {
-      toast(`Não foi possível ler os logs: ${errorText(error)}`, true);
+      if (announce) toast(`Não foi possível ler os logs: ${errorText(error)}`, true);
     }
   }
 
@@ -710,8 +856,8 @@
         toast(`Export falhou: ${errorText(error)}`, true);
       }
     });
-    $("refresh-logs").addEventListener("click", refreshLogs);
-    $("log-level").addEventListener("change", refreshLogs);
+    $("refresh-logs").addEventListener("click", () => refreshLogs(true));
+    $("log-level").addEventListener("change", () => refreshLogs(true));
     $("log-search").addEventListener("input", () => renderLogRows($("full-logs"), allLogs, false));
     $("setting-startup").addEventListener("change", (event) => updateSetting("start_with_windows", event.target.checked));
     $("setting-tray").addEventListener("change", (event) => updateSetting("show_tray", event.target.checked));
@@ -750,7 +896,7 @@
     bindEvents();
     renderSession(null);
     await refreshSnapshot();
-    await refreshLogs();
+    await refreshLogs(false);
     if (lastSnapshot?.settings?.check_updates) {
       checkUpdate(false);
       checkWhisperRuntime(false);
@@ -758,7 +904,7 @@
     }
     refreshTimer = window.setInterval(async () => {
       await refreshSnapshot();
-      if (document.visibilityState === "visible") await refreshLogs();
+      if (document.visibilityState === "visible") await refreshLogs(false);
     }, 3000);
   }
 

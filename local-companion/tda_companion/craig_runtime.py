@@ -6,11 +6,19 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .craig import CraigIdentity, CraigPackage, CraigPackageError, CraigTrack, TRACK_NAME
+from .craig import (
+    CraigIdentity,
+    CraigPackage,
+    CraigPackageError,
+    CraigTrack,
+    TRACK_NAME,
+    physical_track_filename,
+)
 
 _MANIFEST_MAX_BYTES = 2 * 1024 * 1024
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 _COPY_CHUNK = 1024 * 1024
+_WINDOWS_FORBIDDEN = frozenset('<>:"/\\|?*')
 
 
 def _text(value: Any, code: str, *, maximum: int) -> str:
@@ -56,6 +64,18 @@ def _identity(value: Any) -> CraigIdentity | None:
     return CraigIdentity(username=username, discriminator=discriminator, discord_id=discord_id)
 
 
+def _portable_legacy_filename(value: str) -> bool:
+    # Older staged packages used Craig's source filename physically. Keep ordinary
+    # historical packages readable, but never trust NTFS-special characters or
+    # control characters from an old manifest.
+    return (
+        bool(value)
+        and value == Path(value).name
+        and not value.endswith((" ", "."))
+        and not any(ord(char) < 32 or char in _WINDOWS_FORBIDDEN for char in value)
+    )
+
+
 def load_craig_package(package_root: Path, *, verify_tracks: bool = True) -> CraigPackage:
     """Load a TDA-staged Craig package without trusting paths stored in its manifest."""
     root = package_root.resolve()
@@ -98,9 +118,17 @@ def load_craig_package(package_root: Path, *, verify_tracks: bool = True) -> Cra
         match = TRACK_NAME.fullmatch(filename)
         if not match or int(match.group("track")) != number or match.group("speaker").strip() != speaker:
             raise CraigPackageError("CRAIG_MANIFEST_FILENAME_INVALID")
-        expected_relative = f"tracks/{filename}"
-        if item.get("path") != expected_relative:
+
+        canonical_relative = f"tracks/{physical_track_filename(number)}"
+        legacy_relative = f"tracks/{filename}"
+        stored_path = item.get("path")
+        if stored_path == canonical_relative:
+            expected_relative = canonical_relative
+        elif stored_path == legacy_relative and _portable_legacy_filename(filename):
+            expected_relative = legacy_relative
+        else:
             raise CraigPackageError("CRAIG_MANIFEST_TRACK_PATH_INVALID")
+
         size_bytes = item.get("size_bytes")
         if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes <= 0:
             raise CraigPackageError("CRAIG_MANIFEST_TRACK_SIZE_INVALID")
