@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: operations
-> Última revisão: 2026-09-13
+> Última revisão: 2026-09-14
 
 Este diretório contém os procedimentos que devem ser executáveis por alguém que não estava na cabeça de quem implementou a feature.
 
@@ -10,10 +10,14 @@ Este diretório contém os procedimentos que devem ser executáveis por alguém 
 
 Para CI/CD, a leitura deve seguir esta ordem:
 
-1. [CI/CD — operação, promoção e recuperação](ci-cd.md): contrato técnico completo da esteira;
+1. [CI/CD — operação, promoção e recuperação](ci-cd.md): contrato técnico completo da esteira **vigente**;
 2. [CI/CD — configuração administrativa](cicd-admin-setup.md): GitHub Environments, secrets, proteção de branches e estado operacional confirmado;
 3. [Ambientes e configuração](environments.md): limites entre Development, Preview e Production;
-4. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão arquitetural que torna GitHub Actions o único controlador da entrega.
+4. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão arquitetural da implementação vigente;
+5. [Baseline da simplificação](cicd-simplification-baseline.md): fotografia datada do estado anterior à migração;
+6. [Plano de simplificação](cicd-simplification-plan.md) + [ADR-0015](../adr/0015-recovery-oriented-delivery.md): direção aceita para a próxima versão da entrega.
+
+A simplificação é incremental. Enquanto uma fase ainda não foi integrada, o runbook `ci-cd.md` e a topologia atual continuam sendo a fonte de verdade do runtime; os documentos de migração não devem ser lidos como prova de que uma mudança planejada já está publicada.
 
 Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) é o contrato da rodada de estabilização iniciada após o teste físico da v0.3.2. A [evidência de Reliability R2](companion-reliability-r2-evidence.md) registra o estado verificável do segundo bloco dessa estabilização. A [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) registra a fotografia adversarial que originou as remediações posteriores do candidato 0.3.4. O [contrato A-017 de integridade dos modelos ASR](companion-a017-model-integrity.md) separa metadata-ready de integridade SHA-256 comprovada no gate físico. Esses documentos complementam o runbook [Companion — operação, instalação e rollback](local-companion.md) e impedem que CI sintética seja confundida com aceite físico do produto instalado.
 
@@ -21,7 +25,7 @@ Se uma seção histórica datada em outro documento descrever um estado anterior
 
 ## Como usar a esteira no dia a dia
 
-Fluxo normal:
+Fluxo normal **enquanto a migração não substitui esta topologia**:
 
 ```text
 feature/* | fix/* | refactor/* | ops/*
@@ -65,7 +69,7 @@ feature/* | fix/* | refactor/* | ops/*
  https://dnd.faysk.dev
 ```
 
-Regras práticas:
+Regras práticas atuais:
 
 1. nunca desenvolver diretamente em `Preview` ou `main`;
 2. abrir PR de branch temporária para `Preview`;
@@ -121,10 +125,12 @@ O runtime canônico confirmou:
 
 A evidência imutável de cada Production normal passa a ser o GitHub Release receipt `prod-<short-sha>`. `deployments.md` continua como histórico operacional e deve receber entradas para deploys manuais, excepcionais, incidentes ou eventos que precisem de contexto adicional; não é necessário duplicar manualmente cada receipt automático.
 
-## Runbooks
+## Runbooks e migração
 
 - [CI/CD — operação, promoção e recuperação](ci-cd.md)
 - [CI/CD — configuração administrativa](cicd-admin-setup.md)
+- [CI/CD — baseline da simplificação](cicd-simplification-baseline.md)
+- [CI/CD — plano de simplificação](cicd-simplification-plan.md)
 - [Ambientes e configuração](environments.md)
 - [Companion — confiabilidade, manutenção e aceite real](companion-reliability.md)
 - [Companion — evidência Reliability R2](companion-reliability-r2-evidence.md)
@@ -138,7 +144,7 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 - [Política resumida de publicação](../releases.md)
 - [Infraestrutura e estado](../infrastructure.md)
 
-## Princípios operacionais
+## Princípios operacionais vigentes
 
 1. merge e deploy são eventos diferentes;
 2. production não é sandbox;
@@ -154,6 +160,8 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 12. CI verde em `Preview` publica homologação automaticamente;
 13. Production só publica SHA comprovadamente originado de PR `Preview -> main`;
 14. branch protection é governança adicional e o provenance gate de Production continua obrigatório mesmo com protection ativa.
+
+Os itens 12–14 serão substituídos progressivamente conforme a migração do ADR-0015 for integrada. Não antecipar essa mudança na operação antes de haver evidência do workflow novo.
 
 ## Matriz rápida
 
@@ -171,6 +179,6 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 
 Toda feature que exige procedimento manual recorrente deve adicionar/atualizar runbook. Não deixar passos críticos apenas em chat, memória ou histórico de terminal.
 
-Alteração em workflow, credencial, migration boundary, provenance, estratégia staged/promotion ou rollback deve revisar [CI/CD — operação, promoção e recuperação](ci-cd.md) e, quando estrutural, o [ADR-0012](../adr/0012-github-actions-controlled-delivery.md).
+Alteração em workflow, credencial, migration boundary, provenance, estratégia staged/promotion ou rollback deve revisar [CI/CD — operação, promoção e recuperação](ci-cd.md) e, quando estrutural, os ADRs de entrega relevantes. Durante esta migração, [ADR-0012](../adr/0012-github-actions-controlled-delivery.md) registra a arquitetura anterior/vigente e [ADR-0015](../adr/0015-recovery-oriented-delivery.md) registra a direção aceita.
 
 Configuração de Environments, secrets e branch protection deve seguir [CI/CD — configuração administrativa](cicd-admin-setup.md). Valores secretos nunca entram na documentação.
