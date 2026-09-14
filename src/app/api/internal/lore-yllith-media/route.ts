@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -16,113 +16,142 @@ const CHUNK_BYTES = 4096;
 
 const assets = {
   "backgroud_jornada.avif": {
-    "bytes": 44678,
-    "sha256": "04ae4968021a938e8a8e738bbe84fea20f8e0900bba0be2b6cba70bc635e06b5",
-    "type": "image/avif",
-    "parts": 11
+    bytes: 44678,
+    sha256: "04ae4968021a938e8a8e738bbe84fea20f8e0900bba0be2b6cba70bc635e06b5",
+    type: "image/avif",
+    parts: 11,
   },
   "despedida_pais_background.avif": {
-    "bytes": 43481,
-    "sha256": "f096873034fe4cd14c1cfd24849dcf2fa127bcd65964dc9dd244846a7487421e",
-    "type": "image/avif",
-    "parts": 11
+    bytes: 43481,
+    sha256: "f096873034fe4cd14c1cfd24849dcf2fa127bcd65964dc9dd244846a7487421e",
+    type: "image/avif",
+    parts: 11,
   },
   "despedida_pais_destaque.webp": {
-    "bytes": 56612,
-    "sha256": "88c7ce480d435e1f565faa2a257ea645da65d54d8a066a506b0672345f45484f",
-    "type": "image/webp",
-    "parts": 14
+    bytes: 56612,
+    sha256: "88c7ce480d435e1f565faa2a257ea645da65d54d8a066a506b0672345f45484f",
+    type: "image/webp",
+    parts: 14,
   },
   "despedida_tios_backgroud.avif": {
-    "bytes": 42002,
-    "sha256": "6e094723afb19b7be52115ecccfc291d699ead15e66bdea688befef07638c803",
-    "type": "image/avif",
-    "parts": 11
+    bytes: 42002,
+    sha256: "6e094723afb19b7be52115ecccfc291d699ead15e66bdea688befef07638c803",
+    type: "image/avif",
+    parts: 11,
   },
   "despedida_tios_destaque-personagem.webp": {
-    "bytes": 32900,
-    "sha256": "8f06c91fc38b1ab98f918d390632b7859068f39e7664cf33842f5296def7ba9d",
-    "type": "image/webp",
-    "parts": 9
+    bytes: 32900,
+    sha256: "8f06c91fc38b1ab98f918d390632b7859068f39e7664cf33842f5296def7ba9d",
+    type: "image/webp",
+    parts: 9,
   },
   "maos_sobre_mapa_matilha.webp": {
-    "bytes": 20272,
-    "sha256": "4f76223c2b0b4065beb6457173bf8a3a684715c7fcf76a395ccc7e252c0734d4",
-    "type": "image/webp",
-    "parts": 5
+    bytes: 20272,
+    sha256: "4f76223c2b0b4065beb6457173bf8a3a684715c7fcf76a395ccc7e252c0734d4",
+    type: "image/webp",
+    parts: 5,
   },
   "mapa_matilha_sem_mao.avif": {
-    "bytes": 84082,
-    "sha256": "84e87577d93d06b69e9b5d9ff644e2d860cae32ee4542b8e0a7c523124c6850c",
-    "type": "image/avif",
-    "parts": 21
+    bytes: 84082,
+    sha256: "84e87577d93d06b69e9b5d9ff644e2d860cae32ee4542b8e0a7c523124c6850c",
+    type: "image/avif",
+    parts: 21,
   },
   "social-yllith.jpg": {
-    "bytes": 65609,
-    "sha256": "b9858046c31ddc338fafe822b8c6132d4b4a4383c5f11b7b6e536943f8509f48",
-    "type": "image/jpeg",
-    "parts": 17
+    bytes: 65609,
+    sha256: "b9858046c31ddc338fafe822b8c6132d4b4a4383c5f11b7b6e536943f8509f48",
+    type: "image/jpeg",
+    parts: 17,
   },
   "sonho-paralax_personagem.webp": {
-    "bytes": 22930,
-    "sha256": "34a720045e7b9886d152e6b67cdb161c1f81194579cf693c4a0750ad2a055fab",
-    "type": "image/webp",
-    "parts": 6
+    bytes: 22930,
+    sha256: "34a720045e7b9886d152e6b67cdb161c1f81194579cf693c4a0750ad2a055fab",
+    type: "image/webp",
+    parts: 6,
   },
   "sonho_paralax_backgroud.avif": {
-    "bytes": 16786,
-    "sha256": "bcf5985f7f43bb50e40d36fc40a6e35192343cf39d9159a479ad0a62f3bab655",
-    "type": "image/avif",
-    "parts": 5
+    bytes: 16786,
+    sha256: "bcf5985f7f43bb50e40d36fc40a6e35192343cf39d9159a479ad0a62f3bab655",
+    type: "image/avif",
+    parts: 5,
   },
   "sonho_paralax_espirito.webp": {
-    "bytes": 18090,
-    "sha256": "52dcd41179659ff80bb0b55bab50862a4d4449d726a5dd3a0b50af5db02800fd",
-    "type": "image/webp",
-    "parts": 5
+    bytes: 18090,
+    sha256: "52dcd41179659ff80bb0b55bab50862a4d4449d726a5dd3a0b50af5db02800fd",
+    type: "image/webp",
+    parts: 5,
   },
   "sonho_paralax_nevoa.webp": {
-    "bytes": 22342,
-    "sha256": "1bc774679515e7524ed4db58738455554c8eeef298042a7cff365ca41ed05b2b",
-    "type": "image/webp",
-    "parts": 6
+    bytes: 22342,
+    sha256: "1bc774679515e7524ed4db58738455554c8eeef298042a7cff365ca41ed05b2b",
+    type: "image/webp",
+    parts: 6,
   },
   "yllith.webp": {
-    "bytes": 98122,
-    "sha256": "77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f",
-    "type": "image/webp",
-    "parts": 24
+    bytes: 98122,
+    sha256: "77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f",
+    type: "image/webp",
+    parts: 24,
   },
   "yllith_jornada.webp": {
-    "bytes": 34612,
-    "sha256": "24f564be0e4a17610dc2d6eaec92dcbcff139440dcf64ead30c982e0b2c5f886",
-    "type": "image/webp",
-    "parts": 9
-  }
+    bytes: 34612,
+    sha256: "24f564be0e4a17610dc2d6eaec92dcbcff139440dcf64ead30c982e0b2c5f886",
+    type: "image/webp",
+    parts: 9,
+  },
 } as const;
 
 type AssetName = keyof typeof assets;
+
+type R2Config = Readonly<{
+  accountId: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}>;
 
 function isAssetName(value: string | null): value is AssetName {
   return Boolean(value && value in assets);
 }
 
+function r2Config(): R2Config | null {
+  const accountId = process.env.R2_ACCOUNT_ID?.trim();
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+  if (
+    process.env.R2_PUBLIC_BUCKET !== PUBLIC_BUCKET ||
+    !accountId ||
+    !accessKeyId ||
+    !secretAccessKey
+  ) {
+    return null;
+  }
+  return { accountId, accessKeyId, secretAccessKey };
+}
+
 function isConfigured() {
-  return Boolean(
-    process.env.R2_PUBLIC_BUCKET === PUBLIC_BUCKET &&
-      process.env.R2_ACCOUNT_ID &&
-      process.env.R2_ACCESS_KEY_ID &&
-      process.env.R2_SECRET_ACCESS_KEY,
+  return r2Config() !== null;
+}
+
+function authorizedProductionBootstrap(request: Request) {
+  const expected = process.env.TDA_LORE_STAGING_TOKEN?.trim();
+  const header = request.headers.get("authorization");
+  if (!expected || !header?.startsWith("Bearer ")) return false;
+  const supplied = header.slice("Bearer ".length);
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  return (
+    expectedBytes.length === suppliedBytes.length &&
+    timingSafeEqual(expectedBytes, suppliedBytes)
   );
 }
 
-function client() {
+function client(config: R2Config) {
   return new S3Client({
     region: "auto",
-    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
     credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
     },
     requestChecksumCalculation: "WHEN_REQUIRED",
   });
@@ -188,14 +217,19 @@ export async function GET(request: Request) {
     });
   }
 
-  if (process.env.APP_ENV !== "production") {
+  if (
+    process.env.APP_ENV !== "production" ||
+    !authorizedProductionBootstrap(request)
+  ) {
     return json({ error: "production bootstrap only" }, { status: 404 });
   }
-  if (!isConfigured()) {
+
+  const config = r2Config();
+  if (!config) {
     return json({ error: "R2 configuration unavailable" }, { status: 503 });
   }
 
-  const s3 = client();
+  const s3 = client(config);
 
   if (verify) {
     if (!isAssetName(verify)) return json({ error: "unknown asset" }, { status: 400 });
