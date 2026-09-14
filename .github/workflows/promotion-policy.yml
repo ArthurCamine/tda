@@ -16,13 +16,14 @@ jobs:
       HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
       BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
     steps:
-      - name: Accept direct pull requests to main during cutover
+      - name: Enforce Preview to main promotion
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$BASE_BRANCH" != "main" ]]; then
-            echo "::error::Expected PR target main, received ${HEAD_BRANCH} -> ${BASE_BRANCH}."
+
+          if [[ "$BASE_BRANCH" != "main" || "$HEAD_BRANCH" != "Preview" ]]; then
+            echo "::error::Production promotion must be Preview -> main. Received ${HEAD_BRANCH} -> ${BASE_BRANCH}."
             exit 1
           fi
-          echo "MAIN_PR_SOURCE_OK ${HEAD_BRANCH} -> ${BASE_BRANCH}"
-          echo "promotion-source is transitional and will be removed after main-only cutover."
+
+          echo "PROMOTION_SOURCE_OK ${HEAD_BRANCH} -> ${BASE_BRANCH}"
