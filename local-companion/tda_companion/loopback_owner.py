@@ -51,14 +51,22 @@ def _trusted_companion_executable(actual_value: str | Path, expected_value: str 
     )
 
 
+def _listener_address(address: Any) -> tuple[str, int]:
+    if address is None:
+        raise ValueError("listener address missing")
+    if hasattr(address, "ip") and hasattr(address, "port"):
+        return str(address.ip), int(address.port)
+    if len(address) >= 2:
+        return str(address[0]), int(address[1])
+    raise ValueError("listener address invalid")
+
+
 def _listener_pids(port: int, connections: Iterable[Any]) -> set[int]:
     result: set[int] = set()
     for connection in connections:
         try:
             status = str(connection.status or "")
-            address = connection.laddr
-            host = str(getattr(address, "ip", address[0] if address else ""))
-            local_port = int(getattr(address, "port", address[1] if address else 0))
+            host, local_port = _listener_address(connection.laddr)
             pid = connection.pid
         except (AttributeError, IndexError, TypeError, ValueError):
             continue
