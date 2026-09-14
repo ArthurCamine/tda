@@ -1,4 +1,4 @@
-name: Promotion Policy
+name: Promotion Compatibility
 
 on:
   pull_request:
@@ -12,18 +12,10 @@ jobs:
     name: promotion-source
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    env:
-      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-      BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
     steps:
-      - name: Enforce Preview to main promotion
+      - name: Keep legacy required context green during main-only cutover
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ "$BASE_BRANCH" != "main" || "$HEAD_BRANCH" != "Preview" ]]; then
-            echo "::error::Production promotion must be Preview -> main. Received ${HEAD_BRANCH} -> ${BASE_BRANCH}."
-            exit 1
-          fi
-
-          echo "PROMOTION_SOURCE_OK ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+          echo "promotion-source is a temporary compatibility context."
+          echo "Production provenance is enforced at release time by requiring an actual merged PR into main."
