@@ -182,7 +182,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-10 |
 | [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
 | [CI/CD — baseline da simplificação](../operations/cicd-simplification-baseline.md) | operations / architecture | auditoria | 2026-09-14 |
-| [CI/CD — plano de simplificação](../operations/cicd-simplification-plan.md) | operations / architecture | em execução — Fases 1 e 2 concluídas; Fase 3 em planejamento | 2026-09-14 |
+| [CI/CD — plano de simplificação](../operations/cicd-simplification-plan.md) | operations / architecture | em execução — Fases 1, 2 e 3 concluídas; Fase 4 planejada | 2026-09-14 |
 | [TDA Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](../operations/companion-0.3.3-heavy-audit.md) | local-companion / processing / operations / security | auditoria concluída; 0.3.3 aposentada para certificação; remediação integrada na linha 0.3.4 | 2026-09-13 |
 | [TDA Companion — A-017 integridade dos modelos ASR](../operations/companion-a017-model-integrity.md) | local-companion / processing / operations / security | implementado em candidato; integração condicionada aos gates automáticos e ao aceite físico | 2026-09-14 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |

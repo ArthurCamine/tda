@@ -64,9 +64,9 @@ jobs:
       - name: Validate change classifier contract
         run: node --test tools/ci/classify-changes.test.mjs
 
-  # Shadow mode: ainda roda sempre porque a branch protection atual exige este
-  # check diretamente. Fica condicional somente depois do cutover da Fase 3B.
   transcript-import-postgres:
+    needs: classify-changes
+    if: ${{ needs.classify-changes.outputs.db == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -199,7 +199,7 @@ jobs:
           if [[ "$DB_RELEVANT" == "true" ]]; then
             test "$DB_RESULT" = "success"
           else
-            [[ "$DB_RESULT" == "success" || "$DB_RESULT" == "skipped" ]]
+            test "$DB_RESULT" = "skipped"
           fi
 
           if [[ "$COMPANION_RELEVANT" == "true" ]]; then

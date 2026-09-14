@@ -6,13 +6,11 @@ on:
         description: Exact repository source SHA to validate and package
         required: false
         type: string
-  pull_request:
-  push:
-    branches: [main, Preview]
+  workflow_dispatch:
 permissions:
   contents: read
 env:
-  TDA_SOURCE_SHA: ${{ github.event_name == 'workflow_call' && inputs.source_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  TDA_SOURCE_SHA: ${{ github.event_name == 'workflow_call' && inputs.source_sha || github.sha }}
 jobs:
   synthetic:
     strategy:
