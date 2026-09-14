@@ -13,6 +13,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify-changes:
+    name: classify-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.classify.outputs.web }}
+      db: ${{ steps.classify.outputs.db }}
+      companion: ${{ steps.classify.outputs.companion }}
+      media: ${{ steps.classify.outputs.media }}
+      files_json: ${{ steps.classify.outputs.files_json }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git fetch origin "$GITHUB_BASE_REF"
+            RANGE="origin/${GITHUB_BASE_REF}...${PR_HEAD_SHA}"
+          elif [[ -n "${BEFORE_SHA:-}" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            RANGE="${BEFORE_SHA}...${GITHUB_SHA}"
+          else
+            RANGE="${GITHUB_SHA}^...${GITHUB_SHA}"
+          fi
+          node tools/ci/classify-changes.mjs "$RANGE"
+
   workflow-contract:
     name: workflow-contract
     runs-on: ubuntu-latest
@@ -23,9 +58,14 @@ jobs:
         uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color -shellcheck= -pyflakes=
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Validate change classifier contract
+        run: node --test tools/ci/classify-changes.test.mjs
 
-  # Mantido nesta fase por compatibilidade com a branch protection atual.
-  # A Fase 3 tornará este job condicional a mudanças de banco/data layer.
+  # Shadow mode: ainda roda sempre porque a branch protection atual exige este
+  # check diretamente. Fica condicional somente depois do cutover da Fase 3B.
   transcript-import-postgres:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -88,21 +128,80 @@ jobs:
       - name: Build application
         run: pnpm build
 
+  companion-domain:
+    name: companion-domain
+    needs: classify-changes
+    if: ${{ needs.classify-changes.outputs.companion == 'true' }}
+    uses: ./.github/workflows/companion.yml
+    with:
+      source_sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+  media-domain:
+    name: media-domain
+    needs: classify-changes
+    if: ${{ needs.classify-changes.outputs.media == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.3.4
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Verify immutable public media
+        run: pnpm media:verify-public
+
   required-ci:
     name: required-ci
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
     needs:
+      - classify-changes
       - workflow-contract
       - validate
+      - transcript-import-postgres
+      - companion-domain
+      - media-domain
     steps:
-      - name: Require fast CI contract
+      - name: Require fast and relevant domain contracts
         env:
+          CLASSIFIER_RESULT: ${{ needs.classify-changes.result }}
           WORKFLOW_CONTRACT_RESULT: ${{ needs.workflow-contract.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          DB_RELEVANT: ${{ needs.classify-changes.outputs.db }}
+          DB_RESULT: ${{ needs.transcript-import-postgres.result }}
+          COMPANION_RELEVANT: ${{ needs.classify-changes.outputs.companion }}
+          COMPANION_RESULT: ${{ needs.companion-domain.result }}
+          MEDIA_RELEVANT: ${{ needs.classify-changes.outputs.media }}
+          MEDIA_RESULT: ${{ needs.media-domain.result }}
         shell: bash
         run: |
           set -euo pipefail
+          test "$CLASSIFIER_RESULT" = "success"
           test "$WORKFLOW_CONTRACT_RESULT" = "success"
           test "$VALIDATE_RESULT" = "success"
+
+          if [[ "$DB_RELEVANT" == "true" ]]; then
+            test "$DB_RESULT" = "success"
+          else
+            [[ "$DB_RESULT" == "success" || "$DB_RESULT" == "skipped" ]]
+          fi
+
+          if [[ "$COMPANION_RELEVANT" == "true" ]]; then
+            test "$COMPANION_RESULT" = "success"
+          else
+            test "$COMPANION_RESULT" = "skipped"
+          fi
+
+          if [[ "$MEDIA_RELEVANT" == "true" ]]; then
+            test "$MEDIA_RESULT" = "success"
+          else
+            test "$MEDIA_RESULT" = "skipped"
+          fi
