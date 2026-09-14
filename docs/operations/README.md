@@ -115,7 +115,8 @@ O runtime canônico confirmou:
 /api/health.ok          = true
 /api/health.environment = production
 /api/health.commit      = bc131b120fa6d3286da13e6781e0197b5b367ebd
-/api/version.commit     = bc131b120fa6
+/api/version.commit     = bc131b120fa6d3286da13e6781e0197b5b367ebd
+/api/version.release    = prod-bc131b120fa6
 ```
 
 A evidência imutável de cada Production normal passa a ser o GitHub Release receipt `prod-<short-sha>`. `deployments.md` continua como histórico operacional e deve receber entradas para deploys manuais, excepcionais, incidentes ou eventos que precisem de contexto adicional; não é necessário duplicar manualmente cada receipt automático.
