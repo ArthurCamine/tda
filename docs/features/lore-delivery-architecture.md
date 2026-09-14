@@ -69,7 +69,7 @@ O repositório guarda código, markup, manifestos, metadata, tooling e pequenos 
 
 Masters, fontes de trabalho e pacotes originais permanecem separados dos derivados públicos e devem ser preservados em storage privado apropriado. O bucket público recebe apenas derivados autorizados para entrega.
 
-Nenhuma lore cria uploader, endpoint operacional ou autorização próprios. A regra é: **a lore declara mídia; a plataforma publica**. Ver [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md) e [Mídia — fluxo único](../integrations/r2/media-pipeline.md).
+Nenhuma lore cria uploader, endpoint operacional ou autorização próprios. A regra é: **a lore declara mídia; a plataforma publica**. Ver [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md), [Mídia — fluxo único](../integrations/r2/media-pipeline.md) e [Mídia — autorização compartilhada de staging](../integrations/r2/media-access-contract.md).
 
 ## Situação atual
 
