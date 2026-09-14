@@ -218,7 +218,7 @@ jobs:
   preview-deployment:
     name: preview-deployment
     needs: ci-gate
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ always() && github.event_name == 'pull_request' && needs.ci-gate.result == 'success' }}
     uses: ./.github/workflows/deploy-preview.yml
     with:
       source_sha: ${{ github.event.pull_request.head.sha }}
