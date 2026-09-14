@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import tomllib
@@ -42,7 +43,14 @@ def parse_exact(spec: str) -> tuple[str, str] | None:
 
 
 def fetch_json(url: str) -> object:
-    request = urllib.request.Request(url, headers={"User-Agent": "TDA-Companion-dependency-audit/1"})
+    headers = {"User-Agent": "TDA-Companion-dependency-audit/1"}
+    if url.startswith("https://api.github.com/"):
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Accept"] = "application/vnd.github+json"
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed public registries
         return json.load(response)
 
