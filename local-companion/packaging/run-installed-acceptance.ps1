@@ -158,7 +158,7 @@ function Capture-BitsResumeEvidence([string]$Destination) {
     $evidence = [ordered]@{
         schema = "tda_bits_resume_evidence_v1"
         pass = $true
-        job_id_sha256 = Get-Sha256Text $before.JobId.ToLowerInvariant()
+        job_id_sha256 = Get-Sha256Text (([string]$before.JobId).ToLowerInvariant())
         bytes_before = [int64]$before.BytesTransferred
         bytes_after = [int64]$after.BytesTransferred
         bytes_total = [int64]$before.BytesTotal
@@ -295,7 +295,7 @@ foreach ($observation in $observations) { $arguments += @("--acceptance-observat
 $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
 if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw "ACCEPTANCE_RECEIPT_MISSING" }
 $receipt = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-if ([string]$receipt.schema -ne "tda_installed_acceptance_v2") { throw "ACCEPTANCE_RECEIPT_SCHEMA_INVALID" }
+if ([string]$receipt.schema -ne "tda_installed_acceptance_v3") { throw "ACCEPTANCE_RECEIPT_SCHEMA_INVALID" }
 if ([int]$process.ExitCode -ne 0 -or $receipt.pass -ne $true) {
     $code = if ($receipt.error_code) { [string]$receipt.error_code } else { "ACCEPTANCE_NOT_PASSED" }
     Write-Error "Aceite instalado não passou: $code"
