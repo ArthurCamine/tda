@@ -62,8 +62,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
-      - name: Validate change classifier contract
-        run: node --test tools/ci/classify-changes.test.mjs
+      - name: Validate change and Production release classifiers
+        run: >-
+          node --test
+          tools/ci/classify-changes.test.mjs
+          tools/ci/production-release-plan.test.mjs
 
   transcript-import-postgres:
     needs: classify-changes
