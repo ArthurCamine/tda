@@ -167,6 +167,37 @@ jobs:
       - name: Pull Production configuration
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
+      - name: Pull Production media credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          MEDIA_ENV="$RUNNER_TEMP/tda-media-production.env"
+          vercel env pull "$MEDIA_ENV" --yes --environment=production --token="$VERCEL_TOKEN"
+          chmod 600 "$MEDIA_ENV"
+          echo "TDA_MEDIA_ENV=$MEDIA_ENV" >> "$GITHUB_ENV"
+
+      - name: Publish and verify immutable media
+        id: media
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --env-file="$TDA_MEDIA_ENV" tools/media/pipeline.mjs publish \
+            --receipt .local/media-production-receipt.json
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          const receipt = JSON.parse(fs.readFileSync(".local/media-production-receipt.json", "utf8"));
+          const summary = receipt.summary;
+          if (summary.assets !== summary.verified) {
+            throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
+          }
+          const output = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(output, `assets=${summary.assets}\n`);
+          fs.appendFileSync(output, `published=${summary.published}\n`);
+          fs.appendFileSync(output, `reused=${summary.reused}\n`);
+          fs.appendFileSync(output, `verified=${summary.verified}\n`);
+          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}\n`);
+          NODE
+
       - name: Build Production artifact
         env:
           APP_ENV: production
@@ -351,6 +382,11 @@ jobs:
           RELEASE_ID: ${{ steps.source.outputs.release }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+          MEDIA_ASSETS: ${{ steps.media.outputs.assets }}
+          MEDIA_PUBLISHED: ${{ steps.media.outputs.published }}
+          MEDIA_REUSED: ${{ steps.media.outputs.reused }}
+          MEDIA_VERIFIED: ${{ steps.media.outputs.verified }}
+          MEDIA_MANIFEST_SET: ${{ steps.media.outputs.manifest_set }}
         run: |
           set -euo pipefail
           cat > release-receipt.md <<EOF
@@ -362,6 +398,8 @@ jobs:
           - Canonical production: $PRODUCTION_ORIGIN
           - Supabase project: \`$SUPABASE_PROJECT_REF\`
           - Source provenance (Preview -> main): PASS
+          - Immutable media: $MEDIA_VERIFIED/$MEDIA_ASSETS verified (published=$MEDIA_PUBLISHED, reused=$MEDIA_REUSED)
+          - Media manifest set: \`$MEDIA_MANIFEST_SET\`
           - Migration overlay/history gate: PASS
           - Migration dry-run: PASS
           - Migration apply/exact verification: PASS
