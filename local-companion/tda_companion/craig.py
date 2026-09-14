@@ -62,6 +62,12 @@ class CraigPackage:
         return asdict(self)
 
 
+def physical_track_filename(number: int) -> str:
+    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+        raise CraigPackageError("CRAIG_TRACK_NUMBER_INVALID")
+    return f"track-{number:06d}.flac"
+
+
 def _member_name(info: zipfile.ZipInfo) -> str:
     # ZIP paths are POSIX regardless of host platform.
     value = info.filename.replace("\\", "/")
@@ -150,8 +156,6 @@ def parse_info_text(text: str) -> dict[str, object]:
                 break
         if matched_label or not in_tracks:
             continue
-        # Craig emits: username#discriminator (discord-id). New Discord names can
-        # have discriminator 0, so keep it optional instead of validating digits.
         identity = re.match(r"^(?P<name>.+?)(?:#(?P<disc>[^\s()]+))?\s+\((?P<id>[^()]+)\)$", stripped)
         if identity:
             tracks = value["tracks"]
@@ -170,8 +174,6 @@ def _safe_start_time(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip()
-    # Preserve Craig's source text, but ensure it is bounded and date-like before
-    # exposing it as structured metadata.
     if len(text) > 128:
         return None
     try:
@@ -274,8 +276,9 @@ def ingest_craig_zip(source_zip: Path, destination: Path) -> CraigPackage:
             tracks_root = staging / "tracks"
             tracks_root.mkdir()
             for index, (member, number, speaker) in enumerate(tracks):
-                filename = _member_name(member)
-                target = tracks_root / filename
+                source_filename = _member_name(member)
+                physical_filename = physical_track_filename(number)
+                target = tracks_root / physical_filename
                 digest = _copy_member(archive, member, target)
                 identity = None
                 if index < len(info_tracks) and isinstance(info_tracks[index], dict):
@@ -291,8 +294,8 @@ def ingest_craig_zip(source_zip: Path, destination: Path) -> CraigPackage:
                     CraigTrack(
                         number=number,
                         speaker=speaker,
-                        filename=filename,
-                        path=str(target.relative_to(staging)).replace("\\", "/"),
+                        filename=source_filename,
+                        path=f"tracks/{physical_filename}",
                         size_bytes=member.file_size,
                         sha256=digest,
                         identity=identity,

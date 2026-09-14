@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: operations
-> Última revisão: 2026-09-11
+> Última revisão: 2026-09-13
 
 Este diretório contém os procedimentos que devem ser executáveis por alguém que não estava na cabeça de quem implementou a feature.
 
@@ -14,6 +14,8 @@ Para CI/CD, a leitura deve seguir esta ordem:
 2. [CI/CD — configuração administrativa](cicd-admin-setup.md): GitHub Environments, secrets, proteção de branches e estado operacional confirmado;
 3. [Ambientes e configuração](environments.md): limites entre Development, Preview e Production;
 4. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão arquitetural que torna GitHub Actions o único controlador da entrega.
+
+Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) é o contrato da rodada de estabilização iniciada após o teste físico da v0.3.2. A [evidência de Reliability R2](companion-reliability-r2-evidence.md) registra o estado verificável do segundo bloco dessa estabilização. A [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) registra a fotografia adversarial que originou as remediações posteriores do candidato 0.3.4. Esses documentos complementam o runbook [Companion — operação, instalação e rollback](local-companion.md) e impedem que CI sintética seja confundida com aceite físico do produto instalado.
 
 Se uma seção histórica datada em outro documento descrever um estado anterior do bootstrap, ela deve ser lida como evidência daquele momento. O estado operacional corrente é o registrado nos runbooks acima com a revisão mais recente.
 
@@ -78,7 +80,7 @@ Regras práticas:
 
 ## Estado operacional confirmado — 2026-09-11
 
-A esteira foi exercitada de ponta a ponta e está operacional.
+A esteira web/cloud foi exercitada de ponta a ponta e está operacional. **Isso não equivale ao aceite físico do TDA Companion instalado**, que possui gates adicionais em [companion-reliability.md](companion-reliability.md).
 
 ```text
 CI / Companion                    PASS
@@ -124,6 +126,9 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 - [CI/CD — operação, promoção e recuperação](ci-cd.md)
 - [CI/CD — configuração administrativa](cicd-admin-setup.md)
 - [Ambientes e configuração](environments.md)
+- [Companion — confiabilidade, manutenção e aceite real](companion-reliability.md)
+- [Companion — evidência Reliability R2](companion-reliability-r2-evidence.md)
+- [Companion — operação, instalação e rollback](local-companion.md)
 - [Release, deploy e rollback](release-runbook.md)
 - [Histórico de deployments](deployments.md)
 - [Operação do banco / Supabase](database-runbook.md)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -7,6 +8,24 @@ from .desktop_session_bridge import SessionDesktopBridge
 from .paths import CompanionPaths
 from .settings import SettingsStore
 from .tray import TrayController
+
+
+class DesktopExitCoordinator:
+    """Separate a user's close gesture from an intentional product shutdown."""
+
+    def __init__(self) -> None:
+        self.programmatic_exit = False
+
+    def request_exit(self, close: Callable[[], None]) -> None:
+        self.programmatic_exit = True
+        close()
+
+    def should_hide(self, close_behavior: str, *, tray_available: bool) -> bool:
+        return (
+            not self.programmatic_exit
+            and close_behavior == "hide"
+            and tray_available
+        )
 
 
 def ui_entry() -> Path:
@@ -23,7 +42,7 @@ def run_desktop(
     paths: CompanionPaths,
     settings: SettingsStore,
     executable: Path,
-    start_agent: Callable[[], None],
+    start_agent: Callable[[], object],
 ) -> None:
     """Run the product desktop UI while the Agent stays in its own process."""
     try:
@@ -50,7 +69,8 @@ def run_desktop(
         text_select=True,
         zoomable=False,
     )
-    bridge.bind_close_desktop(window.destroy)
+    exit_coordinator = DesktopExitCoordinator()
+    bridge.bind_close_desktop(lambda: exit_coordinator.request_exit(window.destroy))
 
     def select_craig_zip() -> str | None:
         selected = window.create_file_dialog(
@@ -74,16 +94,26 @@ def run_desktop(
 
     def on_closing() -> bool | None:
         current = settings.snapshot()
-        if current.get("close_behavior") == "hide" and tray is not None:
+        if exit_coordinator.should_hide(
+            str(current.get("close_behavior") or "hide"),
+            tray_available=tray is not None,
+        ):
             window.hide()
             return False
         return None
 
     window.events.closing += on_closing
+    previous_renderer = os.environ.get("TDA_DESKTOP_RENDERER")
+    os.environ["TDA_DESKTOP_RENDERER"] = "edgechromium"
     try:
-        # Force the modern Windows WebView2 renderer. A missing Evergreen runtime
-        # is a diagnosable installation problem, not a reason to fall back to IE.
+        # Force the modern Windows WebView2 renderer. While this event loop is
+        # alive, diagnostics can treat the running renderer itself as positive
+        # evidence that WebView2 is available even if registry reads are blocked.
         webview.start(gui="edgechromium", debug=False)
     finally:
+        if previous_renderer is None:
+            os.environ.pop("TDA_DESKTOP_RENDERER", None)
+        else:
+            os.environ["TDA_DESKTOP_RENDERER"] = previous_renderer
         if tray is not None:
             tray.stop()

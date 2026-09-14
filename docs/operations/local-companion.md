@@ -1,10 +1,12 @@
 # Companion — operação, instalação e rollback
 
-> Status: candidato RC v0.3 validado em CI; validação física pendente
+> Status: candidato v0.3 em estabilização; CI técnica válida, aceite físico da 0.3.2 reprovado
 > Owner: local-companion/processing
-> Última revisão: 2026-09-12
+> Última revisão: 2026-09-13
 
-Referências: [contrato API](../integrations/local-companion-v1.md), [especificação v0.3](../features/companion-desktop-asr-v0.3.md), [política de dependências](companion-dependency-policy.md) e [processamento no Edit](../features/local-processing.md).
+Referências: [contrato de confiabilidade e aceite real](companion-reliability.md), [contrato API](../integrations/local-companion-v1.md), [especificação v0.3](../features/companion-desktop-asr-v0.3.md), [política de dependências](companion-dependency-policy.md) e [processamento no Edit](../features/local-processing.md).
+
+> **Estado físico observado em 2026-09-13:** a build 0.3.2 passou os gates técnicos existentes, mas a jornada instalada reprovou em lifecycle do Agent, rede/manutenção e boundaries de erro da UI. Portanto 0.3.2 não é baseline de confiabilidade operacional. O plano e os critérios que bloqueiam uma próxima stable estão em [companion-reliability.md](companion-reliability.md). CI sintética verde continua sendo evidência válida das peças que testa, mas não substitui o aceite do produto instalado.
 
 ## Modelo de processo Windows
 
@@ -25,7 +27,7 @@ atalho/Menu Iniciar
        -> Agent já existente
 ```
 
-Fechar ou ocultar a UI não encerra o Agent. Encerrar o Agent é uma ação diferente e trabalho ativo não deve ser morto silenciosamente.
+Fechar ou ocultar a UI não encerra o Agent. Encerrar o Agent é uma ação diferente e trabalho ativo não deve ser morto silenciosamente. Durante a estabilização, a UI deve distinguir fechamento pelo usuário de saída programática usada por update/uninstall; o contrato detalhado fica em `companion-reliability.md`.
 
 Raízes locais v0.3:
 
@@ -68,13 +70,13 @@ O workflow `Companion` comprova em Windows:
 2. smoke do bundle e do Agent instalado;
 3. health/version e job real de smoke via loopback autenticado;
 4. instalação/desinstalação com Agent ativo e encerramento controlado;
-5. upgrade real do MSI oficial `companion-v0.2.0` para o candidato `0.3.0`;
+5. upgrade real do MSI oficial `companion-v0.2.0` para o candidato corrente;
 6. preservação de State/Data/Logs/Cache/Models/Runtime e token no upgrade;
 7. uninstall normal preservando dados;
 8. reinstalação seguida de purge completo dos roots TDA-owned;
 9. ausência de processo, porta, startup, atalhos, registry e binários esperados após remoção.
 
-O gate usa o artefato oficial v0.2.0 e SHA-256 conhecido como N-1; portanto a matriz fresh install, N-1→N, preserve e purge é executada no CI, não apenas documentada.
+O gate usa o artefato oficial v0.2.0 e SHA-256 conhecido como N-1; portanto a matriz fresh install, N-1→N, preserve e purge é executada no CI, não apenas documentada. **Esse gate não prova a jornada iniciada pelos botões da UI instalada**; essa lacuna virou C-12 no contrato de confiabilidade.
 
 ## Distribuição e updates
 
@@ -108,13 +110,15 @@ TDAQwenRuntime-<versão>-windows-x64.zip.part*
 
 Os endpoints do TDA selecionam somente a família correta de tags/assets, e os downloads são verificados por tamanho e SHA-256 antes da instalação. Os runtimes ASR ficam fora do MSI para não transformar o instalador principal em um pacote de vários gigabytes. O bundle Qwen pode ser dividido em múltiplas partes; o archive lógico e cada parte possuem identidade/hash verificados antes da materialização.
 
-Update não pode interromper job ativo. Enquanto não houver assinatura Authenticode confiável, instalação de update continua exigindo confirmação explícita.
+Update não pode interromper job ativo. Enquanto não houver assinatura Authenticode confiável, instalação de update continua exigindo confirmação explícita. A estabilização adiciona ainda dois invariantes: manifest stable não pode ficar stale e o download precisa apontar para o asset imutável da mesma versão selecionada pelo manifest.
 
 ## Pareamento e segurança
 
 O token de pareamento é local, fica em `State`, com proteção do usuário do Windows, e não é cookie, query string, storage persistente do browser, log ou dado cloud.
 
 A API continua somente em IPv4 loopback, com Host exato, Origin permitido e Bearer nos endpoints privados. A Web não envia path arbitrário do filesystem e não existe descoberta LAN/proxy cloud.
+
+Antes de qualquer request autenticada do Desktop, o listener local deve provar identidade TDA/API/versão conforme `companion-reliability.md`; HTTP 200 isolado não é suficiente e um processo estranho na porta 8765 não deve receber o token.
 
 O ingest Craig da Web envia o ZIP diretamente para o loopback. O Agent recebe em streaming, limita tamanho, calcula SHA-256 durante a gravação, materializa um `source_id` content-addressed, usa o ingestor seguro existente e remove o ZIP temporário. O áudio não passa pelo cloud.
 
@@ -193,7 +197,7 @@ Sem `-WriteTranscripts`, o harness grava apenas `%LOCALAPPDATA%\TDA\State\accept
 
 Nos perfis Qwen o harness usa `--record-gate`; isso persiste um gate sanitizado por perfil. Apenas depois dele estar `ready` o Agent anuncia o respectivo Qwen em `/capabilities`. Whisper não depende desse gate de anúncio, mas os dois perfis continuam obrigatórios para aceite do RC.
 
-Critério mínimo do gate físico: `pass=true` nos quatro perfis, CUDA real, GPU esperada, fala reconhecida, Forced Aligner válido nos Qwen e receipts completos. A avaliação de qualidade em português é um gate separado: comparar os JSONs gerados com `-WriteTranscripts` contra o áudio/referência e registrar nomes próprios, termos de D&D, omissões, alucinações, overlap e timestamps.
+Critério mínimo do gate físico: `pass=true` nos quatro perfis, CUDA real, GPU esperada, fala reconhecida, Forced Aligner válido nos Qwen e receipts completos. A avaliação de qualidade em português é um gate separado: comparar os JSONs gerados com `-WriteTranscripts` contra o áudio/referência e registrar nomes próprios, termos de D&D, omissões, alucinações, overlap e timestamps. O contrato de confiabilidade amplia esse gate com erro temporal e falso dedup explícitos.
 
 Não versionar áudio privado nem transcrição integral como evidência do CI. Um receipt sanitizado pode ser arquivado posteriormente.
 
@@ -232,9 +236,9 @@ Modelos são baixados separadamente em `Models` usando revision imutável e mark
 
 ## Diagnóstico
 
-O Desktop executa checks locais não destrutivos de Agent, State/Data, SQLite, disco, WebView2 e NVIDIA. Quando runtimes ASR estão instalados, também verifica integridade e probe dos workers.
+A implementação 0.3.2 executa checks locais de Agent, State/Data, SQLite, disco, WebView2 e NVIDIA e verifica runtimes instalados. O teste físico mostrou que esse conjunto ainda não representa readiness real: houve falso negativo de WebView2 e falhas operacionais não apareceram como blockers adequados.
 
-Export de diagnóstico é sanitizado e não inclui token de pareamento, áudio ou texto integral de transcrição.
+A estabilização substitui essa interpretação por diagnóstico orientado a capability (`core`, `network`, `maintenance`, `whisper`, `qwen`) e usa detecção oficial de WebView2. Export continua sanitizado, sem token de pareamento, áudio ou texto integral de transcrição.
 
 ## Atualização, repair e desinstalação
 
@@ -246,6 +250,8 @@ Dois conceitos permanecem distintos:
 - **remover completamente**: remove também State/Data/Logs/Cache/Models/Runtime pertencentes ao TDA, com confirmação explícita.
 
 "Remover completamente" significa conteúdo de propriedade do TDA. Não há promessa de apagar cache do Windows Installer, Prefetch, Defender ou outros artefatos administrados pelo Windows.
+
+Update/uninstall pela UI só serão considerados confiáveis quando houver journal/receipt da operação, timeout de parent tratado como falha e log MSI recuperável, conforme C-06.
 
 ## Rollback
 
@@ -275,6 +281,8 @@ Além disso:
 - revisions ASR atuais e pinadas;
 - gate físico RTX nos quatro perfis;
 - benchmark PT-BR antes de escolher default definitivo;
+- jornada física do aplicativo instalado conforme `companion-reliability.md`;
+- o **mesmo artefato/hash** fisicamente aceito é o que será promovido para stable;
 - documentação descrevendo somente capabilities realmente ativas.
 
-CI sem GPU prova empacotamento e contratos, não prova qualidade, throughput, VRAM ou compatibilidade física da RTX.
+CI sem GPU prova empacotamento e contratos, não prova qualidade, throughput, VRAM, jornada da UI instalada ou compatibilidade física da RTX.

@@ -77,11 +77,11 @@ def test_ingest_craig_zip_materializes_only_tracks_and_bounded_metadata(tmp_path
     assert all(track.timeline_offset_seconds == 0.0 for track in package.tracks)
     assert not (destination / "raw.dat").exists()
     assert (destination / "info.txt").is_file()
-    assert (destination / "tracks" / "1-yuhara.flac").is_file()
+    assert (destination / "tracks" / "track-000001.flac").is_file()
     manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
     assert manifest["tracks"][0]["sha256"] == hashlib.sha256(
-        (destination / "tracks" / "1-yuhara.flac").read_bytes()
+        (destination / "tracks" / "track-000001.flac").read_bytes()
     ).hexdigest()
 
 

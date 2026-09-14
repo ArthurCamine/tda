@@ -56,9 +56,17 @@ async def test_ingest_is_content_addressed_reusable_and_cleans_raw_zip(tmp_path:
         {"number": 2, "speaker": "Bob", "size_bytes": len(b"fLaC-bob")},
     ]
 
-    package = load_craig_package(data_root / "staging" / source_id, verify_tracks=True)
+    package_root = data_root / "staging" / source_id
+    package = load_craig_package(package_root, verify_tracks=True)
     assert package.source_sha256 == digest
     assert [track.speaker for track in package.tracks] == ["Alice", "Bob"]
+    assert [track.filename for track in package.tracks] == ["1-Alice.flac", "2-Bob.flac"]
+    assert [track.path for track in package.tracks] == [
+        "tracks/track-000001.flac",
+        "tracks/track-000002.flac",
+    ]
+    assert (package_root / "tracks" / "track-000001.flac").is_file()
+    assert (package_root / "tracks" / "track-000002.flac").is_file()
     assert not list((data_root / "uploads").iterdir())
 
     second = await ingest_craig_request(_request(payload), data_root)
@@ -96,6 +104,23 @@ def test_ingest_local_file_snapshots_reuses_and_returns_safe_session_metadata(tm
     assert second["reused"] is True
     assert second["source_name"] == "minha-sessao.zip"
     assert not list((data_root / "uploads").iterdir())
+
+
+def test_ingest_decouples_windows_unsafe_speaker_name_from_physical_filename(tmp_path: Path):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr('1-Alice:Boss?.flac', b"fLaC-special")
+    source = tmp_path / "special.zip"
+    source.write_bytes(buffer.getvalue())
+    data_root = tmp_path / "Data"
+
+    result = ingest_craig_file(source, data_root)
+    package = load_craig_package(data_root / "staging" / result["source_id"], verify_tracks=True)
+
+    assert package.tracks[0].speaker == "Alice:Boss?"
+    assert package.tracks[0].filename == "1-Alice:Boss?.flac"
+    assert package.tracks[0].path == "tracks/track-000001.flac"
+    assert (data_root / "staging" / result["source_id"] / "tracks" / "track-000001.flac").is_file()
 
 
 def test_ingest_local_file_requires_zip_extension(tmp_path: Path):
