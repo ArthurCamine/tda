@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from tda_companion import VERSION
+import tda_companion.agent_connection as agent_connection_module
 from tda_companion.agent_connection import AgentConnection, AgentConnectionError
 from tda_companion.loopback_owner import LoopbackOwnerError
 
@@ -103,3 +104,28 @@ def test_verified_owner_allows_authenticated_request(tmp_path: Path):
     assert len(opener.requests) == 2
     assert _authorization(opener.requests[0]) is None
     assert _authorization(opener.requests[1]) == f"Bearer {TOKEN}"
+
+
+def test_frozen_desktop_enables_owner_verification_without_explicit_path(tmp_path: Path, monkeypatch):
+    executable = tmp_path / "TDACompanion.exe"
+    executable.write_bytes(b"companion")
+    opener = _RecordingOpener()
+    verified: list[tuple[int, int, Path]] = []
+
+    monkeypatch.setattr(agent_connection_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(agent_connection_module.sys, "executable", str(executable))
+
+    def accept_owner(port: int, pid: int, expected: Path) -> None:
+        verified.append((port, pid, expected))
+
+    connection = AgentConnection(
+        TOKEN,
+        8765,
+        lambda: None,
+        owner_verifier=accept_owner,
+        opener=opener,
+    )
+
+    assert connection.get("/system") == {"ok": True}
+    assert verified == [(8765, 4321, executable)]
+    assert connection.expected_executable == executable
