@@ -4,134 +4,132 @@
 > Owner: operations
 > Última revisão: 2026-09-14
 
-Este diretório contém os procedimentos que devem ser executáveis por alguém que não estava na cabeça de quem implementou a feature.
+Este diretório contém os procedimentos operacionais do TDA. O objetivo é permitir que alguém execute, diagnostique e recupere a entrega sem depender de conhecimento informal do histórico.
 
 ## Fonte de verdade operacional
 
 Para CI/CD, a leitura deve seguir esta ordem:
 
-1. [CI/CD — operação, promoção e recuperação](ci-cd.md): contrato técnico completo da esteira **vigente**;
-2. [CI/CD — configuração administrativa](cicd-admin-setup.md): GitHub Environments, secrets, proteção de branches e estado operacional confirmado;
-3. [Ambientes e configuração](environments.md): limites entre Development, Preview e Production;
-4. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão arquitetural da implementação vigente;
-5. [Baseline da simplificação](cicd-simplification-baseline.md): fotografia datada do estado anterior à migração;
-6. [Plano de simplificação](cicd-simplification-plan.md) + [ADR-0015](../adr/0015-recovery-oriented-delivery.md): direção aceita para a próxima versão da entrega.
+1. [CI/CD — operação, promoção e recuperação](ci-cd.md): contrato técnico vigente da esteira;
+2. [CI/CD — configuração administrativa](cicd-admin-setup.md): GitHub Environments, secrets e branch protection;
+3. [Ambientes e configuração](environments.md): limites entre Development, Preview por PR e Production;
+4. [ADR-0015](../adr/0015-recovery-oriented-delivery.md): decisão recovery-oriented que governa a topologia atual;
+5. [ADR-0012](../adr/0012-github-actions-controlled-delivery.md): decisão preservada de GitHub Actions como controlador e Vercel Git auto-deploy desligado;
+6. [Baseline](cicd-simplification-baseline.md) e [plano de simplificação](cicd-simplification-plan.md): evidência histórica da migração concluída.
 
-A simplificação é incremental. Enquanto uma fase ainda não foi integrada, o runbook `ci-cd.md` e a topologia atual continuam sendo a fonte de verdade do runtime; os documentos de migração não devem ser lidos como prova de que uma mudança planejada já está publicada.
+Se um documento histórico descreve `Preview` como branch permanente ou promoção `Preview -> main`, ele registra uma etapa anterior da arquitetura. O estado operacional corrente é o dos runbooks vigentes acima.
 
-Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) é o contrato da rodada de estabilização iniciada após o teste físico da v0.3.2. A [evidência de Reliability R2](companion-reliability-r2-evidence.md) registra o estado verificável do segundo bloco dessa estabilização. A [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) registra a fotografia adversarial que originou as remediações posteriores do candidato 0.3.4. O [contrato A-017 de integridade dos modelos ASR](companion-a017-model-integrity.md) separa metadata-ready de integridade SHA-256 comprovada no gate físico. Esses documentos complementam o runbook [Companion — operação, instalação e rollback](local-companion.md) e impedem que CI sintética seja confundida com aceite físico do produto instalado.
-
-Se uma seção histórica datada em outro documento descrever um estado anterior do bootstrap, ela deve ser lida como evidência daquele momento. O estado operacional corrente é o registrado nos runbooks acima com a revisão mais recente.
+Para o TDA Companion, [Confiabilidade, manutenção e aceite real](companion-reliability.md) continua sendo o contrato da estabilização física. A [evidência Reliability R2](companion-reliability-r2-evidence.md), a [auditoria pesada do Companion 0.3.3](companion-0.3.3-heavy-audit.md) e o [contrato A-017 de integridade dos modelos ASR](companion-a017-model-integrity.md) complementam o runbook [Companion — operação, instalação e rollback](local-companion.md). CI sintética não substitui aceite físico do produto instalado.
 
 ## Como usar a esteira no dia a dia
-
-Fluxo normal **enquanto a migração não substitui esta topologia**:
 
 ```text
 feature/* | fix/* | refactor/* | ops/*
         |
         v
-      PR -> Preview
+      PR -> main
         |
-        +--> CI
-        +--> Companion
-        |
-        v
- Preview CD automático
-        |
-        +--> build imutável
-        +--> /api/health
-        +--> /api/version
-        +--> smoke / e /sessoes
+        +--> workflow-contract / actionlint
+        +--> validate rápido
+        +--> DB somente se relevante
+        +--> Companion somente se relevante
+        +--> mídia local somente se relevante
+        +--> Vercel Preview do SHA exato da PR
+        +--> smoke
         |
         v
-   homologação aprovada
+    required-ci
         |
         v
- PR Preview -> main
-        |
-        +--> promotion-source
-        +--> CI
-        +--> Companion
+      merge main
         |
         v
  Production CD automático
         |
-        +--> provenance Preview -> main
-        +--> staged Vercel --skip-domain
-        +--> Supabase overlay/dry-run/apply/verify
-        +--> staged smoke
-        +--> vercel promote
-        +--> canonical smoke
-        +--> GitHub Release receipt
+        +--> SHA atual + PR mergeada em main
+        +--> baseline do Production canônico
+        +--> migration somente se pendente
+        +--> mídia somente se o merge atual exigir publicação
+        +--> build
+        +--> staged deploy sem tráfego
+        +--> smoke
+        +--> promote do MESMO artifact
+        +--> canonical health/version
+        +--> release receipt
         |
         v
  https://dnd.faysk.dev
 ```
 
-Regras práticas atuais:
+Preview é um **deployment de PR**, não uma branch de integração.
 
-1. nunca desenvolver diretamente em `Preview` ou `main`;
-2. abrir PR de branch temporária para `Preview`;
-3. não contornar CI/Companion nem os smoke gates;
-4. considerar homologado somente o SHA de Preview cujo Preview CD terminou verde;
-5. promover Production somente por PR `Preview -> main`;
-6. usar **merge commit** na promoção `Preview -> main`, pois o Production CD valida o próprio `merge_commit_sha`;
-7. não executar `supabase db push` direto do checkout canônico para Production;
-8. não publicar diretamente em `dnd.faysk.dev`; Production é staged antes de `vercel promote`;
-9. rollback de aplicação usa o workflow `Production Rollback`; banco não sofre rollback automático;
-10. nunca copiar valores de secrets para docs, PRs, issues, logs ou inputs de workflow.
+## Regras práticas atuais
 
-## Estado operacional confirmado — 2026-09-11
+1. desenvolver em branch temporária e abrir PR diretamente para `main`;
+2. não contornar `required-ci`, os domínios relevantes ou o smoke do Preview;
+3. considerar válido apenas o Preview construído do SHA exato da PR;
+4. não executar `supabase db push` manual para destravar uma release;
+5. migrations pendentes continuam sendo calculadas desde o SHA realmente publicado em Production;
+6. uma release web sem migration não instala nem executa Supabase CLI;
+7. mídia histórica não relacionada não bloqueia deploy web; publicação R2 só entra quando o merge atual exige esse lifecycle;
+8. Production sempre é staged antes de mover tráfego;
+9. o mesmo artefato testado no stage é o artefato promovido;
+10. rollback de aplicação usa `Production Rollback`; banco não sofre rollback automático;
+11. nunca copiar valores de secrets para docs, PRs, issues, logs ou workflow inputs.
 
-A esteira web/cloud foi exercitada de ponta a ponta e está operacional. **Isso não equivale ao aceite físico do TDA Companion instalado**, que possui gates adicionais em [companion-reliability.md](companion-reliability.md).
+## Estado operacional confirmado — 2026-09-14
 
-```text
-CI / Companion                    PASS
-Preview real                      PASS
-Preview smoke                     PASS
-Preview -> main provenance        PASS
-Production credentials            PASS
-Supabase authentication           PASS
-Migration dry-run/apply/history   PASS
-Vercel staged Production          PASS
-Staged smoke                      PASS
-Vercel promote                    PASS
-Canonical smoke                   PASS
-Release receipt                   PASS
-Runtime error scan pós-release    PASS (sem erros observados na janela consultada)
-Branch protection Preview         ENABLED
-Branch protection main            ENABLED
-Force push/deletion               BLOCKED nas branches canônicas
-```
+A topologia main-only foi exercitada de ponta a ponta. Isso continua separado do aceite físico do TDA Companion instalado.
 
-Primeira release completa pela esteira final:
+Primeira PR real direta para `main` após o cutover:
 
 ```text
-Source SHA: bc131b120fa6d3286da13e6781e0197b5b367ebd
-Release:    prod-bc131b120fa6
-Production: https://dnd.faysk.dev
+PR:             #345
+Merge SHA:      a8a9253e13c159263fc1f4a4672d8690f4c62e33
+CI push:        34900494222 = success
+Production CD:  34900630352 = success
 ```
 
-O runtime canônico confirmou:
+Nesse Production:
 
 ```text
-/api/health.ok          = true
-/api/health.environment = production
-/api/health.commit      = bc131b120fa6d3286da13e6781e0197b5b367ebd
-/api/version.commit     = bc131b120fa6d3286da13e6781e0197b5b367ebd
-/api/version.release    = prod-bc131b120fa6
+source/provenance             PASS
+baseline/release plan          PASS
+Supabase lifecycle             SKIPPED
+media publication              SKIPPED
+build + stage                  PASS
+staged smoke                   PASS
+promote mesmo artifact         PASS
+canonical health/version       PASS
+release receipt                PASS
 ```
 
-A evidência imutável de cada Production normal passa a ser o GitHub Release receipt `prod-<short-sha>`. `deployments.md` continua como histórico operacional e deve receber entradas para deploys manuais, excepcionais, incidentes ou eventos que precisem de contexto adicional; não é necessário duplicar manualmente cada receipt automático.
+A Fase 6A removeu os triggers da antiga branch `Preview` e o workflow que a recriava. A PR #347 foi mergeada no SHA:
 
-## Runbooks e migração
+```text
+a46e8292eaed7e1cff32addd181668d83fd76be4
+```
+
+E foi novamente comprovada por:
+
+```text
+CI:             34902095910 = success
+Production CD:  34902180398 = success
+Supabase:       skipped
+R2 publish:     skipped
+stage/smoke:    success
+promote:        success
+canonical:      success
+receipt:        success
+```
+
+## Runbooks e evidências
 
 - [CI/CD — operação, promoção e recuperação](ci-cd.md)
 - [CI/CD — configuração administrativa](cicd-admin-setup.md)
+- [Ambientes e configuração](environments.md)
 - [CI/CD — baseline da simplificação](cicd-simplification-baseline.md)
 - [CI/CD — plano de simplificação](cicd-simplification-plan.md)
-- [Ambientes e configuração](environments.md)
 - [Companion — confiabilidade, manutenção e aceite real](companion-reliability.md)
 - [Companion — evidência Reliability R2](companion-reliability-r2-evidence.md)
 - [Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](companion-0.3.3-heavy-audit.md)
@@ -140,45 +138,40 @@ A evidência imutável de cada Production normal passa a ser o GitHub Release re
 - [Release, deploy e rollback](release-runbook.md)
 - [Histórico de deployments](deployments.md)
 - [Operação do banco / Supabase](database-runbook.md)
+- [R2 e mídia — runbook operacional](r2-media-runbook.md)
 - [Checklist de segurança operacional](security-checklist.md)
-- [Política resumida de publicação](../releases.md)
-- [Infraestrutura e estado](../infrastructure.md)
 
 ## Princípios operacionais vigentes
 
 1. merge e deploy são eventos diferentes;
-2. production não é sandbox;
-3. secret não entra em Git/log/browser;
+2. Production não é sandbox;
+3. secret não entra em Git, log ou browser;
 4. toda release conhece seu SHA;
 5. migration e app precisam de compatibilidade coordenada;
-6. rollback é pensado antes da promoção;
-7. Preview não usa Production irrestrita;
-8. deploy não é forma de testar mudança em loop;
-9. estado de fornecedor precisa ser verificado na conta correta;
-10. incidentes e desvios viram documentação/ADR quando revelam regra nova;
-11. GitHub Actions é o controlador de entrega e Vercel Git auto-deploy permanece desligado;
-12. CI verde em `Preview` publica homologação automaticamente;
-13. Production só publica SHA comprovadamente originado de PR `Preview -> main`;
-14. branch protection é governança adicional e o provenance gate de Production continua obrigatório mesmo com protection ativa.
-
-Os itens 12–14 serão substituídos progressivamente conforme a migração do ADR-0015 for integrada. Não antecipar essa mudança na operação antes de haver evidência do workflow novo.
+6. rollback é mecanismo normal de recuperação;
+7. GitHub Actions é o controlador de entrega e Vercel Git auto-deploy permanece desligado;
+8. `main` é a única branch longa necessária à entrega web;
+9. Preview pertence à PR e ao SHA testado;
+10. `required-ci` é o contrato estável de merge;
+11. domínios pesados só executam quando a mudança realmente os toca;
+12. Production aceita somente o HEAD corrente de `main` originado de uma PR mergeada;
+13. o domínio canônico só muda depois do smoke do artefato staged;
+14. branch protection é governança adicional; provenance em Production continua obrigatório.
 
 ## Matriz rápida
 
-| Mudança | Precisa CI | Precisa migration | Precisa revisão segurança | Pode exigir deploy |
-| --- | --- | --- | --- | --- |
-| docs | sim | não | normalmente não | não |
-| UI estática | sim | não | se muda exposição | sim |
-| query/API | sim | talvez | sim | sim |
-| schema | sim | sim | sim | geralmente |
-| RLS/RPC/grant | sim | sim | obrigatório | talvez |
-| env/secret | validação | não | obrigatório | normalmente |
-| DNS/domain | smoke | não | obrigatório | operação separada |
+| Mudança | Fast CI | DB pesado | Companion | mídia pesada | Production pode mutar domínio externo |
+| --- | --- | --- | --- | --- | --- |
+| docs | sim | não | não | não | não |
+| UI/web | sim | não | não | não | Vercel apenas |
+| query/API | sim | se classificada DB | não | não | Vercel; DB só se houver migration |
+| migration | sim | sim | não | não | Supabase + Vercel |
+| Companion | sim | só se também DB | sim | não | fluxo próprio do Companion |
+| manifest canônico de mídia | sim | só se também DB | não | sim | R2 + Vercel |
+| tooling de mídia sem manifest | sim | não | não | sim/local | não republica manifests antigos |
 
 ## Runbook incompleto é dívida
 
-Toda feature que exige procedimento manual recorrente deve adicionar/atualizar runbook. Não deixar passos críticos apenas em chat, memória ou histórico de terminal.
+Toda feature que exige procedimento manual recorrente deve adicionar ou atualizar runbook. Não deixar passos críticos apenas em chat, memória ou histórico de terminal.
 
-Alteração em workflow, credencial, migration boundary, provenance, estratégia staged/promotion ou rollback deve revisar [CI/CD — operação, promoção e recuperação](ci-cd.md) e, quando estrutural, os ADRs de entrega relevantes. Durante esta migração, [ADR-0012](../adr/0012-github-actions-controlled-delivery.md) registra a arquitetura anterior/vigente e [ADR-0015](../adr/0015-recovery-oriented-delivery.md) registra a direção aceita.
-
-Configuração de Environments, secrets e branch protection deve seguir [CI/CD — configuração administrativa](cicd-admin-setup.md). Valores secretos nunca entram na documentação.
+Alteração em workflow, credencial, migration boundary, provenance, estratégia staged/promotion ou rollback deve revisar [CI/CD — operação, promoção e recuperação](ci-cd.md) e, quando estrutural, os ADRs relevantes. Configuração de Environments, secrets e branch protection deve seguir [CI/CD — configuração administrativa](cicd-admin-setup.md).
