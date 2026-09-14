@@ -70,7 +70,7 @@ def test_receipt_is_written_atomically(tmp_path: Path):
         checks={"agent": {"pass": True, "state": "ready"}},
     )
     assert json.loads(destination.read_text(encoding="utf-8")) == value
-    assert value["schema"] == "tda_installed_acceptance_v2"
+    assert value["schema"] == "tda_installed_acceptance_v3"
     assert value["pass"] is True
     assert value["contains_token"] is False
     assert value["contains_paths"] is False
