@@ -2,6 +2,11 @@ import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+const CLASSIFIER_CONTRACT = new Set([
+	"tools/ci/classify-changes.mjs",
+	"tools/ci/classify-changes.test.mjs",
+]);
+
 const EXACT = {
 	db: new Set([
 		"tools/transcript-sync-db.py",
@@ -34,6 +39,7 @@ function normalized(path) {
 }
 
 function matches(path, domain) {
+	if (CLASSIFIER_CONTRACT.has(path)) return true;
 	if (EXACT[domain].has(path)) return true;
 	if (PREFIX[domain].some((prefix) => path.startsWith(prefix))) return true;
 	if (domain === "companion" && /^tools\/check-companion-.*\.py$/u.test(path))
