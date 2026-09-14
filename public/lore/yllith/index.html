@@ -49,22 +49,28 @@
   </nav>
 
   <fieldset class="mode-dock" style="border:0;margin:0;padding:0;min-width:0">
-    <legend style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Modo de apresentação da lore</legend>
+    <legend class="sr-only">Modo de apresentação da lore</legend>
     <button
       id="loreModeToggle"
-      class="mode-toggle"
+      class="lore-mode-toggle"
       type="button"
       role="switch"
       aria-checked="false"
       aria-label="Ativar modo Leitura"
       title="Modo Cinemático — trocar para Leitura"
     >
-      <span class="mode-toggle__track" aria-hidden="true"></span>
-      <span class="mode-toggle__label">Cinemático / Leitura</span>
+      <span aria-hidden="true" class="mode-icon mode-icon-cinematic">
+        <svg focusable="false" viewBox="0 0 24 24"><rect height="14" rx="2" width="18" x="3" y="5"></rect><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"></path></svg>
+      </span>
+      <span aria-hidden="true" class="mode-toggle-thumb"></span>
+      <span aria-hidden="true" class="mode-icon mode-icon-reading">
+        <svg focusable="false" viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H11v17H7.5A3.5 3.5 0 0 0 4 22V5.5Z"></path><path d="M20 5.5A3.5 3.5 0 0 0 16.5 2H13v17h3.5A3.5 3.5 0 0 1 20 22V5.5Z"></path></svg>
+      </span>
+      <span class="sr-only">Alternar entre modo Cinemático e modo Leitura</span>
     </button>
   </fieldset>
-  <p id="modeHint" class="mode-hint" hidden>
-    Quer a história inteira, sem cortes da composição? Troque para o modo Leitura.
+  <p id="modeHint" class="mode-hint" role="status" aria-live="polite" hidden>
+    <strong>Quer todos os detalhes?</strong><span>Experimente o modo Leitura.</span>
   </p>
 
   <main id="historia" class="cinematic" data-lore-view="cinematic">
@@ -74,8 +80,8 @@
 
       <div class="hero-copy" data-reveal>
         <p class="kicker"><i aria-hidden="true"></i> Sequoia Vermelha</p>
-        <p class="hero-pretitle">Nascida para</p>
-        <h1 id="hero-title">conquistar</h1>
+        <h1 id="hero-title" class="shared-lore-title" style="text-transform:none;max-width:none">Yllith.</h1>
+        <p class="hero-pretitle" style="margin:18px 0 0;font-size:clamp(26px,2.4vw,42px)">Nascida para conquistar.</p>
         <blockquote>“Uma matilha não nasce quando alguém manda. Nasce quando alguém escolhe ficar.”</blockquote>
         <a class="enter-story" href="#infancia">
           <span aria-hidden="true">↓</span>
@@ -85,7 +91,7 @@
 
       <div class="hero-character-wrap" data-parallax="hero" aria-hidden="true">
         <img
-          class="hero-character"
+          class="hero-character shared-lore-art"
           src="https://media.dnd.faysk.dev/lore/yllith/77ec8886af074c15310ec9f078c530d24d9fbe29cb1ff12fe9ab27b8b031538f/yllith.webp"
           alt=""
           width="1536"
