@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import socket
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -132,6 +131,9 @@ def test_loopback_owner_ignores_non_loopback_and_other_ports(tmp_path: Path):
 
 @pytest.mark.skipif(os.name != "nt", reason="real listener ownership uses Windows process tables")
 def test_windows_real_listener_resolves_to_current_process_without_mocking_psutil():
+    import psutil
+
+    current_process_executable = Path(psutil.Process(os.getpid()).exe())
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", 0))
@@ -141,5 +143,5 @@ def test_windows_real_listener_resolves_to_current_process_without_mocking_psuti
         verify_loopback_owner(
             port,
             os.getpid(),
-            Path(sys.executable),
+            current_process_executable,
         )
