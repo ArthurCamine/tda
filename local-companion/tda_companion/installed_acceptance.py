@@ -9,16 +9,17 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import VERSION
+from .bits_resume_evidence import BitsResumeEvidenceError, verify_bits_resume_evidence
 from .paths import CompanionPaths
 from .payload_evidence import PayloadEvidenceError, verify_installed_payload
 
-INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v2"
+INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v3"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
 _ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
 _ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
-_PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript"})
+_PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript", "contains_url"})
 REQUIRED_OBSERVATIONS = frozenset(
     {
         "agent_recovery",
@@ -134,8 +135,6 @@ def summarize_diagnostics(value: dict[str, Any]) -> dict[str, object]:
     for name, raw in rows:
         if name not in {"core", "network", "maintenance", "whisper", "qwen"}:
             continue
-        # Diagnostics use `status`; older receipt fixtures used `state`. Accept
-        # both, normalize to the receipt contract and fail closed on unknowns.
         state = str(raw.get("state") or raw.get("status") or "blocked")
         severity = str(raw.get("severity") or "blocker")
         if state not in _ALLOWED_CAPABILITY_STATES:
@@ -233,6 +232,7 @@ def finalize_installed_acceptance(
     craig_zip: Path,
     observations: Iterable[str],
     destination: Path,
+    bits_evidence: Path | None = None,
 ) -> dict[str, object]:
     observed = frozenset(str(value).strip() for value in observations if str(value).strip())
     if observed != REQUIRED_OBSERVATIONS:
@@ -243,6 +243,13 @@ def finalize_installed_acceptance(
             checks={"observations": {name: name in observed for name in sorted(REQUIRED_OBSERVATIONS)}},
             error_code="ACCEPTANCE_OBSERVATIONS_INCOMPLETE",
         )
+
+    if bits_evidence is None:
+        raise InstalledAcceptanceError("BITS_EVIDENCE_REQUIRED")
+    try:
+        bits_resume = verify_bits_resume_evidence(bits_evidence)
+    except BitsResumeEvidenceError as exc:
+        raise InstalledAcceptanceError(exc.code) from exc
 
     candidate = verify_candidate(candidate_msi, source_sha)
     artifact = {
@@ -266,6 +273,7 @@ def finalize_installed_acceptance(
     )
     checks: dict[str, object] = {
         "observations": {name: True for name in sorted(REQUIRED_OBSERVATIONS)},
+        "background_download_resume": bits_resume,
         "craig_fixture": craig_fixture,
         "diagnostics": diagnostic_summary,
     }

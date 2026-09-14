@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from tda_companion import VERSION
 from tda_companion.installed_acceptance import (
     REQUIRED_OBSERVATIONS,
+    InstalledAcceptanceError,
     finalize_installed_acceptance,
     summarize_diagnostics,
     write_receipt,
@@ -67,7 +70,7 @@ def test_receipt_is_written_atomically(tmp_path: Path):
         checks={"agent": {"pass": True, "state": "ready"}},
     )
     assert json.loads(destination.read_text(encoding="utf-8")) == value
-    assert value["schema"] == "tda_installed_acceptance_v2"
+    assert value["schema"] == "tda_installed_acceptance_v3"
     assert value["pass"] is True
     assert value["contains_token"] is False
     assert value["contains_paths"] is False
@@ -95,3 +98,36 @@ def test_incomplete_observations_fail_before_artifact_or_diagnostics(tmp_path: P
     assert value["stage"] == "manual_observations"
     assert value["error_code"] == "ACCEPTANCE_OBSERVATIONS_INCOMPLETE"
     assert value["checks"]["observations"]["port_conflict"] is False
+
+
+def test_complete_human_observations_do_not_replace_measured_bits_evidence(tmp_path: Path):
+    with pytest.raises(InstalledAcceptanceError, match="^BITS_EVIDENCE_REQUIRED$"):
+        finalize_installed_acceptance(
+            executable=tmp_path / "not-used",
+            paths=SimpleNamespace(),
+            port=8765,
+            candidate_msi=tmp_path / "not-used.msi",
+            payload_manifest=tmp_path / "not-used.json",
+            source_sha="0" * 40,
+            craig_zip=tmp_path / "not-used.zip",
+            observations=REQUIRED_OBSERVATIONS,
+            destination=tmp_path / "receipt.json",
+        )
+
+
+def test_invalid_bits_evidence_fails_before_candidate_validation(tmp_path: Path):
+    bits = tmp_path / "bits.json"
+    bits.write_text("{}", encoding="utf-8")
+    with pytest.raises(InstalledAcceptanceError, match="^BITS_EVIDENCE_SHAPE_INVALID$"):
+        finalize_installed_acceptance(
+            executable=tmp_path / "not-used",
+            paths=SimpleNamespace(),
+            port=8765,
+            candidate_msi=tmp_path / "not-used.msi",
+            payload_manifest=tmp_path / "not-used.json",
+            source_sha="0" * 40,
+            craig_zip=tmp_path / "not-used.zip",
+            observations=REQUIRED_OBSERVATIONS,
+            destination=tmp_path / "receipt.json",
+            bits_evidence=bits,
+        )

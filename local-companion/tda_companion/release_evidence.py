@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from . import VERSION
-from .installed_acceptance import REQUIRED_OBSERVATIONS
+from .bits_resume_evidence import BitsResumeEvidenceError, validate_bits_resume_evidence
+from .installed_acceptance import INSTALLED_ACCEPTANCE_SCHEMA, REQUIRED_OBSERVATIONS
 from .payload_evidence import PayloadEvidenceError, load_payload_manifest
 
 CANDIDATE_SCHEMA = "tda_companion_candidate_v2"
@@ -60,7 +61,7 @@ _ARTIFACT_KEYS = frozenset(
         "maintenance_helper_sha256",
     }
 )
-_CHECK_KEYS = frozenset({"observations", "craig_fixture", "diagnostics"})
+_CHECK_KEYS = frozenset({"observations", "background_download_resume", "craig_fixture", "diagnostics"})
 _CRAIG_KEYS = frozenset({"track_count", "zip_sha256"})
 _DIAGNOSTIC_KEYS = frozenset({"overall", "capabilities"})
 _CAPABILITY_KEYS = frozenset({"state", "severity"})
@@ -314,6 +315,10 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
     if any(observations[name] is not True for name in REQUIRED_OBSERVATIONS):
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_OBSERVATIONS_INVALID")
+    try:
+        validate_bits_resume_evidence(checks.get("background_download_resume"))
+    except BitsResumeEvidenceError as exc:
+        raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_BITS_INVALID") from exc
     craig = checks.get("craig_fixture")
     if not isinstance(craig, dict) or set(craig) != _CRAIG_KEYS:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_CRAIG_INVALID")
@@ -343,7 +348,7 @@ def _verify_acceptance_shape(receipt: dict[str, Any]) -> tuple[dict[str, Any], d
 def verify_acceptance_receipt(receipt: dict[str, Any], manifest: dict[str, Any]) -> None:
     candidate = verify_candidate_manifest(manifest)
     artifact, capabilities = _verify_acceptance_shape(receipt)
-    if receipt.get("schema") != "tda_installed_acceptance_v2":
+    if receipt.get("schema") != INSTALLED_ACCEPTANCE_SCHEMA:
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_SCHEMA_INVALID")
     if receipt.get("pass") is not True or receipt.get("stage") != "completed":
         raise ReleaseEvidenceError("RELEASE_ACCEPTANCE_NOT_PASSED")
