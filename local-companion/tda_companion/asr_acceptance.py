@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .asr_models import AsrProfile, get_profile
+from .asr_models import AsrProfile, get_profile, inspect_model_install
 from .asr_whisper import (
     WhisperPlan,
     WhisperRuntimeError,
@@ -184,6 +184,14 @@ def _validate_audio(path: Path) -> Path:
     return source
 
 
+def _verify_model_integrity(models_root: Path, profile: AsrProfile) -> dict[str, object]:
+    state = inspect_model_install(models_root.resolve(), profile, verify_hash=True)
+    digest = state.get("content_sha256")
+    if state.get("status") != "ready" or not isinstance(digest, str) or len(digest) != 64:
+        raise WhisperAcceptanceError("ACCEPTANCE_MODEL_INTEGRITY_FAILED")
+    return state
+
+
 def run_whisper_gpu_acceptance(
     audio_path: Path,
     models_root: Path,
@@ -197,6 +205,7 @@ def run_whisper_gpu_acceptance(
     prepare_model: Callable[..., Path] = prepare_whisper_model,
     model_loader: Callable[[Path, WhisperPlan], tuple[Any, str, bool]] = load_whisper_model,
     monitor_factory: Callable[[], Any] = NvmlPeakMonitor,
+    integrity_checker: Callable[[Path, AsrProfile], dict[str, object]] = _verify_model_integrity,
 ) -> dict[str, Any]:
     source = _validate_audio(audio_path)
     profile: AsrProfile = get_profile(profile_id)
@@ -218,6 +227,11 @@ def run_whisper_gpu_acceptance(
     except WhisperRuntimeError as exc:
         raise WhisperAcceptanceError(exc.code) from exc
     prepare_seconds = max(time.monotonic() - prepare_started, 0.0)
+
+    integrity = integrity_checker(models_root.resolve(), profile)
+    model_content_sha256 = integrity.get("content_sha256")
+    if not isinstance(model_content_sha256, str) or len(model_content_sha256) != 64:
+        raise WhisperAcceptanceError("ACCEPTANCE_MODEL_INTEGRITY_FAILED")
 
     monitor = monitor_factory()
     monitor.start()
@@ -274,6 +288,8 @@ def run_whisper_gpu_acceptance(
         "profile_id": profile.id,
         "model": profile.model_id,
         "model_revision": profile.revision,
+        "model_content_sha256": model_content_sha256,
+        "model_integrity": "sha256-full",
         "language": "pt",
         "audio_sha256": _sha256_file(source),
         "runtime": _runtime_versions(),
