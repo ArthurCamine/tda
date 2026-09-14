@@ -204,7 +204,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
-| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations-media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
+| [Modelo — entrega de pacote de lore](../templates/lore-pack-delivery.md) | frontend / integrations/media / operations | modelo manual; não é schema de importador implementado | 2026-09-12 |
 
 ## Cobertura
 
