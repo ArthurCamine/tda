@@ -51,6 +51,21 @@ test("media manifests and tooling activate media domain", () => {
 	assert.equal(flags(["tools/world-entity-media-r2-policy.test.mjs"]).media, true);
 });
 
+test("classifier contract changes fail safe into every heavy domain", () => {
+	assert.deepEqual(flags(["tools/ci/classify-changes.mjs"]), {
+		web: true,
+		db: true,
+		companion: true,
+		media: true,
+	});
+	assert.deepEqual(flags(["tools/ci/classify-changes.test.mjs"]), {
+		web: true,
+		db: true,
+		companion: true,
+		media: true,
+	});
+});
+
 test("mixed changes activate each relevant domain", () => {
 	assert.deepEqual(
 		flags([
