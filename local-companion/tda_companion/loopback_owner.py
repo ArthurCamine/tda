@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+_VERSION_DIR = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+_COMPANION_EXE = "tdacompanion.exe"
 
 
 class LoopbackOwnerError(RuntimeError):
@@ -11,11 +15,40 @@ class LoopbackOwnerError(RuntimeError):
         self.code = code
 
 
-def _normalized_path(path: str | Path) -> str:
+def _resolved_path(path: str | Path) -> Path:
     try:
-        return os.path.normcase(str(Path(path).resolve(strict=True)))
+        return Path(path).resolve(strict=True)
     except OSError as exc:
         raise LoopbackOwnerError("AGENT_PROCESS_EXECUTABLE_UNVERIFIED") from exc
+
+
+def _normalized_path(path: Path) -> str:
+    return os.path.normcase(str(path))
+
+
+def _trusted_companion_executable(actual_value: str | Path, expected_value: str | Path) -> bool:
+    expected = _resolved_path(expected_value)
+    actual = _resolved_path(actual_value)
+    if _normalized_path(actual) == _normalized_path(expected):
+        return True
+
+    if expected.name.casefold() != _COMPANION_EXE:
+        return False
+    versions_root = expected.parent.parent
+    if (
+        versions_root.name.casefold() != "versions"
+        or _VERSION_DIR.fullmatch(expected.parent.name) is None
+    ):
+        return False
+    try:
+        relative = actual.relative_to(versions_root)
+    except ValueError:
+        return False
+    return (
+        len(relative.parts) == 2
+        and _VERSION_DIR.fullmatch(relative.parts[0]) is not None
+        and relative.parts[1].casefold() == _COMPANION_EXE
+    )
 
 
 def _listener_pids(port: int, connections: Iterable[Any]) -> set[int]:
@@ -49,12 +82,15 @@ def verify_loopback_owner(
     process_executable: Callable[[int], str] | None = None,
 ) -> None:
     """Fail closed unless the reported Agent PID owns the IPv4 loopback listener
-    and that process is running the exact Companion executable expected by the
-    desktop process.
+    and runs a trusted Companion executable.
+
+    The current executable is always accepted. Installed builds also accept a
+    sibling semver TDACompanion.exe under the same Companion/versions root so the
+    existing read-only version-compatibility path keeps working during upgrades.
 
     This is defense in depth against a different local process spoofing /health.
     It is not a privilege boundary against arbitrary code already running as the
-    same Windows user.
+    same Windows user, which can also modify per-user installation files.
     """
     if not isinstance(port, int) or not 1024 <= port <= 65535:
         raise LoopbackOwnerError("AGENT_PORT_OWNER_UNVERIFIED")
@@ -78,11 +114,9 @@ def verify_loopback_owner(
     if owners != {reported_pid}:
         raise LoopbackOwnerError("AGENT_PORT_OWNER_MISMATCH")
 
-    expected = _normalized_path(expected_executable)
     try:
         actual_raw = process_executable(reported_pid)
     except BaseException as exc:
         raise LoopbackOwnerError("AGENT_PROCESS_EXECUTABLE_UNVERIFIED") from exc
-    actual = _normalized_path(actual_raw)
-    if actual != expected:
+    if not _trusted_companion_executable(actual_raw, expected_executable):
         raise LoopbackOwnerError("AGENT_PROCESS_EXECUTABLE_MISMATCH")
