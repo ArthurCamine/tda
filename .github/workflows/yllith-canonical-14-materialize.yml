@@ -1,0 +1,87 @@
+name: Materialize canonical Yllith media 14/14
+
+on:
+  push:
+    branches:
+      - media/yllith-canonical-14-cutover
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: media/yllith-canonical-14-cutover
+
+      - name: Download validated 14/14 recovery artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: yllith-canonical-media
+          path: .recovery/yllith
+          github-token: ${{ github.token }}
+          run-id: 34830061388
+
+      - name: Materialize canonical sources and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p media/sources/yllith media/manifests
+          cp .recovery/yllith/*.base64 media/sources/yllith/
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path('.recovery/yllith/inventory.json').read_text())
+          if len(inventory) != 14 or any(item.get('status') != 'recovered' for item in inventory):
+              raise SystemExit('expected exactly 14 recovered Yllith assets')
+
+          assets = []
+          for item in sorted(inventory, key=lambda value: value['file']):
+              filename = item['file']
+              assets.append({
+                  'file': filename,
+                  'source': f'media/sources/yllith/{filename}.base64',
+                  'encoding': 'base64',
+                  'bytes': item['bytes'],
+                  'sha256': item['sha256'],
+                  'contentType': item['contentType'],
+              })
+
+          manifest = {
+              'schemaVersion': 1,
+              'project': 'yllith-canonical',
+              'namespace': 'lore/yllith',
+              'bucket': 'tda-media-public',
+              'publicOrigin': 'https://media.dnd.faysk.dev',
+              'assets': assets,
+          }
+          Path('media/manifests/yllith-recovered-batch-1.json').write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + '\n'
+          )
+          PY
+          rm -rf .recovery
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Validate complete canonical manifest
+        run: pnpm media:validate
+
+      - name: Commit canonical 14/14 batch and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add media/sources/yllith media/manifests/yllith-recovered-batch-1.json
+          git rm .github/workflows/yllith-canonical-14-materialize.yml
+          git commit -m "media(yllith): version complete canonical 14-asset set"
+          git push origin HEAD:media/yllith-canonical-14-cutover
