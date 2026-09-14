@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { S3Client } from "@aws-sdk/client-s3";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
 const ENV_KEYS = [
@@ -21,7 +22,15 @@ function clearR2() {
   delete process.env.R2_SECRET_ACCESS_KEY;
 }
 
+function configureR2() {
+  process.env.R2_PUBLIC_BUCKET = "tda-media-public";
+  process.env.R2_ACCOUNT_ID = "test-account";
+  process.env.R2_ACCESS_KEY_ID = "test-access-key";
+  process.env.R2_SECRET_ACCESS_KEY = "test-secret-key";
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
     if (value === undefined) delete process.env[key];
@@ -89,6 +98,33 @@ describe("Yllith production bootstrap authorization", () => {
 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "R2 configuration unavailable" });
+  });
+
+  it("reports a missing staging chunk as a conflict instead of leaking NoSuchKey", async () => {
+    process.env.APP_ENV = "production";
+    process.env.TDA_LORE_STAGING_TOKEN = "expected-release-token";
+    configureR2();
+
+    const missing = Object.assign(new Error("The specified key does not exist."), {
+      name: "NoSuchKey",
+      $metadata: { httpStatusCode: 404 },
+    });
+    const send = vi.spyOn(S3Client.prototype, "send").mockRejectedValueOnce(missing);
+
+    const response = await GET(
+      new Request(
+        "https://dnd.faysk.dev/api/internal/lore-yllith-media?finalize=yllith.webp",
+        { headers: { authorization: "Bearer expected-release-token" } },
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "missing part",
+      name: "yllith.webp",
+      part: 0,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("never enables bootstrap outside Production", async () => {

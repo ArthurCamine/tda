@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
+  type GetObjectCommandOutput,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -183,6 +184,20 @@ async function bodyBytes(body: unknown) {
   return Buffer.from(await candidate.transformToByteArray());
 }
 
+function isMissingObject(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    name?: unknown;
+    Code?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  return (
+    candidate.name === "NoSuchKey" ||
+    candidate.Code === "NoSuchKey" ||
+    candidate.$metadata?.httpStatusCode === 404
+  );
+}
+
 function json(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("Cache-Control", "no-store");
@@ -254,9 +269,17 @@ export async function GET(request: Request) {
     const spec = assets[finalize];
     const pieces: Buffer[] = [];
     for (let part = 0; part < spec.parts; part += 1) {
-      const result = await s3.send(
-        new GetObjectCommand({ Bucket: PUBLIC_BUCKET, Key: stagingKey(finalize, part) }),
-      );
+      let result: GetObjectCommandOutput;
+      try {
+        result = await s3.send(
+          new GetObjectCommand({ Bucket: PUBLIC_BUCKET, Key: stagingKey(finalize, part) }),
+        );
+      } catch (error) {
+        if (isMissingObject(error)) {
+          return json({ error: "missing part", name: finalize, part }, { status: 409 });
+        }
+        throw error;
+      }
       if (!result.Body) return json({ error: "missing part", name: finalize, part }, { status: 409 });
       pieces.push(await bodyBytes(result.Body));
     }
