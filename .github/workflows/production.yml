@@ -182,12 +182,9 @@ jobs:
             throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
           }
           const output = process.env.GITHUB_OUTPUT;
-          fs.appendFileSync(output, `assets=${summary.assets}
-`);
-          fs.appendFileSync(output, `verified=${summary.verified}
-`);
-          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}
-`);
+          fs.appendFileSync(output, `assets=${summary.assets}\n`);
+          fs.appendFileSync(output, `verified=${summary.verified}\n`);
+          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}\n`);
           NODE
 
       - name: Build Production artifact
