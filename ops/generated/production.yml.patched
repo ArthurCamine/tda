@@ -1,0 +1,409 @@
+name: Production CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact main commit to release (defaults to current main head)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  deployments: write
+  pull-requests: read
+
+concurrency:
+  group: tda-production
+  cancel-in-progress: false
+
+env:
+  VERCEL_ORG_ID: team_9wuTfarCQ3L63xtufPKUDzi0
+  VERCEL_PROJECT_ID: prj_hDiDvvRiesg3qCDekGWE8JQMkIyH
+  VERCEL_CLI_VERSION: 59.11.7
+  SUPABASE_PROJECT_REF: dmrqnbdvbkfqzctcerbx
+  SUPABASE_CLI_VERSION: 2.117.0
+  TDA_MIGRATION_BOUNDARY: 20260906210333
+  PRODUCTION_ORIGIN: https://dnd.faysk.dev
+
+jobs:
+  release:
+    name: staged-release
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production
+      url: https://dnd.faysk.dev
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      REQUESTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve and pin production source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          CURRENT_SHA="$(git rev-parse origin/main)"
+          SOURCE_SHA="${REQUESTED_SHA:-$CURRENT_SHA}"
+
+          if [[ "$SOURCE_SHA" != "$CURRENT_SHA" ]]; then
+            echo "::error::Refusing stale/arbitrary production release. Requested ${SOURCE_SHA}, current main is ${CURRENT_SHA}."
+            exit 1
+          fi
+
+          git checkout --detach "$SOURCE_SHA"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "release=prod-${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Production source provenance
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/commits/${SOURCE_SHA}/pulls" > source-prs.json
+
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const sha = process.env.SOURCE_SHA;
+            const prs = JSON.parse(fs.readFileSync("source-prs.json", "utf8"));
+            const match = prs.find((pr) =>
+              pr.merged_at &&
+              pr.base?.ref === "main" &&
+              pr.head?.ref === "Preview" &&
+              pr.merge_commit_sha === sha
+            );
+            if (!match) {
+              throw new Error(`Production source ${sha} is not the merge result of an authorized Preview -> main pull request`);
+            }
+            console.log(`PRODUCTION_SOURCE_OK PR #${match.number} Preview -> main ${sha}`);
+          '
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.3.4
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Validate release credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          MISSING=0
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            echo "::error::Missing production secret VERCEL_TOKEN"
+            MISSING=1
+          fi
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo "::error::Missing production secret SUPABASE_ACCESS_TOKEN"
+            MISSING=1
+          fi
+          if [[ -z "${SUPABASE_DB_PASSWORD:-}" ]]; then
+            echo "::error::Missing production secret SUPABASE_DB_PASSWORD"
+            MISSING=1
+          fi
+          [[ "$MISSING" -eq 0 ]] || exit 1
+
+          if [[ "$SUPABASE_ACCESS_TOKEN" != sbp_* ]]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN must be a Supabase personal access token (sbp_...)."
+            exit 1
+          fi
+
+      - name: Validate migration policy
+        run: node tools/ci/check-migrations.mjs
+
+      - name: Install pinned Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Preflight Supabase database authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUTH_TEST="$RUNNER_TEMP/tda-supabase-auth-test"
+          rm -rf "$AUTH_TEST"
+          mkdir -p "$AUTH_TEST"
+          supabase init --workdir "$AUTH_TEST" --yes
+          supabase link \
+            --workdir "$AUTH_TEST" \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --password "$SUPABASE_DB_PASSWORD" \
+            --yes
+          supabase migration list \
+            --workdir "$AUTH_TEST" \
+            --linked \
+            --password "$SUPABASE_DB_PASSWORD" >/dev/null
+          echo "Supabase database authentication: PASS"
+
+      - name: Pull Production configuration
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Verify immutable public media
+        id: media
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/media/verify-public.mjs \
+            --receipt .local/media-production-verification-receipt.json
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          const receipt = JSON.parse(fs.readFileSync(".local/media-production-verification-receipt.json", "utf8"));
+          const summary = receipt.summary;
+          if (summary.assets !== summary.verified) {
+            throw new Error(`Media verification incomplete: ${summary.verified}/${summary.assets}`);
+          }
+          const output = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(output, `assets=${summary.assets}
+`);
+          fs.appendFileSync(output, `verified=${summary.verified}
+`);
+          fs.appendFileSync(output, `manifest_set=${receipt.manifestSetSha256}
+`);
+          NODE
+
+      - name: Build Production artifact
+        env:
+          APP_ENV: production
+          APP_COMMIT_SHA: ${{ steps.source.outputs.sha }}
+          TDA_RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Stage Production artifact without domain traffic
+        id: stage
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          set -euo pipefail
+          URL="$(vercel deploy --prebuilt --prod --skip-domain --yes --token="$VERCEL_TOKEN" \
+            --env APP_ENV=production \
+            --env APP_COMMIT_SHA="$SOURCE_SHA" \
+            --env TDA_RELEASE_ID="$RELEASE_ID" | tail -n 1)"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Staged production deployment: $URL"
+
+      - name: Prepare isolated Production migration overlay
+        id: db
+        shell: bash
+        run: |
+          set -euo pipefail
+          OVERLAY="$RUNNER_TEMP/tda-supabase-overlay"
+          REMOTE_LIST="$RUNNER_TEMP/remote-migrations.txt"
+          REPO_LIST="$RUNNER_TEMP/repo-migrations.txt"
+          REMOTE_TDA="$RUNNER_TEMP/remote-tda-migrations.txt"
+
+          rm -rf "$OVERLAY"
+          mkdir -p "$OVERLAY"
+
+          # The repository intentionally starts at the TDA reboot boundary and does not
+          # copy legacy dnd-scribe migrations. Build an ephemeral Supabase project that
+          # contains the real remote history plus the authoritative TDA migration files.
+          supabase init --workdir "$OVERLAY" --yes
+          supabase link \
+            --workdir "$OVERLAY" \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --password "$SUPABASE_DB_PASSWORD" \
+            --yes
+          supabase migration fetch --workdir "$OVERLAY" --linked --yes
+
+          find "$OVERLAY/supabase/migrations" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REMOTE_LIST"
+          find supabase/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REPO_LIST"
+
+          if INVALID_REPO="$(grep -Ev '^[0-9]{14}_.+\.sql$' "$REPO_LIST")" && [[ -n "$INVALID_REPO" ]]; then
+            echo "::error::Deployable migration filenames must use the 14-digit Supabase timestamp format."
+            printf '%s\n' "$INVALID_REPO"
+            exit 1
+          fi
+
+          PRE_BOUNDARY="$(awk -v boundary="$TDA_MIGRATION_BOUNDARY" 'substr($0, 1, 14) < boundary { print }' "$REPO_LIST")"
+          if [[ -n "$PRE_BOUNDARY" ]]; then
+            echo "::error::TDA deployable migrations must not predate boundary $TDA_MIGRATION_BOUNDARY."
+            printf '%s\n' "$PRE_BOUNDARY"
+            exit 1
+          fi
+
+          awk -v boundary="$TDA_MIGRATION_BOUNDARY" 'substr($0, 1, 14) >= boundary { print }' "$REMOTE_LIST" > "$REMOTE_TDA"
+          UNEXPECTED_REMOTE="$(comm -23 "$REMOTE_TDA" "$REPO_LIST")"
+          if [[ -n "$UNEXPECTED_REMOTE" ]]; then
+            echo "::error::Remote migration history contains TDA-era entries absent from this repository. Reconcile history before release."
+            printf '%s\n' "$UNEXPECTED_REMOTE"
+            exit 1
+          fi
+
+          cp -f supabase/migrations/*.sql "$OVERLAY/supabase/migrations/"
+
+          echo "workdir=$OVERLAY" >> "$GITHUB_OUTPUT"
+          echo "SUPABASE_OVERLAY=$OVERLAY" >> "$GITHUB_ENV"
+          echo "Remote migration history files: $(wc -l < "$REMOTE_LIST")"
+          echo "Authoritative TDA deployable files: $(wc -l < "$REPO_LIST")"
+
+      - name: Show database migration state before release
+        run: supabase migration list --workdir "$SUPABASE_OVERLAY" --linked --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Dry-run Production migrations
+        run: supabase db push --workdir "$SUPABASE_OVERLAY" --linked --dry-run --skip-vault --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Apply pending Production migrations
+        run: supabase db push --workdir "$SUPABASE_OVERLAY" --linked --skip-vault --password "$SUPABASE_DB_PASSWORD" --yes
+
+      - name: Verify exact migration history after release
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_LIST="$RUNNER_TEMP/remote-migrations-after.txt"
+          REPO_LIST="$RUNNER_TEMP/repo-migrations-after.txt"
+          REMOTE_TDA="$RUNNER_TEMP/remote-tda-migrations-after.txt"
+
+          rm -rf "$SUPABASE_OVERLAY/supabase/migrations"
+          mkdir -p "$SUPABASE_OVERLAY/supabase/migrations"
+          supabase migration fetch --workdir "$SUPABASE_OVERLAY" --linked --yes
+
+          find "$SUPABASE_OVERLAY/supabase/migrations" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REMOTE_LIST"
+          find supabase/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REPO_LIST"
+          awk -v boundary="$TDA_MIGRATION_BOUNDARY" 'substr($0, 1, 14) >= boundary { print }' "$REMOTE_LIST" > "$REMOTE_TDA"
+
+          MISSING_REMOTE="$(comm -23 "$REPO_LIST" "$REMOTE_TDA")"
+          UNEXPECTED_REMOTE="$(comm -13 "$REPO_LIST" "$REMOTE_TDA")"
+          if [[ -n "$MISSING_REMOTE" || -n "$UNEXPECTED_REMOTE" ]]; then
+            echo "::error::Production migration history does not exactly match the authoritative TDA migration set."
+            if [[ -n "$MISSING_REMOTE" ]]; then
+              echo "Missing remotely:"
+              printf '%s\n' "$MISSING_REMOTE"
+            fi
+            if [[ -n "$UNEXPECTED_REMOTE" ]]; then
+              echo "Unexpected remotely:"
+              printf '%s\n' "$UNEXPECTED_REMOTE"
+            fi
+            exit 1
+          fi
+
+          echo "Exact TDA migration history verified after apply."
+
+      - name: Run database advisors
+        run: supabase db advisors --workdir "$SUPABASE_OVERLAY" --linked
+
+      - name: Smoke staged Production artifact
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          set -euo pipefail
+          vercel curl /api/health --deployment "$DEPLOYMENT_URL" > health.json
+          vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
+          vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith/historia.md --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const health = JSON.parse(fs.readFileSync("health.json", "utf8"));
+            const version = JSON.parse(fs.readFileSync("version.json", "utf8"));
+            if (health.ok !== true) throw new Error("Staged production health is not ok");
+            if (health.environment !== "production") throw new Error(`Expected production environment, got ${health.environment}`);
+            if (health.commit !== process.env.SOURCE_SHA) throw new Error(`Health commit mismatch: ${health.commit}`);
+            if (version.commit !== process.env.SOURCE_SHA) throw new Error(`Version commit mismatch: ${version.commit}`);
+            if (version.release !== process.env.RELEASE_ID) throw new Error(`Release id mismatch: ${version.release}`);
+          '
+
+      - name: Promote tested deployment to dnd.faysk.dev
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+        run: vercel promote "$DEPLOYMENT_URL" --yes --timeout=5m --token="$VERCEL_TOKEN"
+
+      - name: Verify canonical Production after promotion
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+        run: |
+          set -euo pipefail
+          node tools/ci/verify-production-canonical.mjs
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-all-errors \
+            --output /dev/null "$PRODUCTION_ORIGIN/"
+
+      - name: Capture post-deploy error scan
+        shell: bash
+        run: |
+          set +e
+          vercel logs --environment production --level error --since 5m --limit 20 --token="$VERCEL_TOKEN" > post-deploy-errors.log 2>&1
+          EXIT_CODE=$?
+          set -e
+          if [[ $EXIT_CODE -ne 0 ]]; then
+            echo "Log scan command was unavailable; canonical smoke remains authoritative." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -s post-deploy-errors.log ]]; then
+            echo "Post-deploy log scan returned entries; review the workflow log." >> "$GITHUB_STEP_SUMMARY"
+            cat post-deploy-errors.log
+          else
+            echo "Post-deploy error scan: clean." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Record immutable GitHub release receipt
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.source.outputs.release }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+          MEDIA_ASSETS: ${{ steps.media.outputs.assets }}
+          MEDIA_VERIFIED: ${{ steps.media.outputs.verified }}
+          MEDIA_MANIFEST_SET: ${{ steps.media.outputs.manifest_set }}
+        run: |
+          set -euo pipefail
+          cat > release-receipt.md <<EOF
+          Production release generated by the TDA CI/CD pipeline.
+
+          - Source SHA: \`$SOURCE_SHA\`
+          - Release: \`$RELEASE_ID\`
+          - Staged/tested deployment: $DEPLOYMENT_URL
+          - Canonical production: $PRODUCTION_ORIGIN
+          - Supabase project: \`$SUPABASE_PROJECT_REF\`
+          - Source provenance (Preview -> main): PASS
+          - Immutable media: $MEDIA_VERIFIED/$MEDIA_ASSETS public assets verified
+          - Media manifest set: \`$MEDIA_MANIFEST_SET\`
+          - Migration overlay/history gate: PASS
+          - Migration dry-run: PASS
+          - Migration apply/exact verification: PASS
+          - Staged smoke: PASS
+          - Yllith standalone staged smoke: PASS
+          - Canonical smoke: PASS
+          EOF
+
+          if gh release view "$RELEASE_ID" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_ID" --target "$SOURCE_SHA" --title "$RELEASE_ID" --notes-file release-receipt.md
+          else
+            gh release create "$RELEASE_ID" --target "$SOURCE_SHA" --title "$RELEASE_ID" --notes-file release-receipt.md
+          fi
+
+          cat release-receipt.md >> "$GITHUB_STEP_SUMMARY"
