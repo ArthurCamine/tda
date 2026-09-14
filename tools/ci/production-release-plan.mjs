@@ -15,8 +15,9 @@ export function planProductionPaths(inputPaths) {
 
 function writeGithubOutputs(result) {
 	if (!process.env.GITHUB_OUTPUT) return;
-	for (const key of ["db", "media", "migrations", "mediaPublish"])
+	for (const key of ["db", "media", "migrations"])
 		appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${result[key]}\n`);
+	appendFileSync(process.env.GITHUB_OUTPUT, `media_publish=${result.mediaPublish}\n`);
 	appendFileSync(
 		process.env.GITHUB_OUTPUT,
 		`files_json=${JSON.stringify(result.files)}\n`,
