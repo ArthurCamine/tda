@@ -13,13 +13,13 @@ from .bits_resume_evidence import BitsResumeEvidenceError, verify_bits_resume_ev
 from .paths import CompanionPaths
 from .payload_evidence import PayloadEvidenceError, verify_installed_payload
 
-INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v2"
+INSTALLED_ACCEPTANCE_SCHEMA = "tda_installed_acceptance_v3"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _SOURCE_SHA = re.compile(r"^[a-f0-9]{40}$")
 _OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
 _ALLOWED_CAPABILITY_STATES = frozenset({"ready", "degraded", "blocked"})
 _ALLOWED_SEVERITIES = frozenset({"info", "degraded", "blocker"})
-_PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript"})
+_PRIVACY_PROOF_FIELDS = frozenset({"contains_token", "contains_paths", "contains_transcript", "contains_url"})
 REQUIRED_OBSERVATIONS = frozenset(
     {
         "agent_recovery",
