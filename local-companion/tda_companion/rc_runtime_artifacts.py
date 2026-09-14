@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from .asr_runtime import inspect_whisper_runtime, install_whisper_runtime_archive
 from .qwen_runtime import inspect_qwen_runtime, install_qwen_runtime_archive
 from .qwen_runtime_bundle import assemble_qwen_runtime_bundle, parse_qwen_runtime_bundle_manifest
+from .runtime_release_evidence import CANDIDATE_SCHEMA, verify_candidate_assets
 
 RC_WHISPER_VERSION = "1.1.1"
 RC_QWEN_VERSION = "1.0.1"
@@ -160,6 +162,7 @@ def _install_whisper(root: Path, runtime_root: Path) -> dict[str, object]:
         "status": "ready",
         "reused": False,
         "worker_sha256": marker["worker_sha256"],
+        "archive_sha256": marker["archive_sha256"],
     }
 
 
@@ -209,6 +212,7 @@ def _install_qwen(root: Path, runtime_root: Path, cache_root: Path) -> dict[str,
         "status": "ready",
         "reused": False,
         "worker_sha256": marker["worker_sha256"],
+        "archive_sha256": marker["archive_sha256"],
         "part_count": len(manifest.parts),
     }
 
@@ -221,6 +225,7 @@ def install_rc_runtime_artifact(
     runtime_root: Path,
     cache_root: Path,
 ) -> dict[str, object]:
+    """Legacy physical setup from an exact GitHub Actions artifact archive."""
     if family not in {"whisper", "qwen"}:
         raise RcRuntimeArtifactError("RC_RUNTIME_FAMILY_INVALID")
     source = _verify_actions_artifact(artifact, expected_artifact_sha256)
@@ -231,3 +236,78 @@ def install_rc_runtime_artifact(
         if family == "whisper":
             return _install_whisper(extracted, runtime_root.resolve())
         return _install_qwen(extracted, runtime_root.resolve(), cache_root.resolve())
+
+
+def install_runtime_candidate(
+    candidate_manifest: Path,
+    assets_root: Path,
+    *,
+    runtime_root: Path,
+    cache_root: Path,
+) -> dict[str, object]:
+    """Install the exact files attached to a formal runtime RC release."""
+    try:
+        candidate = json.loads(candidate_manifest.resolve().read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RcRuntimeArtifactError("RC_RUNTIME_CANDIDATE_INVALID") from exc
+    if not isinstance(candidate, dict) or candidate.get("schema") != CANDIDATE_SCHEMA:
+        raise RcRuntimeArtifactError("RC_RUNTIME_CANDIDATE_INVALID")
+    try:
+        verify_candidate_assets(candidate, assets_root.resolve())
+    except RuntimeError as exc:
+        raise RcRuntimeArtifactError(str(exc) or "RC_RUNTIME_CANDIDATE_ASSETS_INVALID") from exc
+    family = candidate.get("family")
+    version = candidate.get("version")
+    if family == "whisper":
+        if version != RC_WHISPER_VERSION:
+            raise RcRuntimeArtifactError("RC_WHISPER_VERSION_MISMATCH")
+    elif family == "qwen":
+        if version != RC_QWEN_VERSION:
+            raise RcRuntimeArtifactError("RC_QWEN_VERSION_MISMATCH")
+    else:
+        raise RcRuntimeArtifactError("RC_RUNTIME_FAMILY_INVALID")
+    runtime_root.resolve().mkdir(parents=True, exist_ok=True)
+    cache_root.resolve().mkdir(parents=True, exist_ok=True)
+    if family == "whisper":
+        result = _install_whisper(assets_root.resolve(), runtime_root.resolve())
+    else:
+        result = _install_qwen(assets_root.resolve(), runtime_root.resolve(), cache_root.resolve())
+    archive_sha = result.get("archive_sha256")
+    if result.get("reused") is not True and archive_sha != candidate.get("runtime_archive_sha256"):
+        raise RcRuntimeArtifactError("RC_RUNTIME_INSTALLED_ARCHIVE_MISMATCH")
+    if result.get("reused") is True:
+        family_root = runtime_root.resolve() / family / str(version)
+        try:
+            marker = json.loads((family_root / ".tda-runtime.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RcRuntimeArtifactError("RC_RUNTIME_INSTALLED_MARKER_INVALID") from exc
+        if not isinstance(marker, dict) or marker.get("archive_sha256") != candidate.get("runtime_archive_sha256"):
+            raise RcRuntimeArtifactError("RC_RUNTIME_INSTALLED_ARCHIVE_MISMATCH")
+    return {**result, "candidate_tag": candidate["candidate_tag"]}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="rc-runtime-artifacts")
+    sub = parser.add_subparsers(dest="command", required=True)
+    install = sub.add_parser("install-candidate")
+    install.add_argument("--candidate-manifest", type=Path, required=True)
+    install.add_argument("--assets-root", type=Path, required=True)
+    install.add_argument("--runtime-root", type=Path, required=True)
+    install.add_argument("--cache-root", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    result = install_runtime_candidate(
+        args.candidate_manifest,
+        args.assets_root,
+        runtime_root=args.runtime_root,
+        cache_root=args.cache_root,
+    )
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
