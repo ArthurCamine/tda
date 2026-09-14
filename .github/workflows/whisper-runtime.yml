@@ -37,15 +37,24 @@ jobs:
     name: whisper-runtime-windows-x64
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      TDA_SOURCE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify exact source checkout
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:TDA_SOURCE_SHA.ToLowerInvariant()) { throw "BUILD_SOURCE_SHA_MISMATCH:$actual" }
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: '0.12.13'
       - name: Build and smoke isolated Whisper runtime
         shell: pwsh
         run: python local-companion/packaging/build_whisper_runtime.py
-      - name: Upload validated runtime
+      - name: Upload validated runtime candidate bytes
         uses: actions/upload-artifact@v7
         with:
           name: TDAWhisperRuntime-windows-x64
@@ -54,57 +63,4 @@ jobs:
             local-companion/out/whisper-runtime/TDAWhisperRuntime-*-windows-x64.zip.sha256
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
-
-  release:
-    name: publish-whisper-runtime-release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [windows-runtime]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-      - name: Download validated runtime
-        uses: actions/download-artifact@v8
-        with:
-          name: TDAWhisperRuntime-windows-x64
-          path: dist
-      - name: Publish immutable Whisper runtime release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          VERSION=$(python - <<'PY'
-          import json, pathlib
-          value = json.loads(pathlib.Path('local-companion/runtime/whisper-windows-x64.json').read_text(encoding='utf-8'))
-          print(value['version'])
-          PY
-          )
-          TAG="companion-whisper-runtime-v${VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::error::Release $TAG already exists. Bump the Whisper runtime version before publishing another artifact."
-            exit 1
-          fi
-          ZIP="dist/TDAWhisperRuntime-${VERSION}-windows-x64.zip"
-          SHA="${ZIP}.sha256"
-          test -f "$ZIP"
-          test -f "$SHA"
-          DIGEST=$(awk '{print $1}' "$SHA")
-          cat > release-notes.md <<EOF
-          Runtime isolado oficial do TDA Companion para Whisper no Windows x64.
-
-          - Faster-Whisper + CTranslate2 em processo separado do Agent.
-          - CUDA/cuBLAS/cuDNN ficam contidos no runtime; nenhum PATH ou Python global é alterado.
-          - Baseline CUDA 12.9 / cuDNN 9, validada por probe antes da publicação.
-          - NVML fica disponível somente para telemetria/recibo do gate físico de GPU.
-          - O worker inclui o comando de aceitação física; CI sem GPU não substitui o teste na RTX 4070.
-          - Modelos Whisper não fazem parte deste arquivo e continuam gerenciados separadamente.
-
-          SHA256: ${DIGEST}
-          EOF
-          gh release create "$TAG" "$ZIP" "$SHA" \
-            --target "$GITHUB_SHA" \
-            --title "TDA Whisper Runtime v${VERSION}" \
-            --notes-file release-notes.md
+          retention-days: 30
