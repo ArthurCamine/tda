@@ -2,7 +2,7 @@
 
 > Status: decisão aprovada; implementação parcial
 > Owner: narrative-memory / frontend / produto
-> Última revisão: 2026-09-13
+> Última revisão: 2026-09-14
 
 ## Objetivo
 
@@ -31,10 +31,10 @@ Estrutura típica:
 
 ```text
 src/app/lore/<slug>/
-public/lore/<slug>/   # mídia quando necessário
+public/lore/<slug>/   # somente assets técnicos locais deliberados, quando necessários
 ```
 
-Pipipi permanece neste modelo. `src/app/lore/pipipi` é a página; `public/lore/pipipi` contém mídia consumida por ela. Não é duplicação da página.
+Pipipi permanece neste modelo. A existência de mídia local histórica em uma lore integrada não cria precedente para novas publicações; novos binários editoriais públicos seguem o boundary R2 descrito abaixo.
 
 ### `standalone` — microsite editorial
 
@@ -51,13 +51,25 @@ public/
       script.js
       reading.css        # quando houver modo Leitura
       reading-mode.js    # quando houver modo Leitura
-      favicon.svg        # ou outro ícone próprio
-      assets/
+      favicon.svg        # asset técnico local pequeno, quando fizer sentido
+
+media/
+  manifests/
+    <slug>.json
+  sources/               # somente fontes versionáveis aceitas pela Media Pipeline
 ```
 
 A URL pública continua `/lore/<slug>`. Quando necessário, usar rewrite de `/lore/<slug>` para `/lore/<slug>/index.html` sem expor essa diferença ao visitante.
 
-Mídia pesada pode ser entregue pelo R2 público com keys imutáveis/content-addressed. Masters permanecem separados dos derivados públicos, seguindo [Do ZIP à produção](../operations/zip-to-production.md).
+## Storage de mídia das lores
+
+Toda mídia editorial pública consumida em runtime por uma lore usa o R2 como storage de entrega: backgrounds, portraits, artwork, mapas, layers de parallax, overlays, social cards, áudio e vídeo. A publicação ocorre pela Media Pipeline compartilhada, com keys imutáveis/content-addressed, read-back e verificação da entrega pública.
+
+O repositório guarda código, markup, manifestos, metadata, tooling e pequenos assets técnicos diretamente acoplados ao documento. `favicon.svg` e SVGs técnicos pequenos podem permanecer locais quando essa escolha for deliberada. Binário editorial local em `public/lore/<slug>/assets` é exceção legada ou explicitamente justificada, não o padrão para novas lores.
+
+Masters, fontes de trabalho e pacotes originais permanecem separados dos derivados públicos e devem ser preservados em storage privado apropriado. O bucket público recebe apenas derivados autorizados para entrega.
+
+Nenhuma lore cria uploader, endpoint operacional ou autorização próprios. A regra é: **a lore declara mídia; a plataforma publica**. Ver [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md) e [Mídia — fluxo único](../integrations/r2/media-pipeline.md).
 
 ## Situação atual
 
@@ -70,9 +82,9 @@ Mídia pesada pode ser entregue pelo R2 público com keys imutáveis/content-add
 
 D e Seika chegaram à produção por estratégias técnicas diferentes. Essa diferença é histórica, não editorial.
 
-- D, em `public/lore/d`, é o modelo mais próximo do padrão novo.
+- D, em `public/lore/d`, é o modelo mais próximo do padrão novo de entrega da página, mas a política de mídia nova é o boundary R2 acima.
 - Seika, em `src/app/lore/seika/route.ts` e rotas auxiliares, continua válida, mas é exceção legada e não deve ser copiada para novas lores.
-- Yllith deve inaugurar o padrão standalone estático novo.
+- Yllith deve inaugurar o padrão standalone estático novo e fazer o cutover de sua mídia para o fluxo compartilhado.
 
 Não migrar Seika apenas por simetria de diretório. Uma migração futura precisa ser uma entrega própria, preservando URL, composição, reading mode, favicon, mídia, comportamento e fidelidade visual.
 
@@ -94,7 +106,7 @@ Além da identidade específica de cada personagem, novas standalone devem procu
 - canonical próprio em `/lore/<slug>`;
 - `title`, `description`, `og:*` e Twitter card próprios;
 - favicon/ícone próprio quando houver identidade adequada, declarado no `<head>` sem depender de JavaScript;
-- imagem social dedicada/derivada, sem apontar para diretório de masters;
+- imagem social dedicada/derivada publicada pelo fluxo de mídia, sem apontar para diretório de masters;
 - modo Cinemático como experiência principal quando esse for o conceito aprovado;
 - modo Leitura quando a experiência cinematográfica resumir, fragmentar ou tornar menos confortável o acesso ao texto completo;
 - uma fonte narrativa oficial única para evitar divergência entre Cinemático e Leitura;
