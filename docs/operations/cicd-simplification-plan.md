@@ -1,9 +1,20 @@
 # CI/CD — plano de simplificação
 
-> Status: planejado
+> Status: em andamento — Fase 2
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
+
+## Progresso
+
+| Fase | Estado | Evidência principal |
+| --- | --- | --- |
+| 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
+| 2 — CI rápido | **em andamento** | branch `ops/cicd-simplification-phase-2` |
+| 3 — separar domínios pesados | planejada | — |
+| 4 — Preview por PR / main-only | planejada | — |
+| 5 — Production simples | planejada | — |
+| 6 — limpeza e documentação final | planejada | — |
 
 ## Objetivo
 
@@ -68,6 +79,8 @@ rollback -> corrigir -> publicar novamente
 
 ## Fase 1 — inventário e direção
 
+**Estado: concluída em 2026-09-14.**
+
 Entregas:
 
 - baseline com SHAs e protections;
@@ -77,32 +90,45 @@ Entregas:
 - ADR-0015;
 - plano das seis fases.
 
-Definition of Done:
+Evidência:
+
+```text
+PR:        #329
+Head:      931e5e37e6fe7f654fb0c44be2f950008761ebc2
+Merge:     fe9145631c21da064e9b9cb5dad0f2680722bed0
+Base:      Preview
+Runtime:   sem alteração funcional
+```
+
+Definition of Done atingida:
 
 - nenhuma mudança de runtime;
 - documentação distingue estado vigente de estado planejado;
 - baseline possui data e SHA;
-- branch de trabalho pode ser descartada sem impacto operacional.
+- branch de trabalho era descartável sem impacto operacional.
 
 ## Fase 2 — CI rápido
 
-Objetivo: criar o núcleo mínimo de validação para PR.
+**Estado: em andamento.**
+
+Objetivo: criar o núcleo mínimo de validação web para PR, sem ainda desacoplar os domínios pesados que pertencem à Fase 3.
 
 Direção:
 
-- `actionlint` obrigatório;
-- typecheck;
-- lint;
-- unit tests;
-- build;
-- um check agregador estável, como `required-ci`;
-- testes pesados deixam de bloquear toda mudança sem necessidade.
+- `actionlint` como contrato estático dos workflows;
+- manter `pnpm check` como pacote rápido já existente de typecheck, lint, unit e checks documentais/estruturais;
+- manter build;
+- retirar Playwright/E2E e `test:processing` do `validate` comum;
+- criar um check agregador estável `required-ci`;
+- preservar temporariamente `transcript-import-postgres` e Companion porque a separação por domínio é a Fase 3 e os nomes atuais ainda fazem parte da branch protection.
 
 Definition of Done:
 
-- alteração web comum não inicializa PostgreSQL nem MSI;
-- workflow inválido é detectado antes do merge;
-- branch protection depende de um check estável sem ficar presa a jobs condicionais.
+- `validate` comum não instala Chromium nem executa a suíte E2E/processing completa;
+- workflow inválido é detectado por `actionlint` antes do merge;
+- `required-ci` existe, depende do workflow contract e do validate rápido e pode virar o check estável de proteção;
+- a documentação registra tempo/etapas antes e depois;
+- PostgreSQL e Companion permanecem explicitamente como dívida temporária para a Fase 3, sem fingir que já foram resolvidos.
 
 ## Fase 3 — separar domínios pesados
 
@@ -114,14 +140,16 @@ Direção:
 - DB/integration tests por paths relevantes;
 - media pipeline própria, mantendo R2;
 - full media audit manual/agendado;
-- cada domínio falha fechado quando ele realmente mudou.
+- cada domínio falha fechado quando ele realmente mudou;
+- atualizar branch protection para depender do check agregador estável, evitando required checks presos por jobs legitimamente pulados.
 
 Definition of Done:
 
-- mudança CSS/UI não constrói MSI;
+- mudança CSS/UI/docs não constrói MSI;
 - mudança sem DB não sobe PostgreSQL nem tenta migration;
 - mudança sem mídia não verifica globalmente o R2;
-- mudança de mídia continua validando hash, MIME, bytes e publicação do que mudou.
+- mudança de mídia continua validando hash, MIME, bytes e publicação do que mudou;
+- `required-ci` é o contrato estável de merge e jobs condicionais podem ser skipped sem deixar a PR pendente.
 
 ## Fase 4 — Preview por PR e retirada da branch `Preview`
 
@@ -201,12 +229,13 @@ Usar medições simples, por exemplo:
 
 | Sinal | Antes | Depois |
 | --- | --- | --- |
-| checks bloqueantes em PR web comum | medir | medir |
-| PostgreSQL em mudança web comum | sim | alvo: não |
-| MSI em mudança web comum | sim | alvo: não |
-| full media audit sem mudança de mídia | sim | alvo: não |
-| branch longa além de `main` | `Preview` | alvo: nenhuma |
-| promoção intermediária | `Preview -> main` | alvo: nenhuma |
+| duração do `validate` web comum | medir | medir |
+| Chromium/E2E em `validate` comum | sim | alvo F2: não |
+| PostgreSQL em mudança web comum | sim | alvo F3: não |
+| MSI em mudança web comum | sim | alvo F3: não |
+| full media audit sem mudança de mídia | sim | alvo F3: não |
+| branch longa além de `main` | `Preview` | alvo F4: nenhuma |
+| promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
 
 Não criar dashboard novo apenas para acompanhar a migração.
 
