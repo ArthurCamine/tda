@@ -1,6 +1,6 @@
 # CI/CD — plano de simplificação
 
-> Status: em andamento — Fase 2
+> Status: planejado
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
@@ -113,6 +113,26 @@ Definition of Done atingida:
 
 Objetivo: criar o núcleo mínimo de validação web para PR, sem ainda desacoplar os domínios pesados que pertencem à Fase 3.
 
+### Baseline real antes da mudança
+
+A PR #329, que alterava somente documentação, forneceu uma amostra real do custo anterior:
+
+```text
+CI run:                  34876284417
+CI início:               2026-09-14T17:41:33Z
+CI fim:                  2026-09-14T17:46:43Z
+validate:                ~5m05s
+PostgreSQL job:          ~47s
+Playwright install:      ~25s
+E2E:                     ~3m50s
+processing:              ~7s
+Companion run:           34876284413
+Companion:               ~4m05s
+MSI para PR docs-only:   sim
+```
+
+Essa medição não é benchmark universal; é uma execução real do estado anterior usada para comparar a própria PR da Fase 2.
+
 Direção:
 
 - `actionlint` como contrato estático dos workflows;
@@ -121,6 +141,14 @@ Direção:
 - retirar Playwright/E2E e `test:processing` do `validate` comum;
 - criar um check agregador estável `required-ci`;
 - preservar temporariamente `transcript-import-postgres` e Companion porque a separação por domínio é a Fase 3 e os nomes atuais ainda fazem parte da branch protection.
+
+### Mudança da Fase 2
+
+`workflow-contract` executa `actionlint` em `.github/workflows`. Nesta primeira adoção, shellcheck e pyflakes ficam desligados para a introdução do contrato YAML/expressions não virar uma rodada paralela de lint de todos os scripts inline legados.
+
+`validate` permanece com migration safety policy, o teste curto de SVG, `pnpm check` e `pnpm build`. Saem do caminho comum a instalação do Chromium, `pnpm test:e2e` e `pnpm test:processing`. Essas suítes continuam disponíveis como scripts e serão reposicionadas por relevância/smoke nas fases seguintes.
+
+`required-ci` é um agregador de nome estável e só passa quando `workflow-contract` e `validate` passam. Ele prepara a branch protection para a Fase 3, quando jobs especializados poderão ser pulados legitimamente sem deixar required checks pendentes.
 
 Definition of Done:
 
@@ -229,7 +257,7 @@ Usar medições simples, por exemplo:
 
 | Sinal | Antes | Depois |
 | --- | --- | --- |
-| duração do `validate` web comum | medir | medir |
+| duração do `validate` web comum | ~5m05s na PR #329 | medir F2 |
 | Chromium/E2E em `validate` comum | sim | alvo F2: não |
 | PostgreSQL em mudança web comum | sim | alvo F3: não |
 | MSI em mudança web comum | sim | alvo F3: não |
