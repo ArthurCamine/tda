@@ -40,17 +40,7 @@ def _integer(value: object, code: str, *, minimum: int = 0) -> int:
     return value
 
 
-def verify_bits_resume_evidence(path: Path) -> dict[str, Any]:
-    source = path.resolve()
-    try:
-        stat = source.stat()
-        if stat.st_size <= 0 or stat.st_size > MAX_EVIDENCE_BYTES:
-            raise BitsResumeEvidenceError("BITS_EVIDENCE_SIZE_INVALID")
-        value = json.loads(source.read_text(encoding="utf-8"))
-    except BitsResumeEvidenceError:
-        raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise BitsResumeEvidenceError("BITS_EVIDENCE_INVALID") from exc
+def validate_bits_resume_evidence(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != _ALLOWED_KEYS:
         raise BitsResumeEvidenceError("BITS_EVIDENCE_SHAPE_INVALID")
     if value.get("schema") != BITS_RESUME_SCHEMA or value.get("pass") is not True:
@@ -85,3 +75,17 @@ def verify_bits_resume_evidence(path: Path) -> dict[str, Any]:
         "contains_paths": False,
         "contains_url": False,
     }
+
+
+def verify_bits_resume_evidence(path: Path) -> dict[str, Any]:
+    source = path.resolve()
+    try:
+        stat = source.stat()
+        if stat.st_size <= 0 or stat.st_size > MAX_EVIDENCE_BYTES:
+            raise BitsResumeEvidenceError("BITS_EVIDENCE_SIZE_INVALID")
+        value = json.loads(source.read_text(encoding="utf-8"))
+    except BitsResumeEvidenceError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BitsResumeEvidenceError("BITS_EVIDENCE_INVALID") from exc
+    return validate_bits_resume_evidence(value)
