@@ -10,7 +10,7 @@
 | Fase | Estado | Evidência principal |
 | --- | --- | --- |
 | 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
-| 2 — CI rápido | **em andamento** | branch `ops/cicd-simplification-phase-2` |
+| 2 — CI rápido | **validada; aguardando merge** | PR #332; CI run `34877237056` |
 | 3 — separar domínios pesados | planejada | — |
 | 4 — Preview por PR / main-only | planejada | — |
 | 5 — Production simples | planejada | — |
@@ -109,7 +109,7 @@ Definition of Done atingida:
 
 ## Fase 2 — CI rápido
 
-**Estado: em andamento.**
+**Estado: validada na PR #332; conclusão formal no merge.**
 
 Objetivo: criar o núcleo mínimo de validação web para PR, sem ainda desacoplar os domínios pesados que pertencem à Fase 3.
 
@@ -133,14 +133,31 @@ MSI para PR docs-only:   sim
 
 Essa medição não é benchmark universal; é uma execução real do estado anterior usada para comparar a própria PR da Fase 2.
 
-Direção:
+### Resultado real da primeira execução da Fase 2
 
-- `actionlint` como contrato estático dos workflows;
-- manter `pnpm check` como pacote rápido já existente de typecheck, lint, unit e checks documentais/estruturais;
-- manter build;
-- retirar Playwright/E2E e `test:processing` do `validate` comum;
-- criar um check agregador estável `required-ci`;
-- preservar temporariamente `transcript-import-postgres` e Companion porque a separação por domínio é a Fase 3 e os nomes atuais ainda fazem parte da branch protection.
+Na PR #332, head `bdea998c4b1806b14fc7190df018948ecc51ab54`:
+
+```text
+CI run:                    34877237056
+workflow-contract:         ~13s total; actionlint em ~1s após pull da imagem
+validate:                  ~37s
+required-ci:               ~2s
+transcript-import-postgres ~51s
+Chromium no validate:      não
+E2E completo no validate:  não
+processing no validate:    não
+Resultado CI:              success
+```
+
+Comparação do `validate` observado:
+
+```text
+antes: ~305s
+Fase 2: ~37s
+redução: ~268s / ~88%
+```
+
+O ganho não depende de cache especial nem de pular `pnpm check`/build: ambos continuaram verdes. O que saiu foi a bateria pesada que não precisa bloquear toda alteração.
 
 ### Mudança da Fase 2
 
@@ -150,13 +167,20 @@ Direção:
 
 `required-ci` é um agregador de nome estável e só passa quando `workflow-contract` e `validate` passam. Ele prepara a branch protection para a Fase 3, quando jobs especializados poderão ser pulados legitimamente sem deixar required checks pendentes.
 
-Definition of Done:
+### Dívida explicitamente preservada para a Fase 3
 
-- `validate` comum não instala Chromium nem executa a suíte E2E/processing completa;
-- workflow inválido é detectado por `actionlint` antes do merge;
-- `required-ci` existe, depende do workflow contract e do validate rápido e pode virar o check estável de proteção;
-- a documentação registra tempo/etapas antes e depois;
-- PostgreSQL e Companion permanecem explicitamente como dívida temporária para a Fase 3, sem fingir que já foram resolvidos.
+`transcript-import-postgres` continua rodando nesta fase porque ainda é required check na proteção atual. O Companion também continua intocado e ainda pode construir MSI em uma PR sem mudança de Companion.
+
+Isso é temporário e intencional: a Fase 2 prova primeiro o contrato rápido; a Fase 3 troca a proteção e torna os domínios pesados condicionais sem misturar riscos.
+
+Definition of Done da implementação:
+
+- `validate` comum não instala Chromium nem executa a suíte E2E/processing completa: **atingido**;
+- workflow inválido é detectado por `actionlint` antes do merge: **atingido**;
+- `required-ci` existe e depende de `workflow-contract` + `validate`: **atingido**;
+- tempo/etapas antes e depois registrados: **atingido**;
+- PostgreSQL e Companion permanecem explicitamente como dívida temporária: **atingido**;
+- integração em `Preview` sem contornar branch protection: **pendente somente do merge da PR #332**.
 
 ## Fase 3 — separar domínios pesados
 
@@ -257,8 +281,8 @@ Usar medições simples, por exemplo:
 
 | Sinal | Antes | Depois |
 | --- | --- | --- |
-| duração do `validate` web comum | ~5m05s na PR #329 | medir F2 |
-| Chromium/E2E em `validate` comum | sim | alvo F2: não |
+| duração do `validate` web comum | ~5m05s na PR #329 | ~37s na primeira execução da PR #332 |
+| Chromium/E2E em `validate` comum | sim | não |
 | PostgreSQL em mudança web comum | sim | alvo F3: não |
 | MSI em mudança web comum | sim | alvo F3: não |
 | full media audit sem mudança de mídia | sim | alvo F3: não |
