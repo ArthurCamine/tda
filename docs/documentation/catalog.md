@@ -179,10 +179,10 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
 | [Operação — índice](../operations/README.md) | operations | vigente | 2026-09-14 |
-| [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-10 |
-| [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-11 |
+| [CI/CD — operação, promoção e recuperação](../operations/ci-cd.md) | operations / release / dados | vigente | 2026-09-14 |
+| [CI/CD — configuração administrativa](../operations/cicd-admin-setup.md) | operations / release | vigente | 2026-09-14 |
 | [CI/CD — baseline da simplificação](../operations/cicd-simplification-baseline.md) | operations / architecture | auditoria | 2026-09-14 |
-| [CI/CD — plano de simplificação](../operations/cicd-simplification-plan.md) | operations / architecture | em execução — Fases 1, 2 e 3 concluídas; Fase 4 planejada | 2026-09-14 |
+| [CI/CD — plano de simplificação](../operations/cicd-simplification-plan.md) | operations / architecture | concluído — Fases 1–6 implementadas e comprovadas | 2026-09-14 |
 | [TDA Companion 0.3.3 — auditoria pesada de confiabilidade, segurança e release](../operations/companion-0.3.3-heavy-audit.md) | local-companion / processing / operations / security | auditoria concluída; 0.3.3 aposentada para certificação; remediação integrada na linha 0.3.4 | 2026-09-13 |
 | [TDA Companion — A-017 integridade dos modelos ASR](../operations/companion-a017-model-integrity.md) | local-companion / processing / operations / security | implementado em candidato; integração condicionada aos gates automáticos e ao aceite físico | 2026-09-14 |
 | [Companion — política de versões e dependências](../operations/companion-dependency-policy.md) | local-companion / processing | requisito de release | 2026-09-11 |
@@ -191,7 +191,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Runbook operacional do banco / Supabase](../operations/database-runbook.md) | dados/Supabase | vigente | 2026-09-07 |
 | [Histórico de deployments](../operations/deployments.md) | operations | vigente | 2026-09-11 |
 | [Login Discord: configuração e verificação](../operations/discord-auth.md) | identity/access | publicado na Production #006; OAuth real, acesso e logout verificados | 2026-09-07 |
-| [Ambientes e configuração](../operations/environments.md) | operations | vigente | 2026-09-13 |
+| [Ambientes e configuração](../operations/environments.md) | operations | vigente | 2026-09-14 |
 | [Retirada do projeto Vercel legado](../operations/legacy-retirement.md) | infraestrutura/operação | executado e verificado | 2026-09-07 |
 | [Companion — operação, instalação e rollback](../operations/local-companion.md) | local-companion/processing | candidato v0.3 em estabilização; CI técnica válida, aceite físico da 0.3.2 reprovado | 2026-09-13 |
 | [R2 — checklists de mídia](../operations/r2-media-checklists.md) | integrations/media | vigente | 2026-09-11 |
