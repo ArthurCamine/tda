@@ -22,39 +22,53 @@ function safeRepoPath(root, value, label) {
 	return absolute;
 }
 
+async function validatePublicResponse(asset, response) {
+	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+	const actualType = response.headers
+		.get("content-type")
+		?.split(";")[0]
+		?.trim();
+	if (actualType !== asset.contentType)
+		throw new Error(
+			`content-type ${actualType ?? "missing"} != ${asset.contentType}`,
+		);
+
+	const bytes = Buffer.from(await response.arrayBuffer());
+	if (bytes.length !== asset.bytes)
+		throw new Error(`bytes ${bytes.length} != ${asset.bytes}`);
+	if (sha256(bytes) !== asset.sha256)
+		throw new Error(`sha256 mismatch for ${asset.publicUrl}`);
+
+	return { httpStatus: response.status, contentType: actualType };
+}
+
 async function verifyPublicDelivery(asset, { fetchImpl = fetch, attempts = 8 } = {}) {
 	let lastError;
 	for (let attempt = 1; attempt <= attempts; attempt += 1) {
-		try {
-			const response = await fetchImpl(publicVerificationUrl(asset.publicUrl, attempt), {
-				cache: "no-store",
-				headers: { "cache-control": "no-cache" },
-			});
-			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const cacheBustedUrl = publicVerificationUrl(asset.publicUrl, attempt);
+		const candidates = [
+			{ url: cacheBustedUrl, mode: "cache-busted" },
+			{ url: asset.publicUrl, mode: "canonical" },
+		];
 
-			const actualType = response.headers
-				.get("content-type")
-				?.split(";")[0]
-				?.trim();
-			if (actualType !== asset.contentType)
-				throw new Error(
-					`content-type ${actualType ?? "missing"} != ${asset.contentType}`,
-				);
-
-			const bytes = Buffer.from(await response.arrayBuffer());
-			if (bytes.length !== asset.bytes)
-				throw new Error(`bytes ${bytes.length} != ${asset.bytes}`);
-			if (sha256(bytes) !== asset.sha256)
-				throw new Error(`sha256 mismatch for ${asset.publicUrl}`);
-
-			return { httpStatus: response.status, contentType: actualType };
-		} catch (error) {
-			lastError = error;
-			if (attempt < attempts)
-				await new Promise((resolveDelay) =>
-					setTimeout(resolveDelay, attempt * 750),
-				);
+		for (const candidate of candidates) {
+			try {
+				const response = await fetchImpl(candidate.url, {
+					cache: "no-store",
+					headers: { "cache-control": "no-cache" },
+				});
+				const delivery = await validatePublicResponse(asset, response);
+				return { ...delivery, verificationMode: candidate.mode };
+			} catch (error) {
+				lastError = error;
+			}
 		}
+
+		if (attempt < attempts)
+			await new Promise((resolveDelay) =>
+				setTimeout(resolveDelay, attempt * 750),
+			);
 	}
 
 	throw new Error(
@@ -110,8 +124,11 @@ export async function verifyPublicAll({
 				contentType: asset.contentType,
 				publicDeliveryVerified: true,
 				httpStatus: delivery.httpStatus,
+				verificationMode: delivery.verificationMode,
 			});
-			console.log(`MEDIA_PUBLIC_VERIFIED ${manifest.project} ${asset.file}`);
+			console.log(
+				`MEDIA_PUBLIC_VERIFIED ${manifest.project} ${asset.file} mode=${delivery.verificationMode}`,
+			);
 		}
 	}
 
