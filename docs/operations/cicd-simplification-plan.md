@@ -1,6 +1,6 @@
 # CI/CD — plano de simplificação
 
-> Status: em execução — Fases 1 e 2 concluídas; Fase 3 em planejamento
+> Status: em execução — Fases 1, 2 e 3 concluídas; Fase 4 planejada
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
 | 2 — CI rápido | **concluída** | PR #332; merge `6352f73636aa5bc8040ad3ba7db22527d7591397`; `validate` ~5m05s → ~37s |
-| 3 — separar domínios pesados | **planejamento detalhado** | branch `ops/cicd-simplification-phase-3-plan` |
+| 3 — separar domínios pesados | **concluída** | PRs #334/#337/#338; merges `c22d0cbd54f7c4ef14ed5b6071ae55bfa8a2dbc9` / `5cbf298c06094c3b3ce83c07c861629bb06ebee4`; protections cortadas para `required-ci`; aceite docs-only sem DB/Companion/mídia pesada |
 | 4 — Preview por PR / main-only | planejada | — |
 | 5 — Production simples | planejada | — |
 | 6 — limpeza e documentação final | planejada | — |
@@ -171,19 +171,72 @@ Definition of Done atingida:
 
 ## Fase 3 — separar domínios pesados
 
-**Estado: planejamento detalhado. Nenhum filtro seletivo está ativo ainda.**
+**Estado: concluída em 2026-09-14.**
 
 ### Objetivo
 
 Tirar PostgreSQL, Companion/MSI e auditoria pública global de mídia do caminho comum quando a mudança não toca esses riscos, sem transformar `skipped` legítimo em bypass de segurança.
 
-A classificação deve ser feita pelos arquivos alterados, não pelo título, autor ou descrição da PR.
+A classificação é feita pelos arquivos alterados, não pelo título, autor ou descrição da PR.
+
+### Evidência executada — 3A / 3B / 3C
+
+#### 3A — shadow mode
+
+PR #334 comprovou o classificador e o agregador no mesmo SHA.
+
+```text
+Head validado: f49b7156aff3b4ec98cf175c944662eec4dc9354
+CI run:        34889341770
+Resultado:    success
+DB:           success
+Companion:    Linux + Windows + MSI success
+Mídia:        contrato local success
+required-ci:  success
+Merge Preview: c22d0cbd54f7c4ef14ed5b6071ae55bfa8a2dbc9
+```
+
+O primeiro teste de mídia em shadow mode reproduziu o 403 público do asset antigo `backgroud_jornada.avif`. Isso confirmou que o full public audit global via rede não deveria ser merge gate. O gate de PR ficou restrito à integridade local de manifests/tooling/contratos; auditoria pública global permanece separada do caminho comum.
+
+A Fase 3A foi promovida para `main` pela PR #336, merge `2e85d835c4c9815cfd2d74190fba6749a0fb3b79`.
+
+#### 3B — cutover administrativo
+
+Depois de `required-ci` estar comprovado em `Preview` e `main`, os required contexts foram alterados sem mexer nas demais proteções:
+
+```text
+Preview:
+  required-ci
+
+main:
+  required-ci
+  promotion-source
+```
+
+`promotion-source` continua temporariamente porque a topologia `Preview -> main` ainda existe até a Fase 4.
+
+#### 3C — seletividade ativa
+
+PR #337 ativou os jobs condicionais depois do cutover das protections.
+
+```text
+Head:          81680ac665567226c1cfcd7337e2e1495b7ef406
+CI run:        34891945990
+DB relevante: false
+PostgreSQL:    skipped
+Mídia:         skipped
+Companion:     Linux + Windows + MSI success, uma única chamada via CI
+required-ci:   success
+Merge Preview: 5cbf298c06094c3b3ce83c07c861629bb06ebee4
+```
+
+O workflow `Companion` deixou de disparar automaticamente em toda PR/push. Ele continua reutilizável via `workflow_call` e disponível manualmente via `workflow_dispatch`. O workflow `Companion Dependency Freshness` mantém seus próprios `paths`, agenda e dispatch.
+
+A PR #338 foi usada como aceite docs-only. Na primeira execução, o classificador já confirmou `db=false`, `companion=false` e `media=false`; PostgreSQL, Companion e mídia ficaram `skipped`, e nenhum MSI foi iniciado. O primeiro run falhou apenas porque o catálogo documental gerado ainda carregava o status antigo deste próprio plano; o catálogo foi regenerado antes do merge. Essa falha não alterou runtime e demonstrou que `required-ci` continuou fail-closed quando o fast CI falhou.
 
 ### Regra central
 
-`required-ci` continuará sendo o único contrato genérico de merge.
-
-Na Fase 3 ele passa a agregar também resultados condicionais:
+`required-ci` é o único contrato genérico de merge.
 
 ```text
 workflow-contract  -> success obrigatório
@@ -200,22 +253,22 @@ Se um domínio for classificado como relevante, falha desse domínio faz `requir
 
 ### Classificador
 
-Implementar uma única regra testável em `tools/ci/classify-changes.mjs`, em vez de copiar listas de paths em vários YAMLs.
+A regra única e testável vive em `tools/ci/classify-changes.mjs`, em vez de copiar listas de paths em vários YAMLs.
 
-Saídas previstas:
+Saídas:
 
 ```text
 web=true|false
- db=true|false
+db=true|false
 companion=true|false
 media=true|false
 ```
 
 `web` não significa “somente frontend”; significa que o núcleo rápido (`workflow-contract`, `pnpm check`, build) continua sendo a validação comum da aplicação/repositório.
 
-O classificador deve aceitar um range Git explícito e produzir também um resumo legível dos arquivos/classes detectados. A mesma regra poderá ser reutilizada por Preview/Production nas fases seguintes.
+O classificador aceita range Git explícito e produz resumo legível dos arquivos/classes detectados. A mesma regra poderá ser reutilizada por Preview/Production nas fases seguintes.
 
-### Contrato inicial de relevância
+### Contrato de relevância
 
 #### Sempre / CI rápido
 
@@ -259,7 +312,7 @@ local-companion/**
 tools/check-companion-*.py
 ```
 
-O `companion.yml` deverá aceitar `workflow_call` para ser chamado condicionalmente pelo CI. Seus synthetics Linux/Windows e MSI continuam iguais quando o domínio for relevante; a economia vem de não iniciá-los quando o domínio não mudou.
+O `companion.yml` aceita `workflow_call` para ser chamado condicionalmente pelo CI. Seus synthetics Linux/Windows e MSI continuam iguais quando o domínio é relevante; a economia vem de não iniciá-los quando o domínio não mudou.
 
 Workflows especializados de RC/runtime (`companion-rc`, `companion-promote`, `runtime-*`, `qwen-*`, `whisper-*`) mantêm seus próprios contratos, paths e/ou dispatch. Alterá-los é sempre coberto pelo `workflow-contract`, mas não deve construir automaticamente o MSI genérico apenas por terem sido editados.
 
@@ -279,64 +332,49 @@ tools/migrate-r2-keys.mjs
 tools/world-entity-media-r2-policy.test.mjs
 ```
 
-O fast CI pode continuar executando os testes locais de mídia que já fazem parte de `pnpm check` enquanto seu custo permanecer pequeno. Não vale criar complexidade para economizar poucos segundos locais.
+O fast CI continua executando os testes locais de mídia que já fazem parte de `pnpm check` enquanto seu custo permanecer pequeno.
 
-O que deve sair do caminho comum é a verificação **pública/global via rede** de todos os objetos R2.
+O que saiu do caminho comum foi a verificação **pública/global via rede** de todos os objetos R2.
 
-Mudança em `public/lore/**` que apenas altera HTML/CSS/JS/texto e referencia mídia já publicada continua sendo web comum. Se a mesma PR altera `media/**` ou tooling de publicação, `media=true` naturalmente será acionado.
+Mudança em `public/lore/**` que apenas altera HTML/CSS/JS/texto e referencia mídia já publicada continua sendo web comum. Se a mesma PR altera `media/**` ou tooling de publicação, `media=true` é acionado.
 
 ### Lifecycle de mídia na Fase 3
 
-Separar três conceitos que hoje aparecem misturados:
-
 ```text
 validação local do manifest/tooling
-    -> barata; pode continuar no CI
+    -> barata; continua no CI
 
 publicação/alteração de mídia canônica
     -> somente quando media=true
 
 full public audit do R2
-    -> manual/agendado + execução em mudança de mídia
+    -> separado do merge gate comum
 ```
 
-Preview/Production comuns não devem falhar porque um asset antigo e não relacionado recebeu 403 temporário. Mudanças de mídia continuam fail-closed para MIME, bytes e SHA-256.
+Preview/Production comuns não devem falhar porque um asset antigo e não relacionado recebeu 403 temporário. Mudanças de mídia continuam fail-closed para integridade local e contratos de publicação; o ciclo de publicação/readback continua responsável pelo conteúdo realmente alterado.
 
 ### Transição segura da branch protection
-
-A ordem é parte do contrato; não inverter.
 
 #### Fase 3A — shadow mode
 
 1. promover a Fase 2 de `Preview` para `main` usando a topologia atual, para que `required-ci` exista também no default branch;
 2. adicionar o classificador com testes;
 3. estender `required-ci` para conhecer DB/Companion/media;
-4. tornar `companion.yml` reutilizável, mas manter temporariamente os triggers antigos;
-5. executar uma ou mais PRs de prova e comparar classificação esperada x observada;
-6. ainda não pular os checks hoje exigidos pela protection.
+4. tornar `companion.yml` reutilizável, mantendo temporariamente os triggers antigos;
+5. executar PR de prova e comparar classificação esperada x observada;
+6. ainda não pular os checks exigidos pela protection antiga.
 
-Essa etapa pode duplicar temporariamente algum trabalho de Companion; é custo de transição, não estado final.
+**Executada:** PR #334, promoção #336 e evidências acima.
 
 #### Fase 3B — cutover administrativo
 
-Depois que `required-ci` estiver comprovado no mesmo SHA:
-
-`Preview` passa de:
-
-```text
-validate
-transcript-import-postgres
-synthetic ubuntu
-synthetic windows
-```
-
-para:
+`Preview` passou de quatro checks diretos para:
 
 ```text
 required-ci
 ```
 
-Enquanto `main` ainda usar promoção `Preview -> main`, manter:
+Enquanto `main` ainda usa promoção `Preview -> main`, ficou:
 
 ```text
 required-ci
@@ -345,20 +383,18 @@ promotion-source
 
 `promotion-source` só desaparece na Fase 4, junto com a topologia `Preview -> main`.
 
-A conexão GitHub usada pela automação pode não ter permissão administrativa para escrever branch protection. Se isso se confirmar na execução, essa troca será uma etapa administrativa explícita, única e documentada; não será simulada com bypass.
+**Executada:** protections verificadas após o cutover com os contexts acima.
 
 #### Fase 3C — ativar seletividade
 
-Somente depois do cutover da protection:
-
-- `transcript-import-postgres` recebe `if: db == true`;
-- Companion deixa de disparar como workflow PR independente e passa a ser chamado pelo CI quando `companion == true`;
-- media job/pipeline executa somente quando `media == true`;
+- `transcript-import-postgres` recebeu `if: db == true`;
+- Companion deixou de disparar como workflow PR independente e passou a ser chamado pelo CI quando `companion == true`;
+- media job executa somente quando `media == true`;
 - `required-ci` aceita `skipped` apenas para domínio classificado como irrelevante e exige `success` quando relevante.
 
-### Casos de prova obrigatórios
+**Executada:** PR #337; PR #338 comprova o caminho docs-only sem jobs pesados.
 
-Antes de concluir a Fase 3, provar pelo menos estes cenários:
+### Casos de prova
 
 | Mudança | Fast CI | PostgreSQL | Companion/MSI | mídia pesada |
 | --- | --- | --- | --- | --- |
@@ -371,24 +407,17 @@ Antes de concluir a Fase 3, provar pelo menos estes cenários:
 | PR mista DB + Companion | sim | sim | sim | conforme arquivos |
 | PR mista web + mídia | sim | não, salvo DB separada | não | sim |
 
-PRs recentes já demonstram classes úteis para regressão do classificador:
+PRs usadas como regressão/evidência:
 
-- #329: docs-only;
+- #329: docs-only antes da simplificação;
 - #326: tooling de mídia;
 - #317: Companion isolado;
 - #318: runtime/Companion especializado;
 - #320: web/lore + mídia;
-- #325: workflow de delivery.
-
-### O que não fazer na Fase 3
-
-- não usar título/label da PR para decidir segurança;
-- não tornar um workflow inteiro `paths:` se ele for required diretamente;
-- não criar três classificadores diferentes em YAML;
-- não mover testes locais baratos só para perseguir alguns segundos;
-- não misturar retirada da branch `Preview` nesta fase;
-- não remover `promotion-source` antes da Fase 4;
-- não enfraquecer DB/Companion/mídia quando realmente alterados.
+- #325: workflow de delivery;
+- #334: contrato/classificador fail-safe, todos os domínios relevantes;
+- #337: Companion relevante com DB/mídia irrelevantes e `skipped` legítimo;
+- #338: docs-only com DB/Companion/mídia irrelevantes e `skipped` legítimo.
 
 ### Definition of Done da Fase 3
 
@@ -396,11 +425,11 @@ PRs recentes já demonstram classes úteis para regressão do classificador:
 - web comum não sobe PostgreSQL nem constrói MSI;
 - mudança de Companion continua executando synthetics Linux/Windows + MSI;
 - mudança de DB continua executando synthetic PostgreSQL relevante;
-- deploy sem mudança de mídia não faz full public audit global do R2;
-- mudança de mídia continua validando/publicando fail-closed;
+- CI comum sem mudança de mídia não faz full public audit global do R2;
+- mudança de mídia mantém validações locais/contratos fail-closed e o ciclo de publicação continua responsável pelo readback do conteúdo alterado;
 - `required-ci` é o contrato estável de merge;
 - jobs especializados podem ser `skipped` sem deixar PR pendente e sem permitir falha quando classificados como relevantes;
-- classificação e transição ficam documentadas com evidências antes/depois.
+- classificação e transição estão documentadas com evidências antes/depois.
 
 ## Fase 4 — Preview por PR e retirada da branch `Preview`
 
@@ -482,9 +511,9 @@ Usar medições simples:
 | --- | --- | --- |
 | duração do `validate` web comum | ~5m05s na PR #329 | ~37s na Fase 2 |
 | Chromium/E2E em `validate` comum | sim | não |
-| PostgreSQL em mudança web comum | sim | alvo F3: não |
-| MSI em mudança web comum | sim | alvo F3: não |
-| full media audit sem mudança de mídia | sim | alvo F3: não |
+| PostgreSQL em mudança web comum | sim | Fase 3: não quando `db=false` |
+| MSI em mudança web comum | sim | Fase 3: não quando `companion=false` |
+| full media audit sem mudança de mídia | sim | Fase 3: não no required CI |
 | branch longa além de `main` | `Preview` | alvo F4: nenhuma |
 | promoção intermediária | `Preview -> main` | alvo F4: nenhuma |
 
@@ -517,5 +546,3 @@ Não implementar agora apenas por possibilidade futura:
 - ledger de release complexo;
 - receipts adicionais além do necessário para identificar SHA/deployment;
 - gates globais sem relação com a classe da mudança.
-
-Reavaliar quando número de contribuidores, criticidade, usuários ou dados justificar o custo.
