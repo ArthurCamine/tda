@@ -1,28 +1,17 @@
 # CI/CD — plano de simplificação
 
-> Status: em execução — Fases 1, 2 e 3 concluídas; Fase 4 planejada
+> Status: concluído — Fases 1–6 implementadas e comprovadas
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
-> Fonte de verdade: ADR-0015 e baseline da simplificação; runbooks atuais continuam vigentes até a implementação
+> Fonte de verdade: ADR-0015, evidências das PRs/runs e runbooks operacionais vigentes
 
-> Atualização operacional de 2026-09-14: as Fases 4 e 5 foram implementadas e comprovadas. O metadata acima será normalizado junto com o catálogo gerado na Fase 6 para evitar uma regeneração intermediária sem valor operacional.
+## Resultado
 
-## Progresso real
+A simplificação da entrega web do TDA foi concluída em 2026-09-14.
 
-| Fase | Estado | Evidência principal |
-| --- | --- | --- |
-| 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
-| 2 — CI rápido | **concluída** | PR #332; `validate` ~5m05s → ~37s; merge `6352f73636aa5bc8040ad3ba7db22527d7591397` |
-| 3 — separar domínios pesados | **concluída** | PRs #334/#337/#338; `required-ci`; docs-only sem DB/Companion/mídia pesada |
-| 4 — Preview por PR / main-only | **concluída tecnicamente** | PR #341; Preview por SHA da PR; PR #345 provou `feature/fix -> main` direto |
-| 5 — Production simples | **concluída tecnicamente** | PRs #343/#344/#345; Production run `34900630352` = `success` |
-| 6 — limpeza e documentação final | **próxima** | remover branch/gates legados, normalizar protections, metadata e catálogo |
+O objetivo era reduzir complexidade operacional sem remover proteções proporcionais ao risco. O fluxo deixou de usar uma branch permanente `Preview`, promoção `Preview -> main`, testes pesados indiscriminados e auditoria pública global de mídia no caminho comum.
 
-## Objetivo
-
-Simplificar a entrega do TDA para o risco real do projeto: feedback rápido, entendimento simples, rollback fácil e gates fortes somente onde uma falha é destrutiva ou difícil de recuperar.
-
-O estado operacional comprovado ao final da Fase 5 é:
+Estado final:
 
 ```text
 feature/fix branch
@@ -58,41 +47,42 @@ feature/fix branch
        +--> canonical health/version
        +--> receipt pequeno
 
-falhou depois da publicação?
+incidente recuperável
        |
        v
-rollback -> corrigir -> publicar novamente
+rollback -> corrigir -> nova PR -> redeploy
 ```
 
-## Princípios mantidos
+## Princípios preservados
 
 1. `main` é a única branch longa necessária para a entrega web.
-2. Preview é deployment de PR, não ambiente mantido por uma branch de integração.
-3. GitHub Actions continua sendo o único controlador; Vercel Git auto-deploy permanece desligado.
-4. Production continua staged porque isso entrega proteção útil com pouca complexidade.
+2. Preview é deployment imutável de PR, não branch de integração.
+3. GitHub Actions é o único controlador da entrega; Vercel Git auto-deploy permanece desligado.
+4. Production continua staged para separar teste do artefato e movimentação de tráfego.
 5. DB, Companion e mídia só entram no caminho quando a alteração realmente toca seu domínio.
-6. Migration pendente é acumulativa até o SHA realmente publicado alcançar o código.
-7. Mídia histórica não relacionada não bloqueia deploy web; publicação de mídia é ligada ao merge que alterou manifest canônico.
-8. Rollback é mecanismo normal de recuperação, não exceção vergonhosa.
+6. Migration pendente continua acumulativa até o SHA realmente publicado alcançar o código.
+7. Mídia histórica não relacionada não bloqueia deploy web.
+8. Rollback é mecanismo operacional normal de recuperação.
+9. `required-ci` é o único required status check da branch `main` para a entrega web comum.
+
+## Resumo das fases
+
+| Fase | Estado | Evidência principal |
+| --- | --- | --- |
+| 1 — inventário e direção | **concluída** | PR #329; merge `fe9145631c21da064e9b9cb5dad0f2680722bed0` |
+| 2 — CI rápido | **concluída** | PR #332; `validate` ~5m05s -> ~37s; merge `6352f73636aa5bc8040ad3ba7db22527d7591397` |
+| 3 — domínios pesados condicionais | **concluída** | PRs #334/#337/#338; docs-only sem PostgreSQL/Companion/mídia pesada |
+| 4 — Preview por PR / main-only | **concluída** | PR #341; PR #345 provou `feature/fix -> main` direto |
+| 5 — Production v3 | **concluída** | PRs #343/#344/#345; run `34900630352` success |
+| 6 — limpeza final | **concluída** | PR #347 + cutover administrativo + pacote 6B final |
 
 ## Fase 1 — inventário e direção
 
-**Estado: concluída em 2026-09-14.**
-
-O baseline registrou SHAs, protections, workflows e os principais gargalos. O desenho anterior possuía uma branch `Preview` permanente, promoção `Preview -> main`, testes pesados repetidos e auditoria pública global de mídia no caminho comum.
-
-Evidência:
-
-```text
-PR:    #329
-Merge: fe9145631c21da064e9b9cb5dad0f2680722bed0
-```
+O baseline registrou SHAs, protections, workflows e os gargalos do desenho anterior. O estado observado tinha branch `Preview` permanente, promoção `Preview -> main`, testes pesados repetidos e auditoria pública global de mídia no caminho comum.
 
 ADR-0015 formalizou a direção recovery-oriented: gates proporcionais ao risco, SHA exato e rollback simples.
 
 ## Fase 2 — CI rápido
-
-**Estado: concluída em 2026-09-14.**
 
 Baseline observado na PR docs-only #329:
 
@@ -105,7 +95,7 @@ Companion:         ~4m05s
 MSI docs-only:     sim
 ```
 
-Resultado da PR #332:
+Depois da PR #332:
 
 ```text
 workflow-contract: ~13s
@@ -119,62 +109,31 @@ O fast CI preservou `pnpm check`, build e migration safety policy; Chromium/E2E/
 
 ## Fase 3 — domínios pesados condicionais
 
-**Estado: concluída em 2026-09-14.**
-
-### 3A — shadow mode
-
-PR #334 provou classificador + agregador. Um teste de mídia reproduziu o HTTP 403 do asset antigo `backgroud_jornada.avif`, demonstrando por evidência que full public audit global não deveria ser merge gate.
-
-### 3B — branch protection
-
-Depois do shadow mode, protections foram cortadas para:
+Um único classificador passou a produzir:
 
 ```text
-Preview:
-  required-ci
-
-main:
-  required-ci
-  promotion-source
+web=true|false
+db=true|false
+companion=true|false
+media=true|false
 ```
 
-O segundo contexto de `main` permaneceu temporariamente apenas para a transição da topologia antiga.
-
-### 3C — seletividade ativa
-
-PR #337:
+A PR #337 ativou a seletividade real. A PR #338 foi o aceite docs-only:
 
 ```text
-DB relevante: false
-PostgreSQL:    skipped
-mídia:         skipped
-Companion:     uma única chamada reutilizável quando relevante
-required-ci:   success
+workflow-contract: success
+validate:          success
+PostgreSQL:        skipped
+Companion:         skipped
+mídia:             skipped
+required-ci:       success
 ```
 
-PR #338 foi o aceite docs-only: DB, Companion e mídia pesados ficaram `skipped`; nenhum MSI foi iniciado.
+Mudanças relevantes continuam fail-closed: domínio relevante exige `success`; apenas domínio irrelevante pode terminar `skipped`.
 
-Regra central:
+## Fase 4 — Preview por PR e main-only
 
-```text
-workflow-contract -> success obrigatório
-validate          -> success obrigatório
-domínio relevante -> success obrigatório
-domínio irrelevante -> skipped legítimo
-                         |
-                         v
-                    required-ci
-```
-
-## Fase 4 — Preview por PR e cutover main-only
-
-**Estado: concluída tecnicamente em 2026-09-14.**
-
-### Preview por PR
-
-PR #341 substituiu o Preview CD baseado na branch permanente por um deployment Vercel imutável no próprio grafo do CI.
-
-Contrato:
+A PR #341 substituiu o Preview CD baseado em branch por deployment Vercel dentro do próprio grafo do CI:
 
 ```text
 PR
@@ -187,183 +146,193 @@ PR
  -> required-ci
 ```
 
-A primeira implementação expôs um detalhe do GitHub Actions: ancestrais `skipped` propagavam o `success()` implícito pelo `needs`. O job de Preview passou a usar explicitamente `always()` + `ci-gate == success`, aceitando skips legítimos sem aceitar falha real.
+O job de Preview usa `always()` combinado com `ci-gate == success` para não herdar falsamente o `success()` implícito de ancestrais legitimamente `skipped`.
 
-Depois do merge da #341, um push na branch `Preview` gerou apenas CI; o antigo `Preview CD` por `workflow_run` não disparou. Em push, `preview-deployment=skipped` é esperado; em PR, Preview é obrigatório antes do `required-ci` verde.
-
-### Prova main-only
-
-A PR #345 foi aberta diretamente:
+A PR #345 provou o fluxo direto:
 
 ```text
 fix/production-v3-media-release-scope -> main
 ```
 
-Sem passagem por `Preview`.
-
-Resultados:
-
-```text
-promotion-source shim: success
-workflow-contract:     success
-validate:              success
-DB:                    skipped
-Companion:             skipped
-mídia:                 skipped
-PR Preview + smoke:    success
-required-ci:           success
-merge main:            a8a9253e13c159263fc1f4a4672d8690f4c62e33
-```
-
-Isso comprova que a branch `Preview` deixou de ser dependência lógica do fluxo web. A remoção física ocorre na Fase 6.
+Sem passagem por uma branch de integração.
 
 ## Fase 5 — Production v3
 
-**Estado: concluída tecnicamente em 2026-09-14.**
+### Problema comprovado no desenho anterior
 
-### Baseline antes
+O Production legado run `34896656582` executou trabalho de Supabase mesmo sem migration nova e morreu antes do build ao fazer full public audit de mídia por causa de um asset histórico com HTTP 403.
 
-O Production legado do merge `5715fa02...` executou run `34896656582`.
+Esse run foi a evidência concreta de acoplamento indevido entre deploy web comum e estado global do acervo de mídia.
 
-Mesmo sem migration nova, ele:
+### Contrato novo
 
-- instalou Supabase CLI;
-- autenticou no Supabase Production;
-- preparou o caminho de migration;
-- executou full public audit global de mídia.
+Production v3 preserva apenas os gates úteis:
 
-A release morreu em:
-
-```text
-backgroud_jornada.avif -> HTTP 403
-```
-
-Build, staged deploy, smoke e promote não chegaram a executar. Era o exemplo exato de uma falha antiga de mídia bloqueando uma mudança web não relacionada.
-
-### Production v3
-
-PR #343 reescreveu Production para preservar somente os gates úteis:
-
-- SHA pedido precisa ser o `main` atual;
-- source precisa ser resultado de uma PR realmente mergeada em `main`;
-- baseline é o SHA que `/api/version` informa estar realmente em Production;
-- esse SHA precisa ser ancestral do novo `main`;
+- SHA solicitado precisa ser o HEAD atual de `main`;
+- SHA precisa vir de PR realmente mergeada em `main`;
+- baseline é o SHA que `/api/version` informa estar realmente publicado;
+- baseline precisa ser ancestral da nova release;
 - migration SQL pendente no intervalo Production real -> novo main ativa Supabase fail-closed;
-- sem migration, Supabase CLI e credenciais de DB não participam da release;
+- sem migration, Supabase CLI e credenciais de DB não participam;
+- mídia automática considera apenas manifest canônico alterado no merge atual;
 - build ocorre uma vez;
 - deployment é staged sem tráfego;
 - smoke valida o staged artifact;
 - o mesmo deployment é promovido;
-- canonical `/health` e `/version` precisam convergir para SHA/release esperados;
-- receipt final é pequeno.
+- `/api/health` e `/api/version` canônicos precisam convergir para SHA/release esperados;
+- receipt final registra a release.
 
-A longa lógica de migrations saiu do YAML para `tools/ci/apply-production-migrations.sh`.
-
-### Primeira tentativa do v3 — falha segura que melhorou o desenho
-
-Run `34899700811`, SHA `3462685a...`:
-
-```text
-source/provenance: success
-baseline Production: 42b5d50d840f5b0dd7bf5a8b5d475c98673d454c
-migrations: false
-mediaPublish: true
-falha: R2_ACCOUNT_ID ausente
-build/stage/promote: não executados
-```
-
-O intervalo acumulado desde o Production antigo continha um manifest histórico. Isso revelou que o deploy web estava tentando assumir um contrato de escrita R2 que nunca existiu nos GitHub Environments históricos.
-
-A correção #345 separou os dois conceitos:
+A primeira tentativa v3 (`34899700811`) falhou de forma segura antes de mutação porque o desenho ainda tratava um manifest histórico como mídia a publicar. A PR #345 separou os escopos:
 
 ```text
 migrations:
   acumulativas desde o SHA realmente publicado
-  -> uma release falha não esquece schema pendente
 
 media publish:
   somente manifests alterados no merge atual
-  -> backlog histórico de mídia não bloqueia web deploy
 ```
 
-Teste explícito garante que `manifest histórico + merge atual sem mídia => mediaPublish=false`.
-
-### Primeiro Production v3 verde
-
-PR #345 mergeou diretamente em `main`:
+Primeiro Production v3 verde:
 
 ```text
+PR main-only:   #345
 main SHA:       a8a9253e13c159263fc1f4a4672d8690f4c62e33
-CI push:        34900494222 -> success
-Production CD:  34900630352 -> success
+CI:             34900494222 success
+Production CD:  34900630352 success
+Supabase:       skipped
+mídia publish:  skipped
+stage:          success
+smoke:          success
+promote:        success
+canonical:      success
+receipt:        success
 ```
-
-No Production run:
-
-```text
-source SHA atual:                   success
-PR mergeada em main:                success
-baseline canonical:                 success
-release plan:                       success
-credentials condicionais:           success
-build Production:                   success
-stage sem tráfego:                  success
-Supabase CLI:                       skipped
-migration policy/apply:             skipped
-publish/readback de mídia:          skipped
-staged smoke:                       success
-promote do mesmo artifact:          success
-canonical health/version:           success
-release receipt:                    success
-```
-
-Esse run é o aceite da Fase 5.
 
 ## Fase 6 — limpeza final
 
-**Estado: próxima.**
+### 6A — remover dependências funcionais da branch antiga
 
-A limpeza só começa depois da prova Production acima e não muda o modelo técnico já comprovado.
+A PR #347 removeu `Preview` dos triggers do CI web e do Companion Dependency Freshness e apagou `preview-branch-guard.yml`, que existia apenas para recriar a antiga branch permanente.
 
-Objetivos:
+Aceite da PR #347:
 
-- remover `promotion-source` dos required contexts de `main`;
-- apagar o workflow shim `promotion-policy.yml`;
-- remover `Preview` dos triggers do CI;
-- apagar `preview-branch-guard.yml`;
-- revisar workflows especializados que ainda referenciem `Preview` e preservar apenas referências realmente necessárias ao domínio deles;
-- apagar a branch remota `Preview` depois de não existir dependência funcional;
-- atualizar `ci-cd.md`, `environments.md`, índices/ADR quando aplicável;
-- normalizar o metadata deste plano e regenerar `docs/documentation/catalog.md`;
-- verificar secrets/triggers obsoletos;
-- provar uma PR final direta para `main` e um Production comum verde.
+```text
+workflow-contract: success
+validate:          success
+DB:                skipped
+Companion:         skipped
+mídia:             skipped
+PR Preview:        success
+required-ci:       success
+```
 
-## Estado alvo aceito
+Merge em `main`:
+
+```text
+a46e8292eaed7e1cff32addd181668d83fd76be4
+```
+
+CI do push main-only:
+
+```text
+run 34902095910 -> success
+preview-deployment -> skipped esperado em push
+required-ci -> success
+```
+
+Production após a limpeza:
+
+```text
+run 34902180398 -> success
+build -> success
+Supabase -> skipped
+mídia -> skipped
+staged smoke -> success
+promote -> success
+canonical -> success
+receipt -> success
+```
+
+### 6B — cutover administrativo e documentação
+
+Antes da remoção física, foi verificado que a branch `Preview` não continha commits exclusivos: `main` estava 9 commits à frente e `Preview` 0 à frente.
+
+Cutover administrativo executado em 2026-09-14:
+
+```text
+main required status checks:
+  required-ci
+
+promotion-source:
+  removido dos required contexts
+
+Preview protection:
+  removida
+
+branch Preview:
+  removida; API retorna HTTP 404
+```
+
+O pacote final remove `promotion-policy.yml`, normaliza os runbooks para o modelo vigente e fecha o catálogo documental.
+
+## Antes e depois
+
+### Antes
 
 ```text
 feature/fix
-   |
-   v
-PR -> main
-   |
-   +-- actionlint + fast CI
-   +-- domínio pesado somente quando relevante
-   +-- Preview exato da PR + smoke
-   |
-   v
-required-ci
-   |
-   v
-merge main
-   |
-   v
-Production staged
-   +-- migration somente se pendente
-   +-- mídia somente se o merge atual trouxer manifest canônico
-   +-- smoke
-   +-- promote mesmo artifact
-   +-- canonical health/version
-   +-- receipt pequeno
-
-incidente recuperável -> rollback -> fix -> redeploy
+ -> PR Preview
+ -> CI comum + Postgres frequente + Companion/MSI frequente
+ -> merge Preview
+ -> Preview CD separado
+ -> homologação
+ -> PR Preview -> main
+ -> promotion-source
+ -> CI novamente
+ -> Production monolítico
+ -> Supabase mesmo sem migration
+ -> full audit global R2
+ -> build/stage/promote
 ```
+
+### Depois
+
+```text
+feature/fix
+ -> PR main
+ -> fast CI
+ -> somente domínios relevantes
+ -> Preview exato da PR + smoke
+ -> required-ci
+ -> merge main
+ -> Production v3
+ -> somente migrations/mídia relevantes
+ -> stage
+ -> smoke
+ -> promote mesmo artifact
+ -> canonical health/version
+ -> receipt
+```
+
+## Definition of Done final
+
+- [x] actionlint no contrato de CI;
+- [x] fast CI comum;
+- [x] DB pesado seletivo;
+- [x] Companion/MSI seletivo;
+- [x] mídia local seletiva;
+- [x] Preview imutável por PR;
+- [x] `required-ci` agrega CI + Preview quando aplicável;
+- [x] PR normal aponta diretamente para `main`;
+- [x] Production prova SHA e PR mergeada em `main`;
+- [x] migrations remotas somente quando pendentes;
+- [x] mídia histórica não bloqueia deploy web comum;
+- [x] Production staged promove exatamente o artefato testado;
+- [x] canonical health/version verificados;
+- [x] branch `Preview` removida sem perda de commits;
+- [x] `promotion-source` removido da protection de `main`;
+- [x] workflows de guard/promoção legados removidos;
+- [x] runbooks atualizados para o estado vigente;
+- [x] evidências before/after preservadas.
+
+**Estado final: simplificação CI/CD concluída.**
