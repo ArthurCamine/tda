@@ -325,22 +325,9 @@ jobs:
           RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 8 --retry-delay 3 --retry-all-errors \
-            "$PRODUCTION_ORIGIN/api/health" > canonical-health.json
-          curl --fail --silent --show-error --retry 8 --retry-delay 3 --retry-all-errors \
-            "$PRODUCTION_ORIGIN/api/version" > canonical-version.json
+          node tools/ci/verify-production-canonical.mjs
           curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-all-errors \
             --output /dev/null "$PRODUCTION_ORIGIN/"
-
-          node --input-type=module -e '
-            import fs from "node:fs";
-            const health = JSON.parse(fs.readFileSync("canonical-health.json", "utf8"));
-            const version = JSON.parse(fs.readFileSync("canonical-version.json", "utf8"));
-            if (health.ok !== true) throw new Error("Canonical production health is not ok");
-            if (health.commit !== process.env.SOURCE_SHA) throw new Error(`Canonical commit mismatch: ${health.commit}`);
-            if (version.commit !== process.env.SOURCE_SHA) throw new Error(`Canonical version commit mismatch: ${version.commit}`);
-            if (version.release !== process.env.RELEASE_ID) throw new Error(`Canonical release mismatch: ${version.release}`);
-          '
 
       - name: Capture post-deploy error scan
         shell: bash

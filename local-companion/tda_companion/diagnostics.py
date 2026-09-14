@@ -59,7 +59,7 @@ def _sqlite_check(path: Path) -> dict[str, Any]:
         finally:
             db.close()
         if row and row[0] == "ok":
-            return _check("sqlite", "pass", "Banco local íntegro")
+            return _check(code="sqlite", status="pass", message="Banco local íntegro")
         return _check("sqlite", "fail", "SQLite integrity_check encontrou problema")
     except sqlite3.Error as exc:
         return _check("sqlite", "fail", "Não foi possível validar o banco local", type(exc).__name__)
@@ -263,7 +263,12 @@ def _model_check(models_root: Path, profile_id: str, code: str, label: str) -> d
     state = inspect_model_install(models_root, get_profile(profile_id), verify_hash=False)
     status = state.get("status")
     if status == "ready":
-        return _check(code, "pass", f"{label} pronto")
+        return _check(
+            code,
+            "pass",
+            f"{label} instalado; metadados coerentes",
+            "integrity=metadata-only; SHA-256 completo é validado no gate físico",
+        )
     if status == "missing":
         return _check(code, "unavailable", f"{label} ainda não foi instalado")
     return _check(code, "fail", f"{label} precisa de reparo", str(status or "invalid"))
@@ -273,7 +278,12 @@ def _qwen_aligner_check(models_root: Path) -> dict[str, Any]:
     state = inspect_model_install(models_root, ALIGNER_PROFILE, verify_hash=False)
     status = state.get("status")
     if status == "ready":
-        return _check("qwen_aligner", "pass", "Alinhador Qwen pronto")
+        return _check(
+            "qwen_aligner",
+            "pass",
+            "Alinhador Qwen instalado; metadados coerentes",
+            "integrity=metadata-only; SHA-256 completo é validado no gate físico",
+        )
     if status == "missing":
         return _check("qwen_aligner", "unavailable", "Alinhador Qwen ainda não foi instalado")
     return _check("qwen_aligner", "fail", "Alinhador Qwen precisa de reparo", str(status or "invalid"))
@@ -289,7 +299,8 @@ def _qwen_gate_check(paths: CompanionPaths, profile_id: str, code: str, label: s
     )
     if state.get("ready") is True:
         accepted_at = state.get("accepted_at")
-        return _check(code, "pass", f"Gate físico {label} aceito", str(accepted_at) if accepted_at else None)
+        detail = f"{accepted_at or 'aceite registrado'} · integrity=sha256-full-at-acceptance"
+        return _check(code, "pass", f"Gate físico {label} aceito", detail)
     status = str(state.get("status") or "missing")
     reason = str(state.get("reason") or status)
     if status == "missing":
