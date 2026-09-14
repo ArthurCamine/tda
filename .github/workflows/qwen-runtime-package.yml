@@ -43,6 +43,8 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: '0.12.13'
@@ -58,5 +60,5 @@ jobs:
             local-companion/out/qwen-runtime-package/TDAQwenRuntimeBundle-*-windows-x64.json
             local-companion/out/qwen-runtime-package/TDAQwenRuntimePackage-*-windows-x64.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           compression-level: 0
