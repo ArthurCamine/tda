@@ -41,10 +41,17 @@ jobs:
     name: qwen-runtime-package-windows-x64
     runs-on: windows-latest
     timeout-minutes: 75
+    env:
+      TDA_SOURCE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Verify exact source checkout
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:TDA_SOURCE_SHA.ToLowerInvariant()) { throw "BUILD_SOURCE_SHA_MISMATCH:$actual" }
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: '0.12.13'
