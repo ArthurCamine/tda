@@ -1,6 +1,6 @@
 # ADR-0015 — Entrega simples orientada a recuperação
 
-> Status: proposto
+> Status: accepted
 > Owner: operations / architecture
 > Última revisão: 2026-09-14
 > Fonte de verdade: decisão de arquitetura desta migração; ADR-0012 e runbooks atuais permanecem vigentes até a implementação
@@ -13,7 +13,7 @@ A esteira atual prioriza impedir qualquer publicação incorreta. Esse desenho a
 
 Para o risco atual do produto, uma falha recuperável na aplicação pode ser tratada de forma simples: voltar ao deployment anterior, corrigir e publicar novamente. Proteções mais fortes continuam justificadas onde rollback não resolve bem, principalmente credenciais, autorização e migrations.
 
-## Decisão proposta
+## Decisão
 
 A próxima versão da entrega será orientada a **simplicidade, feedback rápido e recuperação fácil**.
 
@@ -81,14 +81,14 @@ Esses custos são proporcionais ao uso atual do TDA.
 
 ADR-0012 continua sendo evidência histórica e contrato da implementação vigente durante a migração.
 
-Esta decisão preserva sua escolha principal — GitHub Actions como único controlador e Vercel Git auto-deploy desligado — mas propõe substituir, quando implementado:
+Esta decisão preserva sua escolha principal — GitHub Actions como único controlador e Vercel Git auto-deploy desligado — mas substitui progressivamente, conforme cada fase for integrada:
 
 - branch permanente `Preview` por Preview de PR;
 - provenance `Preview -> main` por fluxo direto de PR para `main`;
 - gates globais por gates condicionais ao domínio alterado.
 
-Não reescrever ADR-0012 para fingir que a arquitetura anterior nunca existiu.
+Não reescrever ADR-0012 para fingir que a arquitetura anterior nunca existiu. Quando a migração terminar, ADR-0012 deve ser marcado como superseded por este ADR sem apagar seu conteúdo histórico.
 
 ## Adoção
 
-A implementação está dividida em seis fases documentadas no plano operacional de simplificação. Este ADR só se torna contrato vigente de runtime à medida que cada fase é integrada e os runbooks atuais forem atualizados com o estado realmente publicado.
+A implementação está dividida em seis fases documentadas no plano operacional de simplificação. A decisão está aceita, mas o runtime continua seguindo os runbooks vigentes até que cada fase correspondente seja integrada e documentada.
