@@ -71,7 +71,7 @@ def test_headless_remains_compatibility_alias_for_agent(monkeypatch, tmp_path: P
     assert args.agent is True
 
 
-def test_installed_acceptance_requires_candidate_payload_source_craig_and_result(monkeypatch, tmp_path: Path):
+def test_installed_acceptance_requires_candidate_payload_source_craig_bits_and_result(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     with pytest.raises(SystemExit):
         parse_args(["--installed-acceptance"])
@@ -85,6 +85,7 @@ def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_pa
         "--acceptance-payload-manifest", str(tmp_path / "payload.json"),
         "--acceptance-source-sha", "0" * 40,
         "--acceptance-craig-zip", str(tmp_path / "craig.zip"),
+        "--acceptance-bits-evidence", str(tmp_path / "bits.json"),
         "--acceptance-result-file", str(tmp_path / "receipt.json"),
     ]
     for observation in sorted(REQUIRED_OBSERVATIONS):
@@ -93,4 +94,5 @@ def test_installed_acceptance_parses_only_named_observations(monkeypatch, tmp_pa
     assert args.installed_acceptance is True
     assert args.acceptance_payload_manifest == tmp_path / "payload.json"
     assert args.acceptance_craig_zip == tmp_path / "craig.zip"
+    assert args.acceptance_bits_evidence == tmp_path / "bits.json"
     assert frozenset(args.acceptance_observation or ()) == REQUIRED_OBSERVATIONS

@@ -45,7 +45,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Require current stable Companion dependencies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/check-companion-dependency-freshness.py
       - name: Require current pinned ASR model revisions
         run: python3 tools/check-companion-model-freshness.py

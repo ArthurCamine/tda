@@ -1,0 +1,156 @@
+name: Runtime RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: Runtime family to stage
+        required: true
+        type: choice
+        options:
+          - whisper
+          - qwen
+      source_sha:
+        description: Exact main SHA with a successful runtime build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-rc:
+    name: publish immutable runtime RC
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FAMILY: ${{ inputs.family }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require main and exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "::error::Runtime RC must be dispatched from main"; exit 1; }
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::source_sha must be one lowercase 40-character SHA"; exit 1; }
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          [[ "$MAIN_SHA" == "$SOURCE_SHA" ]] || { echo "::error::source_sha must equal current main ($MAIN_SHA)"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve exact successful runtime artifact
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || exit 1
+          TREE_SHA="$(git rev-parse 'HEAD^{tree}')"
+          if [[ "$FAMILY" == "whisper" ]]; then
+            WORKFLOW="whisper-runtime.yml"
+            ARTIFACT="TDAWhisperRuntime-windows-x64"
+          else
+            WORKFLOW="qwen-runtime-package.yml"
+            ARTIFACT="TDAQwenRuntimeBundle-windows-x64"
+          fi
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --branch main --commit "$SOURCE_SHA" --status success --limit 50 \
+            --json databaseId,headSha,status,conclusion,createdAt > runtime-runs.json
+          RUN_ID="$(python - <<'PY'
+          import json, os
+          source = os.environ['SOURCE_SHA']
+          rows = json.load(open('runtime-runs.json', encoding='utf-8'))
+          rows = [r for r in rows if r.get('headSha') == source and r.get('status') == 'completed' and r.get('conclusion') == 'success']
+          if not rows:
+              raise SystemExit('NO_SUCCESSFUL_RUNTIME_RUN_FOR_SOURCE')
+          rows.sort(key=lambda r: (r.get('createdAt') or '', int(r.get('databaseId') or 0)))
+          print(rows[-1]['databaseId'])
+          PY
+          )"
+          echo "tree_sha=$TREE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact validated runtime artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ steps.runtime.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" --name "${{ steps.runtime.outputs.artifact }}" --dir dist
+
+      - name: Build deterministic candidate manifest
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          RC_TAG="$(PYTHONPATH=local-companion python -m tda_companion.runtime_release_evidence create-candidate \
+            --family "$FAMILY" --assets-root dist --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "${{ steps.runtime.outputs.tree_sha }}" --workflow-run-id "${{ steps.runtime.outputs.run_id }}" \
+            --output dist/TDARuntime-candidate.json)"
+          [[ "$RC_TAG" =~ ^companion-(whisper|qwen)-runtime-rc-v[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$ ]] || exit 1
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish or verify immutable prerelease
+        shell: bash
+        env:
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            rm -rf rc-check && mkdir rc-check
+            gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > rc-release.json
+            python - <<'PY'
+          import json, os
+          value = json.load(open('rc-release.json', encoding='utf-8'))
+          if value.get('tagName') != os.environ['RC_TAG'] or value.get('isDraft') is not False or value.get('isPrerelease') is not True:
+              raise SystemExit('RC_RELEASE_STATE_INVALID')
+          if value.get('targetCommitish') != os.environ['SOURCE_SHA']:
+              raise SystemExit('RC_RELEASE_TARGET_MISMATCH')
+          PY
+            gh release download "$RC_TAG" --repo "$GITHUB_REPOSITORY" --dir rc-check
+            cmp -s dist/TDARuntime-candidate.json rc-check/TDARuntime-candidate.json || { echo "::error::Existing RC manifest differs"; exit 1; }
+            PYTHONPATH=local-companion python - <<'PY'
+          import json
+          from pathlib import Path
+          from tda_companion.runtime_release_evidence import verify_candidate_assets
+          candidate = json.loads(Path('rc-check/TDARuntime-candidate.json').read_text(encoding='utf-8'))
+          verify_candidate_assets(candidate, Path('rc-check'))
+          PY
+          else
+            if git ls-remote --exit-code --tags origin "refs/tags/$RC_TAG" >/dev/null 2>&1; then
+              echo "::error::RC tag exists without a release"; exit 1
+            fi
+            python - <<'PY' > asset-list.txt
+          import json
+          value = json.load(open('dist/TDARuntime-candidate.json', encoding='utf-8'))
+          for item in value['assets']:
+              print('dist/' + item['name'])
+          PY
+            mapfile -t ASSETS < asset-list.txt
+            cat > release-notes.md <<EOF
+          Candidato imutável do runtime ${FAMILY} para aceite físico na GPU real.
+
+          - Source SHA: ${SOURCE_SHA}
+          - Source tree SHA: ${{ steps.runtime.outputs.tree_sha }}
+          - Runtime workflow run: ${{ steps.runtime.outputs.run_id }}
+          - Canal: RC / prerelease
+          - Stable exige receipt físico ligado ao mesmo runtime_archive_sha256 e promove este mesmo release sem rebuild.
+          EOF
+            gh release create "$RC_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease \
+              --title "TDA ${FAMILY} runtime RC ${SOURCE_SHA:0:12}" --notes-file release-notes.md \
+              dist/TDARuntime-candidate.json "${ASSETS[@]}"
+          fi
+
+      - name: Verify final RC identity
+        shell: bash
+        env:
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$RC_TAG:refs/tags/$RC_TAG"
+          [[ "$(git rev-list -n 1 "$RC_TAG")" == "$SOURCE_SHA" ]] || { echo "::error::RC tag target mismatch"; exit 1; }
+          echo "RUNTIME_RC_READY family=$FAMILY tag=$RC_TAG source=$SOURCE_SHA run=${{ steps.runtime.outputs.run_id }}"

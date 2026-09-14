@@ -3,14 +3,17 @@ from __future__ import annotations
 import errno
 import json
 import socket
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from . import VERSION
+from .loopback_owner import LoopbackOwnerError, verify_loopback_owner
 
 PRODUCT_ID = "tda-companion"
 API_VERSION = "1"
@@ -126,8 +129,10 @@ class AgentConnection:
     """Verified, recoverable connection to the per-user loopback Agent.
 
     Every authenticated request first proves the process listening on the port is
-    the TDA Agent. Recovery is serialized and bounded so concurrent UI polling
-    cannot create a spawn storm.
+    the TDA Agent. In the packaged desktop that proof also binds the reported PID
+    to the real IPv4 loopback listener and to this TDACompanion executable before
+    any Bearer token is sent. Recovery is serialized and bounded so concurrent UI
+    polling cannot create a spawn storm.
     """
 
     def __init__(
@@ -137,6 +142,8 @@ class AgentConnection:
         start_agent: Callable[[], Any],
         *,
         expected_version: str = VERSION,
+        expected_executable: Path | None = None,
+        owner_verifier: Callable[[int, int, Path], None] = verify_loopback_owner,
         opener: Any | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -145,6 +152,13 @@ class AgentConnection:
         self.port = port
         self.base = f"http://127.0.0.1:{port}/api/v1"
         self.expected_version = expected_version
+        if expected_executable is not None:
+            self.expected_executable: Path | None = Path(expected_executable)
+        elif getattr(sys, "frozen", False):
+            self.expected_executable = Path(sys.executable)
+        else:
+            self.expected_executable = None
+        self.owner_verifier = owner_verifier
         self.start_agent = start_agent
         self.opener = opener or loopback_opener()
         self.clock = clock
@@ -204,6 +218,14 @@ class AgentConnection:
             timeout=timeout,
             opener=self.opener,
         )
+        if probe.usable and self.expected_executable is not None:
+            pid = (probe.payload or {}).get("pid")
+            try:
+                self.owner_verifier(self.port, int(pid), self.expected_executable)
+            except LoopbackOwnerError as exc:
+                probe = AgentProbe("foreign", probe.payload, exc.code)
+            except (OSError, ValueError, TypeError):
+                probe = AgentProbe("foreign", probe.payload, "AGENT_PORT_OWNER_UNVERIFIED")
         self._record_probe(probe)
         return probe
 
