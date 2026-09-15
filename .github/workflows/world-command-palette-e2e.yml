@@ -7,7 +7,7 @@ on:
       - ".github/workflows/world-command-palette-e2e.yml"
       - "playwright.config.ts"
       - "tests/world-authoring-command-palette.spec.ts"
-      - "src/app/__e2e__/world-command-palette/**"
+      - "src/app/e2e-fixtures/world-command-palette/**"
       - "src/features/world-explorer/components/world-command-palette.tsx"
       - "src/features/world-explorer/components/world-command-palette-trigger.tsx"
       - "src/features/world-explorer/components/world-command-palette-e2e-fixture.tsx"
