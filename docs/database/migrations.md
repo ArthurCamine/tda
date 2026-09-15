@@ -100,6 +100,10 @@ A estratégia é:
 - `20260910002529 world_graph_authoring` — migration aplicada remotamente; arquivo local equivalente permanece `20260909215000_world_graph_authoring.sql`. Não reexecutar DDL para alinhar somente o número.
 - `20260910012546 world_graph_provenance_guard` — hardening aplicado remotamente; arquivo local equivalente `20260910005000_world_graph_provenance_guard.sql`. Não reexecutar DDL para alinhar somente o timestamp.
 
+### 2026-09-15 — contrato editorial da transcrição
+
+- `20260915211245 transcript_review_contract_comments` — migration COMMENT-only aplicada remotamente; arquivo local equivalente `20260915211000_transcript_review_contract_comments.sql`. Não reexecutar DDL nem editar migration history apenas para alinhar o timestamp.
+
 ## Boundary do reboot aplicado
 
 As migrations abaixo são mudanças explicitamente assumidas, versionadas e observadas no histórico remoto do novo repositório TDA.
@@ -229,7 +233,7 @@ Rollback lógico:
 
 ### `20260915211000_transcript_review_contract_comments`
 
-**Estado:** versionada no reboot em 2026-09-15; **ainda não aplicada no Supabase canônico** neste recorte de PR.
+**Estado:** aplicada no Supabase canônico em 2026-09-15 sob o migration history remoto `20260915211245 transcript_review_contract_comments`. O arquivo local preserva o ID versionado pela PR #368; a divergência de timestamp é nominal e não autoriza reexecutar DDL nem editar migration history.
 
 Objetivo:
 
@@ -244,12 +248,14 @@ Compatibilidade e limites:
 - não executa backfill e preserva deliberadamente os 30.839 registros históricos `pending/false` observados antes da aplicação;
 - não ativa o transcript-sync de produção nem muda os writers existentes.
 
-Validação pré-aplicação:
+Validação:
 
-- default canônico confirmado read-only como `review_status='pending'` e `needs_review=true`;
-- distribuição confirmada como `pending/false=30.839`, `pending/true=17`, `needs_review/true=1`;
+- read-back confirmou `review_status DEFAULT 'pending'::text` e `needs_review DEFAULT true`;
+- os comentários físicos de `review_status` e `needs_review` correspondem exatamente ao SQL versionado;
+- a distribuição permaneceu `30.857` segmentos no total, com `pending/false=30.839`, `pending/true=17`, `needs_review/true=1`, `approved/false=0` e `discarded/false=0`;
 - o PostgreSQL sintético aplica a migration e `supabase/tests/transcript_review_default.sql` valida default e comentários;
-- `src/features/transcript-sync/database.test.ts` continua provando novos imports como `review_status='pending'` + `needs_review=true`.
+- `src/features/transcript-sync/database.test.ts` continua provando novos imports como `review_status='pending'` + `needs_review=true`;
+- advisors de segurança/performance foram reexecutados após a aplicação sem classe nova atribuível à migration COMMENT-only.
 
 Rollback lógico:
 
