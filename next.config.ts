@@ -1,6 +1,25 @@
 import type { NextConfig } from "next";
 
 const standaloneNoindexLores = ["d", "yllith"] as const;
+const canonicalSupabaseOrigin = "https://dmrqnbdvbkfqzctcerbx.supabase.co";
+const canonicalSupabaseWebsocketOrigin = "wss://dmrqnbdvbkfqzctcerbx.supabase.co";
+const canonicalMediaOrigin = "https://media.dnd.faysk.dev";
+
+const contentSecurityPolicyReportOnly = [
+	"default-src 'self'",
+	"base-uri 'self'",
+	"object-src 'none'",
+	"frame-ancestors 'none'",
+	"form-action 'self'",
+	"script-src 'self' 'unsafe-inline'",
+	"style-src 'self' 'unsafe-inline'",
+	`img-src 'self' data: blob: ${canonicalMediaOrigin} ${canonicalSupabaseOrigin}`,
+	"font-src 'self' data:",
+	`connect-src 'self' ${canonicalSupabaseOrigin} ${canonicalSupabaseWebsocketOrigin} ${canonicalMediaOrigin}`,
+	`media-src 'self' blob: ${canonicalMediaOrigin}`,
+	"worker-src 'self' blob:",
+	"manifest-src 'self'",
+].join("; ");
 
 const config: NextConfig = {
 	poweredByHeader: false,
@@ -56,6 +75,10 @@ const config: NextConfig = {
 					{
 						key: "Permissions-Policy",
 						value: "camera=(), microphone=(), geolocation=()",
+					},
+					{
+						key: "Content-Security-Policy-Report-Only",
+						value: contentSecurityPolicyReportOnly,
 					},
 				],
 			},
