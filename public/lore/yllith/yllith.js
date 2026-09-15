@@ -5,6 +5,36 @@
   artDirectionStylesheet.dataset.yllithArtDirection = 'directors-cut';
   document.head.append(artDirectionStylesheet);
 
+  const hqFixesStylesheet = document.createElement('link');
+  hqFixesStylesheet.rel = 'stylesheet';
+  hqFixesStylesheet.href = 'yllith-hq-fixes.css';
+  hqFixesStylesheet.dataset.yllithHqFixes = 'quality-first';
+  document.head.append(hqFixesStylesheet);
+
+  const hq = {
+    hero: 'https://media.dnd.faysk.dev/lore/yllith/384d17c645ce923a5fc1bb6526bb213d50f9e5c4ea0a6e90e8320d6aa33cc73f/yllith-hq.png',
+    journeyCharacter: 'https://media.dnd.faysk.dev/lore/yllith/2c810a111ee7b946d95aad965366c85bce1ce0880bf81e771d4f0a2ea063a1ec/yllith-jornada-hq.png',
+    parents: 'https://media.dnd.faysk.dev/lore/yllith/99041fe8c1a46cb5be28e02e4a9f801ebe2835dd961a9b8be432cfddcee8d363/despedida-pais-hq.png',
+    uncles: 'https://media.dnd.faysk.dev/lore/yllith/be6afe09d0092661d9e14374548bad5a28e31693a7dceae173e3ae1068c064ee/despedida-tios-hq.png',
+    dream: 'https://media.dnd.faysk.dev/lore/yllith/c128f9446018b979aaa2080c3a068d21ede2426946c0ee7608c31385104ceb9b/sonho-hq.png',
+    map: 'https://media.dnd.faysk.dev/lore/yllith/2b06647874d9fe8ac121979ad1336ef935ad79022d36629d72de286b65eea4b6/mapa-hq.png',
+    journey: 'https://media.dnd.faysk.dev/lore/yllith/803e8e16fa7042dc4cb71a0708f22243e369f35981f86c0a50fba06edfe14c67/jornada-hq.png',
+  };
+
+  const useHqSource = (selector, src) => {
+    const image = document.querySelector(selector);
+    if (image instanceof HTMLImageElement) image.src = src;
+  };
+
+  useHqSource('.hero-character', hq.hero);
+  useHqSource('#infancia .story-media img', hq.journeyCharacter);
+  useHqSource('.farewell-bg', hq.parents);
+  useHqSource('section[aria-labelledby="tios-title"] .story-media img:first-child', hq.uncles);
+  useHqSource('.dream-stage > img:first-child', hq.dream);
+  useHqSource('.map-background', hq.map);
+  useHqSource('.departure-art img', hq.journey);
+  useHqSource('.future-art img', hq.journeyCharacter);
+
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -23,8 +53,6 @@
 
   if (!progressBar) return;
 
-  // Progressive reveal. Content remains visible when JS is disabled because the
-  // static HTML is complete; JS simply adds cinematic entry timing.
   if (!reduceMotion && 'IntersectionObserver' in window) {
     const revealObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
@@ -43,7 +71,6 @@
     });
   }
 
-  // Active chapter rail.
   if ('IntersectionObserver' in window) {
     const sectionObserver = new IntersectionObserver((entries) => {
       const visible = entries
@@ -79,11 +106,9 @@
 
     if (reduceMotion) return;
 
-    // Scene layer parallax is intentionally restrained. The sources are authored
-    // as registered canvases, so depth must never destroy their alignment.
     sceneLayers.forEach((layer) => {
       const stage = layer.closest('[data-scene]');
-      if (!stage) return;
+      if (!stage || getComputedStyle(layer).display === 'none') return;
       const rect = stage.getBoundingClientRect();
       if (rect.bottom < -200 || rect.top > window.innerHeight + 200) return;
       const local = sceneProgress(stage) - 0.5;
@@ -91,22 +116,6 @@
       const travel = Math.min(window.innerHeight * 0.15, 108);
       layer.style.setProperty('--sy', `${local * speed * travel * 3.2}px`);
     });
-
-    if (dreamStage) {
-      const dreamProgress = sceneProgress(dreamStage);
-      const opacity = clamp(
-        lerp(0.40, 0.90, Math.sin(dreamProgress * Math.PI) * 0.92 + 0.08),
-        0.40,
-        0.90,
-      );
-      dreamStage.style.setProperty('--spirit-opacity', opacity.toFixed(3));
-    }
-
-    if (farewellStage) {
-      const farewellProgress = sceneProgress(farewellStage);
-      const separation = lerp(-6, 10, farewellProgress);
-      farewellStage.style.setProperty('--farewell-x', `${separation}px`);
-    }
 
     if (identityStage) {
       const identityProgress = sceneProgress(identityStage);
@@ -121,12 +130,6 @@
       identityStage.style.setProperty('--new-scale', lerp(0.88, 1, newOpacity).toFixed(3));
       identityStage.style.setProperty('--slash-scale', clamp(phase * 1.35, 0, 1).toFixed(3));
     }
-
-    if (mapStage && mapSurface) {
-      const mapProgress = sceneProgress(mapStage);
-      mapSurface.style.setProperty('--hand-y', `${lerp(7, -3, mapProgress)}px`);
-      mapSurface.style.setProperty('--map-bg-y', `${lerp(-2, 3, mapProgress)}px`);
-    }
   }
 
   function requestTick() {
@@ -140,7 +143,6 @@
   window.addEventListener('resize', requestTick, { passive: true });
   updateScroll();
 
-  // Pointer parallax on the hero: physical weight, not UI spectacle.
   if (!reduceMotion && heroCharacter && window.matchMedia('(pointer:fine)').matches) {
     const hero = document.querySelector('.hero');
     hero?.addEventListener('pointermove', (event) => {
@@ -153,32 +155,6 @@
     hero?.addEventListener('pointerleave', () => {
       heroCharacter.style.setProperty('--px', '0px');
       heroCharacter.style.setProperty('--py', '0px');
-    });
-  }
-
-  // The map is a physical object. Motion is deliberately tiny so the two
-  // authored layers (map + hands) remain registered to each other.
-  if (!reduceMotion && mapSurface && window.matchMedia('(pointer:fine)').matches) {
-    mapSurface.addEventListener('pointermove', (event) => {
-      const rect = mapSurface.getBoundingClientRect();
-      const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-      const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-      const nx = x - 0.5;
-      const ny = y - 0.5;
-      mapSurface.style.setProperty('--map-ry', `${nx * 1.15}deg`);
-      mapSurface.style.setProperty('--map-rx', `${ny * -0.8}deg`);
-      mapSurface.style.setProperty('--hand-x', `${nx * 3.5}px`);
-      mapSurface.style.setProperty('--map-bg-x', `${nx * -1.5}px`);
-      mapSurface.style.setProperty('--mx', `${x * 100}%`);
-      mapSurface.style.setProperty('--my', `${y * 100}%`);
-    }, { passive: true });
-    mapSurface.addEventListener('pointerleave', () => {
-      mapSurface.style.setProperty('--map-ry', '0deg');
-      mapSurface.style.setProperty('--map-rx', '0deg');
-      mapSurface.style.setProperty('--hand-x', '0px');
-      mapSurface.style.setProperty('--map-bg-x', '0px');
-      mapSurface.style.setProperty('--mx', '50%');
-      mapSurface.style.setProperty('--my', '45%');
     });
   }
 
