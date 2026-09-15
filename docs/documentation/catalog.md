@@ -30,8 +30,8 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0007 — Edit como workbench server-first orientado a capabilities](../adr/0007-edit-workbench.md) | Não declarado | Não declarado | Não declarado |
 | [ADR-0008 — autorização orientada a capabilities e scope](../adr/0008-capability-authorization.md) | identity/access + arquitetura + segurança | accepted | Não declarado |
 | [ADR-0009 — World Explorer multi-hub e layout espacial reorganizável](../adr/0009-world-explorer-multihub-layout.md) | frontend / narrative-memory | accepted | 2026-09-08 |
-| [ADR-0010 — persistência editorial do layout do World Explorer separada do canon](../adr/0010-world-explorer-editorial-layout-persistence.md) | frontend / narrative-memory / identity-access | accepted | 2026-09-08 |
-| [ADR-0011 — persistência física candidata do layout editorial do World Explorer](../adr/0011-world-explorer-layout-physical-persistence.md) | frontend / narrative-memory / dados / identity-access | accepted | Não declarado |
+| [ADR-0010 — persistência editorial do layout do World Explorer separada do canon](../adr/0010-world-explorer-editorial-layout-persistence.md) | frontend / narrative-memory | accepted | 2026-09-08 |
+| [ADR-0011 — persistência física candidata do layout editorial do World Explorer](../adr/0011-world-explorer-layout-physical-persistence.md) | frontend / narrative-memory / identity-access | accepted | Não declarado |
 | [ADR-0012 — GitHub Actions controla a entrega; Vercel Git auto-deploy permanece desligado](../adr/0012-github-actions-controlled-delivery.md) | operations / arquitetura / dados | accepted | Não declarado |
 | [ADR-0013 — TDA Companion como Agent local, Desktop de controle e runtime ASR multi-engine](../adr/0013-companion-agent-desktop-asr.md) | local-companion / processing | accepted | Não declarado |
 | [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md) | Não declarado | Não declarado | Não declarado |
@@ -55,7 +55,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | --- | --- | --- | --- |
 | [Banco de dados — índice](../database/README.md) | dados/Supabase | vigente | 2026-09-07 |
 | [Reconciliações do migration history](../database/migration-reconciliations.md) | dados/Supabase + operations | vigente | 2026-09-10 |
-| [Migrations e evolução do schema](../database/migrations.md) | dados/Supabase | vigente | 2026-09-10 |
+| [Migrations e evolução do schema](../database/migrations.md) | dados/Supabase | vigente | 2026-09-15 |
 | [Relacionamentos e ownership de dados](../database/relationships.md) | dados + domínios | vigente | 2026-09-06 |
 | [Inventário de RPCs privilegiadas do Supabase](../database/rpc-inventory.md) | segurança/dados | vigente / revisão de hardening em andamento | Não declarado |
 | [Catálogo do schema Supabase](../database/schema-catalog.md) | dados/Supabase | implementado | 2026-09-06 |
