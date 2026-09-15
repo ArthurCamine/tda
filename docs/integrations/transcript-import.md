@@ -3,11 +3,11 @@
 > Status: fundação de import/receipt implementada em código candidato; ativação negada; adaptação ao lifecycle revisionado obrigatória antes de produção
 > Owner: sync/consumer + dados/Supabase
 > Última revisão: 2026-09-15
-> Fonte de verdade: `src/features/transcript-sync`, [spec de revisão/publicação](../features/transcript-review-publication.md), ADR-0015 e migrations candidatas correspondentes
+> Fonte de verdade: `src/features/transcript-sync`, [spec de revisão/publicação](../features/transcript-review-publication.md), ADR-0016 e migrations candidatas correspondentes
 
-## Atualização arquitetural — ADR-0015
+## Atualização arquitetural — ADR-0016
 
-A direção de produto foi fechada em [Transcrição — runs locais, revisão, comparação e publicação versionada](../features/transcript-review-publication.md) e ADR-0015:
+A direção de produto foi fechada em [Transcrição — runs locais, revisão, comparação e publicação versionada](../features/transcript-review-publication.md) e ADR-0016:
 
 ```text
 processamento concluído
@@ -74,7 +74,7 @@ A implementação futura de publication revisions deve preservar dessas primitiv
 
 ### O que precisa mudar
 
-O modelo atual insere diretamente em `transcript_segments`. Antes da ativação produtiva, deve ser reconciliado com ADR-0015 para suportar:
+O modelo atual insere diretamente em `transcript_segments`. Antes da ativação produtiva, deve ser reconciliado com ADR-0016 para suportar:
 
 - published revision completa;
 - `current_revision`/equivalente;
