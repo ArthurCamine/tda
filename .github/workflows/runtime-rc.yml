@@ -14,6 +14,10 @@ on:
         description: Exact main SHA with a successful runtime build
         required: true
         type: string
+  workflow_run:
+    workflows: [Whisper Runtime, Qwen Runtime Package]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
@@ -22,45 +26,111 @@ permissions:
 jobs:
   publish-rc:
     name: publish immutable runtime RC
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      FAMILY: ${{ inputs.family }}
-      SOURCE_SHA: ${{ inputs.source_sha }}
+      FAMILY: ${{ github.event_name == 'workflow_dispatch' && inputs.family || (github.event.workflow_run.name == 'Whisper Runtime' && 'whisper' || 'qwen') }}
+      SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.event.workflow_run.head_sha }}
+      TRIGGER_WORKFLOW: ${{ github.event.workflow_run.name || '' }}
+      TRIGGER_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+      TRIGGER_EVENT: ${{ github.event.workflow_run.event || '' }}
+      TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+      TRIGGER_STATUS: ${{ github.event.workflow_run.status || '' }}
+      TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Require main and exact source
+      - name: Resolve trusted source and trigger
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "::error::Runtime RC must be dispatched from main"; exit 1; }
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::source_sha must be one lowercase 40-character SHA"; exit 1; }
-          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          [[ "$MAIN_SHA" == "$SOURCE_SHA" ]] || { echo "::error::source_sha must equal current main ($MAIN_SHA)"; exit 1; }
+          [[ "$FAMILY" == "whisper" || "$FAMILY" == "qwen" ]] || { echo "::error::Runtime family is invalid"; exit 1; }
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "::error::Runtime RC must be dispatched from main"; exit 1; }
+            MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            [[ "$MAIN_SHA" == "$SOURCE_SHA" ]] || { echo "::error::source_sha must equal current main ($MAIN_SHA)"; exit 1; }
+          else
+            [[ "$TRIGGER_STATUS" == "completed" && "$TRIGGER_CONCLUSION" == "success" ]] || { echo "::error::AUTO_RUNTIME_TRIGGER_NOT_SUCCESSFUL"; exit 1; }
+            [[ "$TRIGGER_EVENT" == "push" && "$TRIGGER_BRANCH" == "main" ]] || { echo "::error::AUTO_RUNTIME_TRIGGER_NOT_MAIN_PUSH"; exit 1; }
+            [[ "$TRIGGER_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::AUTO_RUNTIME_TRIGGER_RUN_INVALID"; exit 1; }
+            if [[ "$FAMILY" == "whisper" ]]; then
+              [[ "$TRIGGER_WORKFLOW" == "Whisper Runtime" ]] || { echo "::error::AUTO_RUNTIME_TRIGGER_FAMILY_MISMATCH"; exit 1; }
+            else
+              [[ "$TRIGGER_WORKFLOW" == "Qwen Runtime Package" ]] || { echo "::error::AUTO_RUNTIME_TRIGGER_FAMILY_MISMATCH"; exit 1; }
+            fi
+          fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 1
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require exact source and safe automatic ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo "::error::RUNTIME_RC_SOURCE_CHECKOUT_MISMATCH"; exit 1; }
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main || { echo "::error::AUTO_RUNTIME_SOURCE_NOT_MAIN_ANCESTOR"; exit 1; }
+            if ! git diff --quiet "$SOURCE_SHA" origin/main -- \
+              local-companion \
+              .github/workflows/whisper-runtime.yml \
+              .github/workflows/qwen-runtime.yml \
+              .github/workflows/qwen-runtime-package.yml; then
+              echo "::error::AUTO_RUNTIME_CONTRACT_DRIFT"
+              exit 1
+            fi
+          fi
 
       - name: Resolve exact successful runtime artifact
         id: runtime
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || exit 1
           TREE_SHA="$(git rev-parse 'HEAD^{tree}')"
           if [[ "$FAMILY" == "whisper" ]]; then
             WORKFLOW="whisper-runtime.yml"
+            WORKFLOW_NAME="Whisper Runtime"
+            WORKFLOW_PATH=".github/workflows/whisper-runtime.yml"
             ARTIFACT="TDAWhisperRuntime-windows-x64"
           else
             WORKFLOW="qwen-runtime-package.yml"
+            WORKFLOW_NAME="Qwen Runtime Package"
+            WORKFLOW_PATH=".github/workflows/qwen-runtime-package.yml"
             ARTIFACT="TDAQwenRuntimeBundle-windows-x64"
           fi
-          gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --branch main --commit "$SOURCE_SHA" --status success --limit 50 \
-            --json databaseId,headSha,status,conclusion,createdAt > runtime-runs.json
-          RUN_ID="$(python - <<'PY'
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            RUN_ID="$TRIGGER_RUN_ID"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > runtime-run.json
+            python - <<'PY'
+          import json, os
+          value = json.load(open('runtime-run.json', encoding='utf-8'))
+          expected_name = 'Whisper Runtime' if os.environ['FAMILY'] == 'whisper' else 'Qwen Runtime Package'
+          expected_path = '.github/workflows/whisper-runtime.yml' if os.environ['FAMILY'] == 'whisper' else '.github/workflows/qwen-runtime-package.yml'
+          checks = {
+              'name': expected_name,
+              'path': expected_path,
+              'head_sha': os.environ['SOURCE_SHA'],
+              'head_branch': 'main',
+              'event': 'push',
+              'status': 'completed',
+              'conclusion': 'success',
+          }
+          for key, expected in checks.items():
+              if value.get(key) != expected:
+                  raise SystemExit(f'AUTO_RUNTIME_TRIGGER_IDENTITY_MISMATCH:{key}')
+          if str(value.get('id')) != os.environ['TRIGGER_RUN_ID']:
+              raise SystemExit('AUTO_RUNTIME_TRIGGER_IDENTITY_MISMATCH:id')
+          PY
+          else
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --branch main --commit "$SOURCE_SHA" --status success --limit 50 \
+              --json databaseId,headSha,status,conclusion,createdAt > runtime-runs.json
+            RUN_ID="$(python - <<'PY'
           import json, os
           source = os.environ['SOURCE_SHA']
           rows = json.load(open('runtime-runs.json', encoding='utf-8'))
@@ -70,7 +140,19 @@ jobs:
           rows.sort(key=lambda r: (r.get('createdAt') or '', int(r.get('databaseId') or 0)))
           print(rows[-1]['databaseId'])
           PY
-          )"
+            )"
+          fi
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" > runtime-artifacts.json
+          ARTIFACT_NAME="$ARTIFACT" python - <<'PY'
+          import json, os
+          value = json.load(open('runtime-artifacts.json', encoding='utf-8'))
+          expected = os.environ['ARTIFACT_NAME']
+          rows = [item for item in value.get('artifacts', []) if item.get('name') == expected and item.get('expired') is False]
+          if len(rows) != 1:
+              raise SystemExit(f'RUNTIME_ARTIFACT_COUNT_INVALID:{expected}:{len(rows)}')
+          PY
+
           echo "tree_sha=$TREE_SHA" >> "$GITHUB_OUTPUT"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
