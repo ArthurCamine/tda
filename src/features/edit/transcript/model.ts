@@ -62,6 +62,11 @@ export function normalizeTranscriptReviewStatus(
 		: null;
 }
 
+/**
+ * Compatibility projection for new writes only.
+ * `review_status` is the canonical read state; historical `needs_review` values
+ * are audit/compatibility data and must not be used to reconstruct that state.
+ */
 export function transcriptStatusNeedsReview(
 	status: TranscriptReviewStatus,
 ): boolean {

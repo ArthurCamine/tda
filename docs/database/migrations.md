@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: dados/Supabase
-> Última revisão: 2026-09-10
+> Última revisão: 2026-09-15
 > Fonte: migration history do Supabase `dmrqnbdvbkfqzctcerbx`
 
 ## Princípio
@@ -226,6 +226,35 @@ Rollback lógico:
 
 - antes de qualquer dependência nova do default, uma migration corretiva pode restaurar o default anterior;
 - não apagar nem reclassificar linhas históricas como forma de rollback.
+
+### `20260915211000_transcript_review_contract_comments`
+
+**Estado:** versionada no reboot em 2026-09-15; **ainda não aplicada no Supabase canônico** neste recorte de PR.
+
+Objetivo:
+
+- documentar no próprio schema físico que `review_status` é a fonte canônica do estado editorial para leitura;
+- documentar `needs_review` como projeção de compatibilidade para novas escritas (`pending`/`needs_review` => `true`; `approved`/`discarded` => `false`);
+- tornar explícito que linhas históricas podem divergir dessa projeção e não devem ser reinterpretadas a partir da flag legada.
+
+Compatibilidade e limites:
+
+- executa somente `COMMENT ON COLUMN`;
+- não altera defaults, dados, grants, RLS, funções, constraints ou triggers;
+- não executa backfill e preserva deliberadamente os 30.839 registros históricos `pending/false` observados antes da aplicação;
+- não ativa o transcript-sync de produção nem muda os writers existentes.
+
+Validação pré-aplicação:
+
+- default canônico confirmado read-only como `review_status='pending'` e `needs_review=true`;
+- distribuição confirmada como `pending/false=30.839`, `pending/true=17`, `needs_review/true=1`;
+- o PostgreSQL sintético aplica a migration e `supabase/tests/transcript_review_default.sql` valida default e comentários;
+- `src/features/transcript-sync/database.test.ts` continua provando novos imports como `review_status='pending'` + `needs_review=true`.
+
+Rollback lógico:
+
+- comentário incorreto pode ser substituído por migration corretiva posterior sem mutação de dados;
+- não remover/reclassificar registros históricos para simular rollback documental.
 
 ## Persistência editorial aplicada do World Explorer
 
