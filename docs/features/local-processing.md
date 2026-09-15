@@ -1,15 +1,17 @@
 # Processamento local no Edit
 
-> Status: implementação candidata
+> Status: ASR local implementado; arquitetura de runs/revisão/publicação aprovada; sync cloud ainda desativado
 > Owner: Processamento UI/adapters (Painelzinho); API/export local: Motorzinho; importação cloud: Carteiro
-> Última revisão: 2026-09-13
-> Fonte de verdade: `src/features/edit/processing`, `src/app/edit/processamento`, `local-companion/tda_companion` e testes associados
+> Última revisão: 2026-09-15
+> Fonte de verdade: `src/features/edit/processing`, `src/app/edit/processamento`, `local-companion/tda_companion`, [spec de revisão/publicação](transcript-review-publication.md) e testes associados
 
 `/edit/processamento` é a superfície operacional para conexão com o TDA Companion, ingest local de sessões Craig, fila local, telemetria e eventos. O processamento pesado e os áudios permanecem no computador do usuário; o site cloud não depende do PC estar ligado para continuar disponível.
 
+O contrato editorial pós-processamento é definido em [Transcrição — runs locais, revisão, comparação e publicação versionada](transcript-review-publication.md) e em ADR-0015. A regra central é: **concluir ASR não publica nada**.
+
 ## Estado atual
 
-O recorte atual entrega:
+A `main` entrega:
 
 - workbench próprio do Edit;
 - conexão explícita com `http://127.0.0.1:8765/api/v1`;
@@ -18,15 +20,35 @@ O recorte atual entrega:
 - telemetria best-effort de CPU, RAM, GPU e VRAM;
 - aplicativo Windows `TDACompanion.exe`;
 - instalador `TDACompanion-x64.msi` por usuário;
-- link estável no próprio Processamento para baixar a release mais recente do Companion;
+- link controlado pelo próprio TDA para baixar a versão instalável mais recente do Companion;
 - ingest seguro de ZIP Craig pelo loopback local, com staging content-addressed e metadados sanitizados;
 - submissão real de `transcription.craig` ao pipeline canônico do Companion;
 - fluxo Desktop equivalente, com picker nativo, participantes, perfis de qualidade e acompanhamento do job;
-- perfis atuais `qwen-quality`, `qwen-fast`, `whisper-detailed` e `whisper-turbo`, derivados das capabilities anunciadas pelo Agent.
+- perfis atuais `qwen-quality`, `qwen-fast`, `whisper-detailed` e `whisper-turbo`, derivados das capabilities anunciadas pelo Agent;
+- escrita local atômica do `transcript.json` somente após conclusão/validação do worker;
+- resultado local com `sync.status = "not_configured"`.
 
-O processamento Craig já é ASR real ponta a ponta no Web e no Desktop. `synthetic.fixture` continua existindo somente como ensaio sintético quando anunciado. Sincronização/publicação cloud permanece não configurada, e conclusão local não implica importação, revisão, canon ou publicação.
+O processamento Craig já é ASR real ponta a ponta no Web e no Desktop. `synthetic.fixture` continua existindo somente como ensaio sintético quando anunciado. Sincronização/publicação cloud permanece desativada: conclusão local não implica importação, revisão, canon ou publicação.
 
-O candidato 0.3.2 usa Whisper runtime 1.1.1 e Qwen runtime 1.0.1. O gate físico Qwen continua obrigatório por perfil antes de declarar aprovação física do candidato.
+Na fotografia desta revisão, o candidato instalável é o **TDA Companion 0.3.4 RC**, publicado como prerelease por bytes validados do CI. O pipeline continua com Whisper runtime 1.1.1 e Qwen runtime 1.0.1 até novo runtime versionado. Gate físico por perfil continua obrigatório quando o contrato de release exigir evidência da GPU real.
+
+## Direção aprovada para resultados locais
+
+O estado atual ainda trabalha com um resultado final local por source. A direção aprovada evolui para **múltiplos runs imutáveis por source**, sem overwrite entre Qwen/Whisper/retries.
+
+Exemplo alvo:
+
+```text
+Craig source
+  ├── Qwen Quality — concluído
+  ├── Whisper Detailed — concluído
+  ├── Qwen Quality + outro contexto — concluído
+  └── Qwen Fast — interrompido
+```
+
+Cada run concluído preserva seu output bruto. Correções humanas criam revision derivada. A biblioteca local poderá comparar runs antes de publicar e continuará útil depois da primeira publicação para reprocessar, substituir ou restaurar conteúdo.
+
+Detalhes, estados, delete, lixeira, retenção, comparação A/B e publicação versionada pertencem à [spec dona](transcript-review-publication.md); este documento continua dono da superfície operacional/fila/Agent.
 
 ## Download e instalação
 
@@ -36,11 +58,18 @@ A tela de Processamento oferece uma ação compacta **Baixar TDA Companion** par
 /api/downloads/companion/windows
 ```
 
-O resolver consulta as releases públicas do repositório, filtra apenas tags `companion-vX.Y.Z`, exige o asset `TDACompanion-x64.msi` e redireciona para a maior versão válida. Releases `prod-*` do site não entram nessa seleção.
+O resolver consulta releases públicas do repositório e escolhe a **maior versão instalável válida** entre:
 
-Assim o frontend não precisa conhecer a versão atual nem depender de `/releases/latest` global do repositório.
+- Stable `companion-vX.Y.Z`;
+- RC/prerelease `companion-rc-vX.Y.Z-<source_sha12>`.
 
-O MSI instala em `%LOCALAPPDATA%\TDA\Companion`, mantém dados em `%LOCALAPPDATA%\TDA\Data` e cria atalho no Menu Iniciar. O antigo `DnDScribeCompanion.exe` não é usado, consultado ou modificado.
+Para a mesma versão, Stable tem preferência sobre RC. Drafts e releases sem o asset/checksum esperado são recusadas. A UI exibe versão + canal e o download fica preso ao **tag exato** selecionado, evitando mostrar uma versão e baixar bytes de outra release concorrente.
+
+Releases `prod-*` do site e runtimes auxiliares não entram nessa seleção.
+
+Assim o frontend não depende de `/releases/latest` global nem de versão hardcoded.
+
+O MSI instala em `%LOCALAPPDATA%\TDA\Companion`, mantém dados sob `%LOCALAPPDATA%\TDA` e cria atalho no Menu Iniciar. O antigo `DnDScribeCompanion.exe` não é usado, consultado ou modificado.
 
 O MSI deste corte ainda não possui assinatura Authenticode configurada; a interface não deve afirmar que existe publisher assinado.
 
@@ -55,7 +84,9 @@ A tela segue a regra de que uma superfície operacional deve mostrar primeiro o 
 5. trabalho em execução e progresso real;
 6. próximos trabalhos e finalizados;
 7. detalhes e log do trabalho observado;
-8. estado de sincronização.
+8. estado de sincronização/publicação.
+
+Quando a biblioteca de runs for implementada, **fila operacional** e **resultados editoriais concluídos** devem continuar conceitos visualmente distintos. Um run antigo não pode parecer trabalho ainda em execução.
 
 O título é compacto. A navegação própria do Edit é restrita a destinos de trabalho; o logo TDA é a saída intencional para a superfície pública.
 
@@ -67,7 +98,7 @@ A superfície Web envia o ZIP Craig somente para o Agent em loopback. O Companio
 
 O Desktop usa o mesmo pipeline canônico: escolhe o ZIP por picker nativo, mostra participantes/faixas e submete `transcription.craig`. Não existe um transcriber legado paralelo.
 
-Os perfis executáveis vêm de `capabilities`. No candidato atual:
+Os perfis executáveis vêm de `capabilities`:
 
 - `qwen-quality` — melhor precisão e opção recomendada;
 - `qwen-fast` — Qwen priorizando velocidade;
@@ -84,6 +115,8 @@ A tela não inventa título, resumo, thumbnail ou classificação. Dados como du
 
 O pipeline real pode fornecer contexto por track, incluindo `track`, `total_tracks`, `speaker` e `percent`. A interface deve refletir o paralelismo realmente executado pelo engine e não simular múltiplas faixas avançando ao mesmo tempo quando isso não estiver acontecendo.
 
+Depois do término, métricas como palavras, segmentos, warnings, elapsed/RTF, modelo/revision e percentual revisado podem alimentar a auditoria local definida na spec de revisão. Campo ausente continua desconhecido; não se fabrica nota de qualidade.
+
 ## Eventos e zueira
 
 `GET /api/v1/jobs/{job_id}/events` fornece eventos factuais. A camada de apresentação pode adicionar comentários leves e engraçados, mas a telemetria original permanece separada.
@@ -95,7 +128,7 @@ Exemplos:
 - conversa ao fundo só aparece depois de uma detecção real;
 - cachorro só aparece depois de um evento real correspondente.
 
-O companion persiste fatos, não piadas. A interface nunca deve fingir que executou uma operação só para ficar engraçada.
+O Companion persiste fatos, não piadas. A interface nunca deve fingir que executou uma operação só para ficar engraçada.
 
 ## Telemetria
 
@@ -109,21 +142,63 @@ O painel começa desconectado e não sonda portas automaticamente. Após ação 
 
 O token fica somente na memória da aba. Não há cookie, storage, query string, log ou envio cloud. Requests mantêm CORS, `credentials: omit`, `redirect: error`, `cache: no-store`, `referrerPolicy: no-referrer` e limites de payload/resposta.
 
-O companion escuta somente loopback, exige Host correto, restringe Origin e não descobre outros PCs.
+O Companion escuta somente loopback, exige Host correto, restringe Origin e não descobre outros PCs.
 
-Áudio Craig e artefatos de preparação permanecem locais. O resultado Web não transporta transcript integral para o frontend/cloud como efeito colateral do processamento.
+Antes de enviar Bearer para um Agent encontrado no loopback, o Desktop empacotado também valida ownership local de porta/PID/executável conforme o hardening vigente.
+
+Áudio Craig e artefatos de preparação permanecem locais. O resultado Web não transporta transcript integral para frontend/cloud como efeito colateral do processamento.
 
 ## Fila e ações
 
 Falha recuperável/interrupção permite **Repetir trabalho**, sem prometer checkpoint exato. Cancelar exige confirmação. Retomar fila confirma que trabalhos pendentes podem voltar a executar; pausar impede novos claims sem interromper o trabalho já ativo.
 
+Com runs versionados, retry deve criar nova tentativa/run ou continuar o mesmo run somente quando a semântica de checkpoint estiver explicitamente suportada. Resultado concluído anterior nunca é substituído por uma tentativa nova.
+
 O ensaio sintético existe apenas quando `synthetic.fixture` é anunciado e não usa áudio/modelo/GPU para produzir transcrição.
+
+## Resultado, revisão e publicação
+
+A direção de UX após conclusão é:
+
+```text
+Processamento concluído
+Resultado salvo localmente.
+Nada foi publicado no TDA.
+
+[ Revisar resultado ]
+[ Comparar ]
+[ Processar novamente ]
+[ Publicar no TDA ]
+```
+
+Publicação futura deve consumir **resultado/revision aprovado**, não o evento terminal do worker.
+
+Depois de publicado, o mesmo source continua podendo gerar novos runs. A revisão ativa no site permanece intacta até uma nova publicação/substituição ser confirmada.
 
 ## Sincronização
 
-A UI continua mostrando **Sincronização não configurada.** Conclusão local não significa envio, importação, revisão, canon ou publicação.
+A UI atual continua mostrando **Sincronização não configurada.** Conclusão local não significa envio, importação, revisão, canon ou publicação.
 
-O handoff futuro permanece: artefato versionado → identidade server-side → autorização explícita → persistência durável → receipt consultável → revisão no Edit.
+O handoff futuro passa a ser explicitamente:
+
+```text
+run concluído
+  -> revisão/comparação local
+  -> ação Publicar
+  -> identidade server-side
+  -> autorização explícita
+  -> persistência de revision completa
+  -> receipt/readback
+  -> ativação atômica da revision
+```
+
+A candidata histórica de transcript import contém primitives úteis de hash/idempotência/atomicidade, mas deve ser adaptada a esse lifecycle antes de ser ativada.
+
+## Retenção e armazenamento
+
+A evolução de runs deve preservar por default resultados concluídos e source/staging necessário para reprocessamento. Delete local comum usa Trash com retenção de 7 dias conforme a spec dona.
+
+A UI deve permitir entender consumo por modelos/runtimes, áudio/source, runs/revisions, cache e lixeira. Limpeza de source não pode apagar transcrições concluídas implicitamente.
 
 ## Validação
 
@@ -145,6 +220,17 @@ Gates do Companion:
 - instalação real do MSI no runner Windows;
 - inicialização + health do app instalado;
 - desinstalação real do MSI;
+- rollback/upgrade/preserve/purge quando o workflow correspondente for afetado;
 - gates dos artifacts Whisper/Qwen e dependency freshness no SHA candidato.
+
+Quando runs/review/publicação forem implementados, adicionar testes específicos para:
+
+- dois runs do mesmo source sem overwrite;
+- falha/interrupção sem promover `.partial`;
+- revisão sem mutar output bruto;
+- publish explícito/idempotente;
+- substituição preservando anterior;
+- restore/unpublish/delete conforme escopo;
+- ausência de áudio bruto em payload cloud.
 
 Esses testes automatizados não substituem o gate de qualidade/desempenho em GPU física. A aprovação física final dos perfis que a exigem deve registrar runtime/model revision, GPU/VRAM observada, elapsed/RTF e avaliação qualitativa adequada ao perfil.
