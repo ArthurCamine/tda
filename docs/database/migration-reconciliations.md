@@ -2,12 +2,24 @@
 
 > Status: vigente
 > Owner: dados/Supabase + operations
-> Última revisão: 2026-09-10
+> Última revisão: 2026-09-15
 > Projeto canônico: `dmrqnbdvbkfqzctcerbx`
 
 Este documento registra reconciliações **nominais** entre arquivos locais e entradas já existentes no migration history remoto. Reconciliação nominal não executa DDL: o SQL precisa permanecer byte-identical ao blob local previamente validado e a entrada remota precisa já existir no projeto canônico.
 
 O manifesto machine-readable é `supabase/migration-reconciliations.json` e o guard `tools/ci/check-migrations.mjs` permite somente os renames explicitamente listados nele com o Git blob SHA esperado.
+
+## 2026-09-15 — contrato editorial da transcrição
+
+O Production CD #107 expôs uma divergência nominal que já estava documentada, mas ainda não havia sido materializada no conjunto deployável: o SQL `transcript_review_contract_comments` estava no repositório como `20260915211000_transcript_review_contract_comments.sql`, enquanto o migration history canônico o registrou como `20260915211245_transcript_review_contract_comments`.
+
+A entrada remota em `supabase_migrations.schema_migrations` foi lida de forma read-only e o campo `statements` foi comparado com o arquivo local. Os bytes SQL correspondem ao blob Git `e1d1d5c7484a3951d8f4ed289b498246211c0eb5`.
+
+| Arquivo local anterior | ID/arquivo reconciliado | Git blob SHA | Operação |
+| --- | --- | --- | --- |
+| `20260915211000_transcript_review_contract_comments.sql` | `20260915211245_transcript_review_contract_comments.sql` | `e1d1d5c7484a3951d8f4ed289b498246211c0eb5` | rename local somente |
+
+Nenhum DDL foi reexecutado, nenhuma linha do migration history foi alterada e nenhuma equivalência foi inferida por nome apenas. A reconciliação existe para restaurar a igualdade exata exigida pelo gate de Production antes que migrations posteriores sejam aplicadas.
 
 ## 2026-09-10 — bootstrap da esteira CI/CD
 
