@@ -1,4 +1,10 @@
 (() => {
+  const artDirectionStylesheet = document.createElement('link');
+  artDirectionStylesheet.rel = 'stylesheet';
+  artDirectionStylesheet.href = 'yllith-art-direction.css';
+  artDirectionStylesheet.dataset.yllithArtDirection = 'directors-cut';
+  document.head.append(artDirectionStylesheet);
+
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -73,8 +79,8 @@
 
     if (reduceMotion) return;
 
-    // Scene layer parallax: element-local, not global, avoiding giant transforms
-    // on long documents and keeping composition stable.
+    // Scene layer parallax is intentionally restrained. The sources are authored
+    // as registered canvases, so depth must never destroy their alignment.
     sceneLayers.forEach((layer) => {
       const stage = layer.closest('[data-scene]');
       if (!stage) return;
@@ -82,23 +88,23 @@
       if (rect.bottom < -200 || rect.top > window.innerHeight + 200) return;
       const local = sceneProgress(stage) - 0.5;
       const speed = Number(layer.dataset.speed || 0);
-      const travel = Math.min(window.innerHeight * 0.22, 160);
-      layer.style.setProperty('--sy', `${local * speed * travel * 5}px`);
+      const travel = Math.min(window.innerHeight * 0.15, 108);
+      layer.style.setProperty('--sy', `${local * speed * travel * 3.2}px`);
     });
 
     if (dreamStage) {
       const dreamProgress = sceneProgress(dreamStage);
       const opacity = clamp(
-        lerp(0.42, 0.93, Math.sin(dreamProgress * Math.PI) * 0.95 + 0.08),
-        0.42,
-        0.93,
+        lerp(0.40, 0.90, Math.sin(dreamProgress * Math.PI) * 0.92 + 0.08),
+        0.40,
+        0.90,
       );
       dreamStage.style.setProperty('--spirit-opacity', opacity.toFixed(3));
     }
 
     if (farewellStage) {
       const farewellProgress = sceneProgress(farewellStage);
-      const separation = lerp(-10, 18, farewellProgress);
+      const separation = lerp(-6, 10, farewellProgress);
       farewellStage.style.setProperty('--farewell-x', `${separation}px`);
     }
 
@@ -118,8 +124,8 @@
 
     if (mapStage && mapSurface) {
       const mapProgress = sceneProgress(mapStage);
-      mapSurface.style.setProperty('--hand-y', `${lerp(10, -5, mapProgress)}px`);
-      mapSurface.style.setProperty('--map-bg-y', `${lerp(-3, 5, mapProgress)}px`);
+      mapSurface.style.setProperty('--hand-y', `${lerp(7, -3, mapProgress)}px`);
+      mapSurface.style.setProperty('--map-bg-y', `${lerp(-2, 3, mapProgress)}px`);
     }
   }
 
@@ -134,15 +140,15 @@
   window.addEventListener('resize', requestTick, { passive: true });
   updateScroll();
 
-  // Pointer parallax on the hero. Very small range: depth, not a carnival ride.
+  // Pointer parallax on the hero: physical weight, not UI spectacle.
   if (!reduceMotion && heroCharacter && window.matchMedia('(pointer:fine)').matches) {
     const hero = document.querySelector('.hero');
     hero?.addEventListener('pointermove', (event) => {
       const rect = hero.getBoundingClientRect();
       const nx = (event.clientX - rect.left) / rect.width - 0.5;
       const ny = (event.clientY - rect.top) / rect.height - 0.5;
-      heroCharacter.style.setProperty('--px', `${nx * -12}px`);
-      heroCharacter.style.setProperty('--py', `${ny * -8}px`);
+      heroCharacter.style.setProperty('--px', `${nx * -7}px`);
+      heroCharacter.style.setProperty('--py', `${ny * -4}px`);
     }, { passive: true });
     hero?.addEventListener('pointerleave', () => {
       heroCharacter.style.setProperty('--px', '0px');
@@ -150,8 +156,8 @@
     });
   }
 
-  // Physical-map illusion: perspective and foreground hand depth respond to
-  // pointer location. The motion is capped aggressively so text stays legible.
+  // The map is a physical object. Motion is deliberately tiny so the two
+  // authored layers (map + hands) remain registered to each other.
   if (!reduceMotion && mapSurface && window.matchMedia('(pointer:fine)').matches) {
     mapSurface.addEventListener('pointermove', (event) => {
       const rect = mapSurface.getBoundingClientRect();
@@ -159,10 +165,10 @@
       const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
       const nx = x - 0.5;
       const ny = y - 0.5;
-      mapSurface.style.setProperty('--map-ry', `${nx * 2.2}deg`);
-      mapSurface.style.setProperty('--map-rx', `${ny * -1.6}deg`);
-      mapSurface.style.setProperty('--hand-x', `${nx * 7}px`);
-      mapSurface.style.setProperty('--map-bg-x', `${nx * -3}px`);
+      mapSurface.style.setProperty('--map-ry', `${nx * 1.15}deg`);
+      mapSurface.style.setProperty('--map-rx', `${ny * -0.8}deg`);
+      mapSurface.style.setProperty('--hand-x', `${nx * 3.5}px`);
+      mapSurface.style.setProperty('--map-bg-x', `${nx * -1.5}px`);
       mapSurface.style.setProperty('--mx', `${x * 100}%`);
       mapSurface.style.setProperty('--my', `${y * 100}%`);
     }, { passive: true });
