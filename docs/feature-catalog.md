@@ -21,7 +21,7 @@ Estados:
 | --- | --- | --- |
 | Edit Workbench / administração | arquitetura aprovada; implementação incremental iniciada | spec em `features/edit-workbench.md`, ADR-0007, paridade viva do `dnd-scribe`; shell/transcript e leitura com revision já avançaram, persistence/Auth canônicos ainda não convergiram |
 | Processamento local no Edit | ASR local real implementado; sync cloud desativado | [Contrato da tela e gates](features/local-processing.md), ADR-0003 e ADR-0013; Craig real roda localmente em Qwen/Whisper, conclusão local não publica |
-| Runs/revisão/publicação de transcrição | arquitetura aprovada; implementação pendente | [Contrato editorial completo](features/transcript-review-publication.md) + ADR-0015: runs imutáveis, comparação A/B, revisão derivada, publish explícito, revisions cloud, restore/unpublish/delete |
+| Runs/revisão/publicação de transcrição | arquitetura aprovada; implementação pendente | [Contrato editorial completo](features/transcript-review-publication.md) + ADR-0016: runs imutáveis, comparação A/B, revisão derivada, publish explícito, revisions cloud, restore/unpublish/delete |
 | Perfis/jogadores | implementado no schema | `profiles`, identidade Supabase Auth, campaign membership e RBAC; maturidade do schema não implica que todo recorte de acesso administrativo esteja concluído |
 | Personagens jogáveis (PCs) | preparado | `entities(type=pc)` + `profile_characters` + `participants.character_entity_id`; Astel, Dandelion e Screacky já canonicalizados |
 | NPCs | preparado | `entities(type=npc)`; não precisam de profile humano |
@@ -94,7 +94,7 @@ A `main` já contém o workbench temporário e leitura autorizada com `revision`
 
 ## Transcrição local, revisão e publicação
 
-A direção estrutural do pós-ASR foi fechada em [ADR-0015](adr/0015-transcript-runs-review-publication.md) e na [spec detalhada](features/transcript-review-publication.md).
+A direção estrutural do pós-ASR foi fechada em [ADR-0016](adr/0016-transcript-runs-review-publication.md) e na [spec detalhada](features/transcript-review-publication.md).
 
 O TDA passa a distinguir explicitamente:
 
