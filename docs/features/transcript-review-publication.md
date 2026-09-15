@@ -3,7 +3,7 @@
 > Status: arquitetura aprovada; implementação pendente
 > Owner: Edit / processamento local / transcript-sync
 > Última revisão: 2026-09-15
-> Fonte de verdade: esta spec, ADR-0015, `local-companion/tda_companion`, `src/features/transcript-sync` e contratos do Edit
+> Fonte de verdade: esta spec, ADR-0016, `local-companion/tda_companion`, `src/features/transcript-sync` e contratos do Edit
 
 ## Objetivo
 
