@@ -1,7 +1,7 @@
 {
   "schemaVersion": "tda_migration_reconciliations_v1",
   "projectRef": "dmrqnbdvbkfqzctcerbx",
-  "verifiedAt": "2026-09-10",
+  "verifiedAt": "2026-09-15",
   "mappings": [
     {
       "from": "20260909173000_world_edit_lease.sql",
@@ -17,6 +17,11 @@
       "from": "20260910005000_world_graph_provenance_guard.sql",
       "to": "20260910012546_world_graph_provenance_guard.sql",
       "blobSha": "84ad42e5e488e9b611668ccdabe138f8b38114fe"
+    },
+    {
+      "from": "20260915211000_transcript_review_contract_comments.sql",
+      "to": "20260915211245_transcript_review_contract_comments.sql",
+      "blobSha": "e1d1d5c7484a3951d8f4ed289b498246211c0eb5"
     }
   ]
 }
