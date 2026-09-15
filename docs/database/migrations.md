@@ -98,7 +98,7 @@ A estratégia é:
 ### 2026-09-10 — autoria factual do World Explorer
 
 - `20260910002529 world_graph_authoring` — migration aplicada remotamente; arquivo local equivalente permanece `20260909215000_world_graph_authoring.sql`. Não reexecutar DDL para alinhar somente o número.
-- `20260910012546 world_graph_provenance_guard` — hardening aplicado remotamente; arquivo local equivalente `20260910005000_world_graph_provenance_guard.sql`. Não reexecutar DDL para alinhar somente o timestamp.
+- `20260910012546 world_graph_provenance_guard` — hardening aplicado remotamente; arquivo local equivalente `20260910005000_world_graph_provenance_guard.sql`. Não reexecutar DDL apenas para alinhar o timestamp.
 
 ### 2026-09-15 — contrato editorial da transcrição
 
@@ -639,3 +639,30 @@ Rollback lógico:
 - não apagar assets, bindings ou `audit_log` para simular rollback; preservar evidência e identidade já usadas.
 
 Contrato detalhado: [World entity media foundation](../features/world-entity-media-foundation.md).
+
+## Correção de identidade em profile claims
+
+### `20260915223000_align_profile_claim_discord_identity`
+
+**Estado:** migration deployável versionada nesta branch; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- substituir a provenance obsoleta `google_claim` na criação de novos perfis aprovados pelo provider oficial Discord;
+- resolver o `provider_id` diretamente de `auth.identities`, em vez de usar o UUID interno de `auth.users` como `source_key`;
+- persistir novos perfis com `source_system='discord'`, `source_key=<discord provider_id>` e `discord_id=<discord provider_id>`;
+- rejeitar aprovação sem identidade Discord vinculada ou quando um `requested_discord_id` divergir da identidade autenticada;
+- usar a identidade Discord autenticada também no vínculo de participantes por `discord_id`.
+
+Compatibilidade e limites:
+
+- não executa backfill e não altera os cinco perfis existentes;
+- preserva a assinatura, `SECURITY DEFINER`, `search_path`, grants e demais efeitos de `review_profile_claim(...)`;
+- não remove `google_claim` do CHECK legado de `profiles.source_system`, evitando contract/drop misturado nesta correção;
+- rejeições de claim continuam independentes da existência de identidade Discord; a exigência é aplicada somente na aprovação;
+- a inspeção pré-migration confirmou 5/5 perfis canônicos com identidade Discord e correspondência exata entre `source_key`, `discord_id` e `auth.identities.provider_id`, além de zero claims existentes no momento da auditoria.
+
+Rollback lógico:
+
+- se a função precisar ser revertida, criar migration corretiva posterior com a definição anterior revisada; não editar migration history nem reintroduzir `google_claim` silenciosamente;
+- nenhum dado existente precisa ser revertido por esta migration porque ela altera somente o comportamento futuro da RPC.

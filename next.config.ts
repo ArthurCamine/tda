@@ -34,11 +34,6 @@ const config: NextConfig = {
 			},
 			{
 				protocol: "https",
-				hostname: "raw.githubusercontent.com",
-				pathname: "/Faysk/dnd-scribe/**",
-			},
-			{
-				protocol: "https",
 				hostname: "dnd.faysk.dev",
 				pathname: "/assets/sessions/**",
 			},

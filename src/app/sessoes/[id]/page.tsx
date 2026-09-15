@@ -5,6 +5,7 @@ import { PublicLink as Link } from "@/components/public-link";
 import { SessionShareActions } from "@/components/session-share-actions";
 import { StoryMarkdown } from "@/components/story-markdown";
 import { DisplayTitle, Eyebrow } from "@/components/ui";
+import { buildPublicMetadata } from "@/config/public-metadata";
 import { sessionPublicMetadata } from "@/features/sessions/metadata";
 import {
 	formatSessionDate,
@@ -13,6 +14,7 @@ import {
 import {
 	findPublishedSession,
 	listPublishedSessions,
+	PublishedSessionUnavailableError,
 } from "@/features/sessions/repository";
 import { sessionShareDescription } from "@/features/sessions/share";
 import styles from "./page.module.css";
@@ -23,9 +25,26 @@ type SessionParams = { params: Promise<{ id: string }> };
 
 type Direction = "previous" | "next";
 
+function unavailableSessionMetadata(id: string) {
+	return buildPublicMetadata({
+		title: "Sessão temporariamente indisponível",
+		description:
+			"Não foi possível consultar esta sessão agora. Tente novamente em instantes.",
+		pathname: `/sessoes/${encodeURIComponent(id)}`,
+	});
+}
+
 export async function generateMetadata({ params }: SessionParams): Promise<Metadata> {
 	const { id } = await params;
-	const session = await findPublishedSession(id);
+	let session: PublishedSession | null;
+	try {
+		session = await findPublishedSession(id);
+	} catch (error) {
+		if (error instanceof PublishedSessionUnavailableError) {
+			return unavailableSessionMetadata(id);
+		}
+		throw error;
+	}
 	if (!session) notFound();
 	return sessionPublicMetadata(session);
 }
@@ -73,7 +92,30 @@ function SessionNavigationCard({
 
 export default async function Session({ params }: SessionParams) {
 	const { id } = await params;
-	const session = await findPublishedSession(id);
+	let session: PublishedSession | null;
+	try {
+		session = await findPublishedSession(id);
+	} catch (error) {
+		if (!(error instanceof PublishedSessionUnavailableError)) throw error;
+		return (
+			<section className="page-section">
+				<Eyebrow>Arquivo de sessões</Eyebrow>
+				<DisplayTitle>Esta sessão está temporariamente indisponível.</DisplayTitle>
+				<p>Não conseguimos consultar o arquivo agora. Tente novamente em instantes.</p>
+				<p>
+					<Link
+						className="ds-action ds-action--primary ds-action--md"
+						href={`/sessoes/${encodeURIComponent(id)}`}
+					>
+						Tentar novamente
+					</Link>{" "}
+					<Link className="ds-action ds-action--secondary ds-action--md" href="/sessoes">
+						Voltar às sessões
+					</Link>
+				</p>
+			</section>
+		);
+	}
 	if (!session) notFound();
 
 	let archive: Awaited<ReturnType<typeof listPublishedSessions>> = null;

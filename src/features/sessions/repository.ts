@@ -12,6 +12,13 @@ const publicMediaColumns =
 	"cover_image_url:metadata->>coverImageUrl,hero_image_url:metadata->>heroImageUrl";
 const columns = `source_session_id,title,session_date,arc,summary_short,${publicMediaColumns},status,campaigns!inner(slug)`;
 
+export class PublishedSessionUnavailableError extends Error {
+	constructor() {
+		super("Published session unavailable");
+		this.name = "PublishedSessionUnavailableError";
+	}
+}
+
 export async function listPublishedSessions(): Promise<
 	PublishedSession[] | null
 > {
@@ -41,7 +48,7 @@ export async function listPublishedSessionArchive(): Promise<
 export const findPublishedSession = cache(async (id: string) => {
 	if (!id || id.length > 220) return null;
 	const client = publishedDataClient();
-	if (!client) return null;
+	if (!client) throw new PublishedSessionUnavailableError();
 	const { data, error } = await client
 		.from("sessions")
 		.select(
@@ -51,6 +58,6 @@ export const findPublishedSession = cache(async (id: string) => {
 		.eq("campaigns.slug", CAMPAIGN_SLUG)
 		.eq("source_session_id", id)
 		.maybeSingle();
-	if (error) throw new Error("Published session unavailable");
+	if (error) throw new PublishedSessionUnavailableError();
 	return data ? toPublishedSession(data, true) : null;
 });

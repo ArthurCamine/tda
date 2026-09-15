@@ -33,10 +33,6 @@ const publicImageSources = [
 		hostname: "dmrqnbdvbkfqzctcerbx.supabase.co",
 		pathname: "/storage/v1/object/public/session-images/",
 	},
-	{
-		hostname: "raw.githubusercontent.com",
-		pathname: "/Faysk/dnd-scribe/",
-	},
 	{ hostname: "dnd.faysk.dev", pathname: "/assets/sessions/" },
 ] as const;
 
