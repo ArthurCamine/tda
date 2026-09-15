@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const FIXTURE_PATH = "/__e2e__/world-command-palette";
+const FIXTURE_PATH = "/e2e-fixtures/world-command-palette";
 
 async function openPalette(page: Page) {
 	const trigger = page.getByRole("button", { name: /Comandos do Mundo/i });
