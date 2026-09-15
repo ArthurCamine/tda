@@ -106,27 +106,6 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
             RUN_ID="$TRIGGER_RUN_ID"
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > runtime-run.json
-            python - <<'PY'
-          import json, os
-          value = json.load(open('runtime-run.json', encoding='utf-8'))
-          expected_name = 'Whisper Runtime' if os.environ['FAMILY'] == 'whisper' else 'Qwen Runtime Package'
-          expected_path = '.github/workflows/whisper-runtime.yml' if os.environ['FAMILY'] == 'whisper' else '.github/workflows/qwen-runtime-package.yml'
-          checks = {
-              'name': expected_name,
-              'path': expected_path,
-              'head_sha': os.environ['SOURCE_SHA'],
-              'head_branch': 'main',
-              'event': 'push',
-              'status': 'completed',
-              'conclusion': 'success',
-          }
-          for key, expected in checks.items():
-              if value.get(key) != expected:
-                  raise SystemExit(f'AUTO_RUNTIME_TRIGGER_IDENTITY_MISMATCH:{key}')
-          if str(value.get('id')) != os.environ['TRIGGER_RUN_ID']:
-              raise SystemExit('AUTO_RUNTIME_TRIGGER_IDENTITY_MISMATCH:id')
-          PY
           else
             gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --branch main --commit "$SOURCE_SHA" --status success --limit 50 \
               --json databaseId,headSha,status,conclusion,createdAt > runtime-runs.json
@@ -143,26 +122,125 @@ jobs:
             )"
           fi
 
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" > runtime-artifacts.json
-          ARTIFACT_NAME="$ARTIFACT" python - <<'PY'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > runtime-run.json
+          RUN_ID="$RUN_ID" WORKFLOW_NAME="$WORKFLOW_NAME" WORKFLOW_PATH="$WORKFLOW_PATH" python - <<'PY'
           import json, os
+          from datetime import datetime
+
+          value = json.load(open('runtime-run.json', encoding='utf-8'))
+          checks = {
+              'name': os.environ['WORKFLOW_NAME'],
+              'path': os.environ['WORKFLOW_PATH'],
+              'head_sha': os.environ['SOURCE_SHA'],
+              'head_branch': 'main',
+              'event': 'push',
+              'status': 'completed',
+              'conclusion': 'success',
+          }
+          for key, expected in checks.items():
+              if value.get(key) != expected:
+                  raise SystemExit(f'RUNTIME_TRIGGER_IDENTITY_MISMATCH:{key}')
+          if str(value.get('id')) != os.environ['RUN_ID']:
+              raise SystemExit('RUNTIME_TRIGGER_IDENTITY_MISMATCH:id')
+          if os.environ.get('TRIGGER_RUN_ID') and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_run':
+              if str(value.get('id')) != os.environ['TRIGGER_RUN_ID']:
+                  raise SystemExit('AUTO_RUNTIME_TRIGGER_IDENTITY_MISMATCH:id')
+          attempt = value.get('run_attempt')
+          started = value.get('run_started_at')
+          if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+              raise SystemExit('RUNTIME_TRIGGER_ATTEMPT_INVALID')
+          if not isinstance(started, str):
+              raise SystemExit('RUNTIME_TRIGGER_STARTED_AT_INVALID')
+          try:
+              datetime.fromisoformat(started.replace('Z', '+00:00'))
+          except ValueError as exc:
+              raise SystemExit('RUNTIME_TRIGGER_STARTED_AT_INVALID') from exc
+          PY
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" > runtime-artifacts.json
+          ARTIFACT_ID="$(ARTIFACT_NAME="$ARTIFACT" python - <<'PY'
+          import json, os
+          from datetime import datetime
+
+          run = json.load(open('runtime-run.json', encoding='utf-8'))
           value = json.load(open('runtime-artifacts.json', encoding='utf-8'))
           expected = os.environ['ARTIFACT_NAME']
-          rows = [item for item in value.get('artifacts', []) if item.get('name') == expected and item.get('expired') is False]
+          started = datetime.fromisoformat(run['run_started_at'].replace('Z', '+00:00'))
+          rows = []
+          for item in value.get('artifacts', []):
+              if item.get('name') != expected or item.get('expired') is not False:
+                  continue
+              created_raw = item.get('created_at')
+              if not isinstance(created_raw, str):
+                  continue
+              try:
+                  created = datetime.fromisoformat(created_raw.replace('Z', '+00:00'))
+              except ValueError:
+                  continue
+              workflow_run = item.get('workflow_run') if isinstance(item.get('workflow_run'), dict) else {}
+              if str(workflow_run.get('id')) != str(run['id']) or workflow_run.get('head_sha') != os.environ['SOURCE_SHA']:
+                  continue
+              if created >= started:
+                  rows.append(item)
           if len(rows) != 1:
-              raise SystemExit(f'RUNTIME_ARTIFACT_COUNT_INVALID:{expected}:{len(rows)}')
+              raise SystemExit(f'RUNTIME_ARTIFACT_ATTEMPT_COUNT_INVALID:{expected}:{len(rows)}')
+          artifact_id = rows[0].get('id')
+          if not isinstance(artifact_id, int) or isinstance(artifact_id, bool) or artifact_id < 1:
+              raise SystemExit('RUNTIME_ARTIFACT_ID_INVALID')
+          print(artifact_id)
           PY
+          )"
 
           echo "tree_sha=$TREE_SHA" >> "$GITHUB_OUTPUT"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
 
       - name: Download exact validated runtime artifact
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf dist runtime-artifact.zip
           mkdir -p dist
-          gh run download "${{ steps.runtime.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" --name "${{ steps.runtime.outputs.artifact }}" --dir dist
+          gh api -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/${{ steps.runtime.outputs.artifact_id }}/zip" > runtime-artifact.zip
+          python - <<'PY'
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          archive_path = Path('runtime-artifact.zip')
+          if not archive_path.is_file() or archive_path.stat().st_size <= 0:
+              raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_DOWNLOAD_INVALID')
+          target = Path('dist').resolve()
+          with zipfile.ZipFile(archive_path, 'r') as archive:
+              infos = archive.infolist()
+              if not infos or len(infos) > 512:
+                  raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_ENTRY_LIMIT')
+              seen = set()
+              total = 0
+              for info in infos:
+                  if info.is_dir():
+                      continue
+                  raw = info.filename.replace('\\', '/')
+                  path = PurePosixPath(raw)
+                  if not raw or raw.startswith('/') or path.is_absolute() or any(part in ('', '.', '..') for part in path.parts):
+                      raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_PATH_INVALID')
+                  key = path.as_posix().casefold()
+                  if key in seen:
+                      raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_DUPLICATE')
+                  seen.add(key)
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if mode and stat.S_ISLNK(mode):
+                      raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_SYMLINK')
+                  if info.file_size < 0:
+                      raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_SIZE_INVALID')
+                  total += info.file_size
+                  if total > 12 * 1024**3:
+                      raise SystemExit('RUNTIME_ACTIONS_ARTIFACT_SIZE_LIMIT')
+              archive.extractall(target)
+          PY
+          rm -f runtime-artifact.zip
 
       - name: Build deterministic candidate manifest
         id: candidate
