@@ -1,0 +1,38 @@
+name: World Command Palette E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/world-command-palette-e2e.yml"
+      - "playwright.config.ts"
+      - "tests/world-authoring-command-palette.spec.ts"
+      - "src/app/__e2e__/world-command-palette/**"
+      - "src/features/world-explorer/components/world-command-palette.tsx"
+      - "src/features/world-explorer/components/world-command-palette-trigger.tsx"
+      - "src/features/world-explorer/components/world-command-palette-e2e-fixture.tsx"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.3.4
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run command palette keyboard and ARIA contract
+        run: pnpm exec playwright test tests/world-authoring-command-palette.spec.ts --project=desktop-1080p
