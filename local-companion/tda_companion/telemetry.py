@@ -19,7 +19,7 @@ class SystemTelemetry:
     """Best-effort local telemetry. Missing sensors never make the companion unhealthy."""
 
     def __init__(self) -> None:
-        self._nvml_state: bool | None = None
+        self._nvml_initialized = False
         if psutil is not None:
             # Prime the non-blocking sampler so the first API read is useful.
             psutil.cpu_percent(interval=None)
@@ -39,11 +39,9 @@ class SystemTelemetry:
         if pynvml is None:
             return []
         try:
-            if self._nvml_state is None:
+            if not self._nvml_initialized:
                 pynvml.nvmlInit()
-                self._nvml_state = True
-            if self._nvml_state is False:
-                return []
+                self._nvml_initialized = True
 
             rows: list[dict[str, Any]] = []
             count = min(int(pynvml.nvmlDeviceGetCount()), 16)
@@ -65,8 +63,9 @@ class SystemTelemetry:
                 )
             return rows
         except Exception:
-            # NVML can be unavailable, unsupported or disappear after a driver reset.
-            self._nvml_state = False
+            # A driver reset or transient NVML failure must not disable telemetry forever.
+            # Fail this sample closed and retry initialization on a later snapshot.
+            self._nvml_initialized = False
             return []
 
     def snapshot(self) -> dict[str, Any]:
