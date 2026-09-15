@@ -1,13 +1,13 @@
 import {
-	selectCompanionAsset,
-	selectLatestCompanionTag,
+	isCompanionInstallableTag,
+	selectCompanionInstallableAssetInfo,
+	selectLatestCompanionInstallableRelease,
 } from "@/features/edit/processing/companion-release";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const TAGS_URL =
-	"https://api.github.com/repos/Faysk/tda/git/matching-refs/tags/companion-v";
+const RELEASES_URL = "https://api.github.com/repos/Faysk/tda/releases?per_page=100";
 const RELEASE_BY_TAG_URL = "https://api.github.com/repos/Faysk/tda/releases/tags/";
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 const GITHUB_HEADERS = {
@@ -19,23 +19,29 @@ const NO_STORE_HEADERS = {
 	Pragma: "no-cache",
 };
 
-async function latestTag(): Promise<string | null> {
-	const tagsResponse = await fetch(TAGS_URL, {
+async function latestInstallable() {
+	const response = await fetch(RELEASES_URL, {
 		headers: GITHUB_HEADERS,
 		cache: "no-store",
 	});
-	if (!tagsResponse.ok) throw new Error("COMPANION_RELEASE_LOOKUP_FAILED");
-	return selectLatestCompanionTag(await tagsResponse.json());
+	if (!response.ok) throw new Error("COMPANION_RELEASE_LOOKUP_FAILED");
+	return selectLatestCompanionInstallableRelease(await response.json());
 }
 
 export async function GET(request: Request) {
 	try {
 		const requestUrl = new URL(request.url);
 		const versions = requestUrl.searchParams.getAll("version");
+		const tags = requestUrl.searchParams.getAll("tag");
 		const unexpectedQuery = Array.from(requestUrl.searchParams.keys()).some(
-			(key) => key !== "version",
+			(key) => key !== "version" && key !== "tag",
 		);
-		if (versions.length > 1 || unexpectedQuery) {
+		if (
+			versions.length > 1 ||
+			tags.length > 1 ||
+			(versions.length > 0 && tags.length > 0) ||
+			unexpectedQuery
+		) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_REQUEST_INVALID" },
 				{ status: 400, headers: NO_STORE_HEADERS },
@@ -43,28 +49,43 @@ export async function GET(request: Request) {
 		}
 
 		const requestedVersion = versions[0] ?? null;
+		const requestedTag = tags[0] ?? null;
 		if (requestedVersion !== null && !VERSION_PATTERN.test(requestedVersion)) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_REQUEST_INVALID" },
 				{ status: 400, headers: NO_STORE_HEADERS },
 			);
 		}
-
-		const tag = requestedVersion
-			? `companion-v${requestedVersion}`
-			: await latestTag();
-		if (!tag) {
+		if (requestedTag !== null && !isCompanionInstallableTag(requestedTag)) {
 			return Response.json(
-				{ error: "COMPANION_RELEASE_NOT_FOUND" },
-				{ status: 404, headers: NO_STORE_HEADERS },
+				{ error: "COMPANION_RELEASE_REQUEST_INVALID" },
+				{ status: 400, headers: NO_STORE_HEADERS },
 			);
 		}
 
+		if (!requestedVersion && !requestedTag) {
+			const latest = await latestInstallable();
+			if (!latest) {
+				return Response.json(
+					{ error: "COMPANION_RELEASE_NOT_FOUND" },
+					{ status: 404, headers: NO_STORE_HEADERS },
+				);
+			}
+			return new Response(null, {
+				status: 307,
+				headers: {
+					Location: latest.url,
+					...NO_STORE_HEADERS,
+				},
+			});
+		}
+
+		const tag = requestedTag ?? `companion-v${requestedVersion}`;
 		const releaseResponse = await fetch(`${RELEASE_BY_TAG_URL}${encodeURIComponent(tag)}`, {
 			headers: GITHUB_HEADERS,
 			cache: "no-store",
 		});
-		if (releaseResponse.status === 404 && requestedVersion) {
+		if (releaseResponse.status === 404) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_NOT_FOUND" },
 				{ status: 404, headers: NO_STORE_HEADERS },
@@ -77,8 +98,8 @@ export async function GET(request: Request) {
 			);
 		}
 
-		const downloadUrl = selectCompanionAsset(await releaseResponse.json(), tag);
-		if (!downloadUrl) {
+		const asset = selectCompanionInstallableAssetInfo(await releaseResponse.json(), tag);
+		if (!asset) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_INVALID" },
 				{ status: 503, headers: NO_STORE_HEADERS },
@@ -88,7 +109,7 @@ export async function GET(request: Request) {
 		return new Response(null, {
 			status: 307,
 			headers: {
-				Location: downloadUrl,
+				Location: asset.url,
 				...NO_STORE_HEADERS,
 			},
 		});
