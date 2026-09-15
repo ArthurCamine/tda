@@ -6,6 +6,53 @@ set -euo pipefail
 : "${SUPABASE_DB_PASSWORD:?SUPABASE_DB_PASSWORD is required}"
 : "${TDA_MIGRATION_BOUNDARY:?TDA_MIGRATION_BOUNDARY is required}"
 
+SUPABASE_RETRY_ATTEMPTS="${TDA_SUPABASE_RETRY_ATTEMPTS:-4}"
+SUPABASE_RETRY_BASE_DELAY_SECONDS="${TDA_SUPABASE_RETRY_BASE_DELAY_SECONDS:-2}"
+
+if ! [[ "$SUPABASE_RETRY_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::TDA_SUPABASE_RETRY_ATTEMPTS must be a positive integer."
+  exit 1
+fi
+if ! [[ "$SUPABASE_RETRY_BASE_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "::error::TDA_SUPABASE_RETRY_BASE_DELAY_SECONDS must be a non-negative integer."
+  exit 1
+fi
+
+is_transient_supabase_error() {
+  grep -Eiq '(scheduled maintenance|under maintenance|temporar(il)?y unavailable|too many requests|rate.?limit|http[^0-9]*(429|502|503|504)|status[^0-9]*(429|502|503|504)|gateway timeout|service unavailable|connection reset by peer|connection refused|i/o timeout|tls handshake timeout|context deadline exceeded|network is unreachable|server closed the connection unexpectedly|unexpected eof)'
+}
+
+run_supabase_network() {
+  local label="$1"
+  shift
+  local attempt=1
+  local delay="$SUPABASE_RETRY_BASE_DELAY_SECONDS"
+  local output
+  local status
+
+  while true; do
+    set +e
+    output="$("$@" 2>&1)"
+    status=$?
+    set -e
+    printf '%s\n' "$output"
+
+    if [[ $status -eq 0 ]]; then
+      return 0
+    fi
+
+    if [[ $attempt -ge $SUPABASE_RETRY_ATTEMPTS ]] || ! printf '%s\n' "$output" | is_transient_supabase_error; then
+      echo "::error::Supabase command failed during $label (attempt $attempt/$SUPABASE_RETRY_ATTEMPTS)."
+      return "$status"
+    fi
+
+    echo "::warning::Transient Supabase failure during $label (attempt $attempt/$SUPABASE_RETRY_ATTEMPTS). Retrying in ${delay}s."
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 OVERLAY="${RUNNER_TEMP:-/tmp}/tda-supabase-overlay"
 REMOTE_LIST="${RUNNER_TEMP:-/tmp}/remote-migrations.txt"
 REPO_LIST="${RUNNER_TEMP:-/tmp}/repo-migrations.txt"
@@ -15,12 +62,12 @@ rm -rf "$OVERLAY"
 mkdir -p "$OVERLAY"
 
 supabase init --workdir "$OVERLAY" --yes
-supabase link \
+run_supabase_network "project link" supabase link \
   --workdir "$OVERLAY" \
   --project-ref "$SUPABASE_PROJECT_REF" \
   --password "$SUPABASE_DB_PASSWORD" \
   --yes
-supabase migration fetch --workdir "$OVERLAY" --linked --yes
+run_supabase_network "initial migration fetch" supabase migration fetch --workdir "$OVERLAY" --linked --yes
 
 find "$OVERLAY/supabase/migrations" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REMOTE_LIST"
 find supabase/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$REPO_LIST"
@@ -51,13 +98,13 @@ cp -f supabase/migrations/*.sql "$OVERLAY/supabase/migrations/"
 
 echo "Remote migration history files: $(wc -l < "$REMOTE_LIST")"
 echo "Authoritative TDA deployable files: $(wc -l < "$REPO_LIST")"
-supabase migration list --workdir "$OVERLAY" --linked --password "$SUPABASE_DB_PASSWORD"
-supabase db push --workdir "$OVERLAY" --linked --dry-run --skip-vault --password "$SUPABASE_DB_PASSWORD"
-supabase db push --workdir "$OVERLAY" --linked --skip-vault --password "$SUPABASE_DB_PASSWORD" --yes
+run_supabase_network "migration list" supabase migration list --workdir "$OVERLAY" --linked --password "$SUPABASE_DB_PASSWORD"
+run_supabase_network "migration dry-run" supabase db push --workdir "$OVERLAY" --linked --dry-run --skip-vault --password "$SUPABASE_DB_PASSWORD"
+run_supabase_network "migration push" supabase db push --workdir "$OVERLAY" --linked --skip-vault --password "$SUPABASE_DB_PASSWORD" --yes
 
 rm -rf "$OVERLAY/supabase/migrations"
 mkdir -p "$OVERLAY/supabase/migrations"
-supabase migration fetch --workdir "$OVERLAY" --linked --yes
+run_supabase_network "post-push migration fetch" supabase migration fetch --workdir "$OVERLAY" --linked --yes
 
 AFTER_REMOTE="${RUNNER_TEMP:-/tmp}/remote-migrations-after.txt"
 AFTER_REPO="${RUNNER_TEMP:-/tmp}/repo-migrations-after.txt"
