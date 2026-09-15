@@ -27,14 +27,27 @@ def _manifest(payload: bytes) -> UpdateManifest:
     )
 
 
-def _manifest_json(payload: bytes = b"fake-msi-payload") -> dict[str, object]:
+def _manifest_json(
+    payload: bytes = b"fake-msi-payload",
+    *,
+    channel: str = "stable",
+    version: str = "0.3.6",
+    tag: str | None = None,
+    url: str | None = None,
+) -> dict[str, object]:
+    resolved_tag = tag or (
+        f"companion-v{version}"
+        if channel == "stable"
+        else f"companion-rc-v{version}-0123456789ab"
+    )
+    resolved_url = url or f"/api/downloads/companion/windows?tag={resolved_tag}"
     return {
-        "channel": "stable",
-        "version": "0.3.2",
-        "tag": "companion-v0.3.2",
+        "channel": channel,
+        "version": version,
+        "tag": resolved_tag,
         "minimum_api": "1",
         "asset": {
-            "url": "/api/downloads/companion/windows?version=0.3.2",
+            "url": resolved_url,
             "sha256": hashlib.sha256(payload).hexdigest(),
             "size": len(payload),
         },
@@ -67,29 +80,131 @@ class _Client:
         return _Response(self.payload, self.status)
 
 
-def test_parse_manifest_requires_version_locked_download_url():
-    manifest = parse_manifest(_manifest_json())
-    assert manifest.url.endswith("/api/downloads/companion/windows?version=0.3.2")
+def test_parse_manifest_accepts_exact_tag_locked_stable_and_legacy_stable_url():
+    current = parse_manifest(_manifest_json())
+    assert current.tag == "companion-v0.3.6"
+    assert current.url.endswith("/api/downloads/companion/windows?tag=companion-v0.3.6")
 
-    generic = _manifest_json()
-    generic["asset"] = {**generic["asset"], "url": "/api/downloads/companion/windows"}  # type: ignore[arg-type]
+    legacy = parse_manifest(
+        _manifest_json(url="/api/downloads/companion/windows?version=0.3.6")
+    )
+    assert legacy.url.endswith("/api/downloads/companion/windows?version=0.3.6")
+
+
+def test_parse_manifest_accepts_exact_tag_locked_rc():
+    manifest = parse_manifest(_manifest_json(channel="rc"))
+    assert manifest.version == "0.3.6"
+    assert manifest.tag == "companion-rc-v0.3.6-0123456789ab"
+    assert manifest.url.endswith(
+        "/api/downloads/companion/windows?tag=companion-rc-v0.3.6-0123456789ab"
+    )
+
+
+def test_parse_manifest_rejects_unknown_channel_and_channel_tag_mismatch():
+    with pytest.raises(ValueError, match="INVALID_UPDATE_CHANNEL"):
+        parse_manifest(_manifest_json(channel="nightly"))
+
+    with pytest.raises(ValueError, match="INVALID_UPDATE_TAG"):
+        parse_manifest(
+            _manifest_json(
+                channel="stable",
+                tag="companion-rc-v0.3.6-0123456789ab",
+                url=(
+                    "/api/downloads/companion/windows?tag="
+                    "companion-rc-v0.3.6-0123456789ab"
+                ),
+            )
+        )
+
+    with pytest.raises(ValueError, match="INVALID_UPDATE_TAG"):
+        parse_manifest(
+            _manifest_json(
+                channel="rc",
+                tag="companion-v0.3.6",
+                url="/api/downloads/companion/windows?tag=companion-v0.3.6",
+            )
+        )
+
+
+def test_parse_manifest_rejects_tag_version_or_rc_source_mismatch():
+    with pytest.raises(ValueError, match="INVALID_UPDATE_TAG"):
+        parse_manifest(
+            _manifest_json(
+                channel="stable",
+                version="0.3.6",
+                tag="companion-v0.3.5",
+                url="/api/downloads/companion/windows?tag=companion-v0.3.5",
+            )
+        )
+
+    with pytest.raises(ValueError, match="INVALID_UPDATE_TAG"):
+        parse_manifest(
+            _manifest_json(
+                channel="rc",
+                version="0.3.6",
+                tag="companion-rc-v0.3.5-0123456789ab",
+                url=(
+                    "/api/downloads/companion/windows?tag="
+                    "companion-rc-v0.3.5-0123456789ab"
+                ),
+            )
+        )
+
+    with pytest.raises(ValueError, match="INVALID_UPDATE_TAG"):
+        parse_manifest(
+            _manifest_json(
+                channel="rc",
+                tag="companion-rc-v0.3.6-NOTASHA00000",
+                url=(
+                    "/api/downloads/companion/windows?tag="
+                    "companion-rc-v0.3.6-NOTASHA00000"
+                ),
+            )
+        )
+
+
+def test_parse_manifest_requires_release_locked_download_url():
+    generic = _manifest_json(url="/api/downloads/companion/windows")
     with pytest.raises(ValueError, match="INVALID_UPDATE_URL"):
         parse_manifest(generic)
 
-    mismatched = _manifest_json()
-    mismatched["asset"] = {
-        **mismatched["asset"],  # type: ignore[arg-type]
-        "url": "/api/downloads/companion/windows?version=0.3.1",
-    }
+    wrong_tag = _manifest_json(
+        url="/api/downloads/companion/windows?tag=companion-v0.3.5"
+    )
     with pytest.raises(ValueError, match="INVALID_UPDATE_URL"):
-        parse_manifest(mismatched)
+        parse_manifest(wrong_tag)
+
+    extra_query = _manifest_json(
+        url=(
+            "/api/downloads/companion/windows?tag=companion-v0.3.6&extra=1"
+        )
+    )
+    with pytest.raises(ValueError, match="INVALID_UPDATE_URL"):
+        parse_manifest(extra_query)
+
+    external = _manifest_json(
+        url="https://example.com/api/downloads/companion/windows?tag=companion-v0.3.6"
+    )
+    with pytest.raises(ValueError, match="INVALID_UPDATE_URL"):
+        parse_manifest(external)
 
 
-def test_fetch_manifest_uses_no_store_and_typed_invalid_manifest_error():
-    client = _Client(json.dumps(_manifest_json()).encode("utf-8"))
+def test_parse_manifest_never_allows_rc_version_only_download_url():
+    with pytest.raises(ValueError, match="INVALID_UPDATE_URL"):
+        parse_manifest(
+            _manifest_json(
+                channel="rc",
+                url="/api/downloads/companion/windows?version=0.3.6",
+            )
+        )
+
+
+def test_fetch_manifest_uses_no_store_and_accepts_current_rc_contract():
+    client = _Client(json.dumps(_manifest_json(channel="rc")).encode("utf-8"))
     result = fetch_manifest(timeout=4.5, client=client)  # type: ignore[arg-type]
 
-    assert result.version == "0.3.2"
+    assert result.version == "0.3.6"
+    assert result.tag == "companion-rc-v0.3.6-0123456789ab"
     assert client.timeout == 4.5
     assert client.request.get_header("Cache-control") == "no-store"
     assert client.request.get_header("Pragma") == "no-cache"

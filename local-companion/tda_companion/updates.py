@@ -16,7 +16,8 @@ from .release_download import ReleaseRedirectError, open_verified_release
 PRODUCTION_ORIGIN = "https://dnd.faysk.dev"
 MANIFEST_URL = f"{PRODUCTION_ORIGIN}/api/downloads/companion/windows/manifest"
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-_TAG = re.compile(r"^companion-v(\d+)\.(\d+)\.(\d+)$")
+_STABLE_TAG = re.compile(r"^companion-v(\d+)\.(\d+)\.(\d+)$")
+_RC_TAG = re.compile(r"^companion-rc-v(\d+)\.(\d+)\.(\d+)-([a-f0-9]{12})$")
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 
 
@@ -37,13 +38,35 @@ def version_tuple(value: str) -> tuple[int, int, int]:
     return tuple(int(match[index]) for index in range(1, 4))  # type: ignore[return-value]
 
 
-def _version_locked_download_url(raw_url: str, version: str) -> str:
+def _validate_release_tag(channel: str, version: str, tag: str) -> None:
+    if channel == "stable":
+        if not _STABLE_TAG.fullmatch(tag) or tag != f"companion-v{version}":
+            raise ValueError("INVALID_UPDATE_TAG")
+        return
+
+    if channel == "rc":
+        match = _RC_TAG.fullmatch(tag)
+        if not match or ".".join(match.groups()[:3]) != version:
+            raise ValueError("INVALID_UPDATE_TAG")
+        return
+
+    raise ValueError("INVALID_UPDATE_CHANNEL")
+
+
+def _release_locked_download_url(
+    raw_url: str,
+    *,
+    channel: str,
+    version: str,
+    tag: str,
+) -> str:
     url = urljoin(PRODUCTION_ORIGIN + "/", raw_url)
     parsed = urlsplit(url)
     try:
         query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
     except ValueError as exc:
         raise ValueError("INVALID_UPDATE_URL") from exc
+
     if (
         parsed.scheme != "https"
         or parsed.hostname != "dnd.faysk.dev"
@@ -52,7 +75,16 @@ def _version_locked_download_url(raw_url: str, version: str) -> str:
         or parsed.port is not None
         or parsed.path != "/api/downloads/companion/windows"
         or parsed.fragment
-        or query != {"version": [version]}
+    ):
+        raise ValueError("INVALID_UPDATE_URL")
+
+    # The current manifest pins every installable release to its exact tag.
+    # Keep the previous stable-only version lock as a compatibility input, but
+    # never allow a prerelease to be addressed by version alone.
+    expected_tag_query = {"tag": [tag]}
+    legacy_stable_query = {"version": [version]}
+    if query != expected_tag_query and not (
+        channel == "stable" and query == legacy_stable_query
     ):
         raise ValueError("INVALID_UPDATE_URL")
     return url
@@ -61,24 +93,34 @@ def _version_locked_download_url(raw_url: str, version: str) -> str:
 def parse_manifest(value: object) -> UpdateManifest:
     if not isinstance(value, dict):
         raise ValueError("INVALID_UPDATE_MANIFEST")
-    if value.get("channel") != "stable":
-        raise ValueError("INVALID_UPDATE_CHANNEL")
+
+    channel = value.get("channel")
     version = value.get("version")
     tag = value.get("tag")
     minimum_api = value.get("minimum_api")
     asset = value.get("asset")
+
+    if channel not in {"stable", "rc"}:
+        raise ValueError("INVALID_UPDATE_CHANNEL")
     if not isinstance(version, str) or not _VERSION.fullmatch(version):
         raise ValueError("INVALID_UPDATE_VERSION")
-    if not isinstance(tag, str) or not _TAG.fullmatch(tag) or tag != f"companion-v{version}":
+    if not isinstance(tag, str):
         raise ValueError("INVALID_UPDATE_TAG")
+    _validate_release_tag(channel, version, tag)
     if minimum_api != "1" or not isinstance(asset, dict):
         raise ValueError("INCOMPATIBLE_UPDATE_MANIFEST")
+
     raw_url = asset.get("url")
     digest = asset.get("sha256")
     size = asset.get("size")
     if not isinstance(raw_url, str):
         raise ValueError("INVALID_UPDATE_URL")
-    url = _version_locked_download_url(raw_url, version)
+    url = _release_locked_download_url(
+        raw_url,
+        channel=channel,
+        version=version,
+        tag=tag,
+    )
     if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
         raise ValueError("INVALID_UPDATE_DIGEST")
     if not isinstance(size, int) or isinstance(size, bool) or size <= 0 or size > 512 * 1024 * 1024:
