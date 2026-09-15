@@ -13,7 +13,7 @@ Estágio de entrega segue [Documentação viva](documentation/README.md): branch
 
 A `main` consultada nesta revisão está em `43307c819877fffe018a7dfbe1ed214892c4bd21`. A linha local do Companion possui candidato 0.3.4 RC publicado pelo pipeline controlado; promoção stable continua dependente dos gates físicos/receipts correspondentes. O histórico de deployments públicos do site permanece em [operations/deployments.md](operations/deployments.md) e o estado concreto de entregas em [delivery/inventory.md](delivery/inventory.md).
 
-ASR Craig real já existe localmente com perfis Qwen/Whisper. O próximo contrato de produto não é enviar o resultado automaticamente: ADR-0015 e [Runs/revisão/publicação](features/transcript-review-publication.md) definem múltiplos runs locais, auditoria/comparação antes do publish e revisions cloud substituíveis/restauráveis. A importação cloud continua deliberadamente negada até esse lifecycle ser implementado e reconciliado com authorization/persistence.
+ASR Craig real já existe localmente com perfis Qwen/Whisper. O próximo contrato de produto não é enviar o resultado automaticamente: ADR-0016 e [Runs/revisão/publicação](features/transcript-review-publication.md) definem múltiplos runs locais, auditoria/comparação antes do publish e revisions cloud substituíveis/restauráveis. A importação cloud continua deliberadamente negada até esse lifecycle ser implementado e reconciliado com authorization/persistence.
 
 Migration integrada continua não sendo tratada como migration aplicada. Estados concretos e evidências ficam nos documentos operacionais donos.
 
@@ -36,7 +36,7 @@ Prancheta mantém estágio, PR/SHA, evidência e próximo gate no [inventário](
 As frentes abaixo continuam em paralelo e **não rebaixam P1/P2/P3 na ordem de produto**:
 
 - **Parafuso — Edit:** convergência de persistence/revision/conflito/audit e UX real, preservando os gates donos de banco e autorização. Owners: [Edit](features/edit-workbench.md), [slice server-side](features/edit-transcript-server-slice.md) e [Identity/access](domains/identity-access.md).
-- **Motorzinho/Painelzinho — operação local:** ASR real Qwen/Whisper, supervisor/serviço, recuperação, biblioteca de runs, revisão e comparação antes de qualquer publicação. Owners: [Processamento](features/local-processing.md), [lifecycle editorial](features/transcript-review-publication.md), [Companion](integrations/local-companion.md) e ADR-0015.
+- **Motorzinho/Painelzinho — operação local:** ASR real Qwen/Whisper, supervisor/serviço, recuperação, biblioteca de runs, revisão e comparação antes de qualquer publicação. Owners: [Processamento](features/local-processing.md), [lifecycle editorial](features/transcript-review-publication.md), [Companion](integrations/local-companion.md) e ADR-0016.
 - **Carteiro/Cofrinho — sincronização/publicação:** resultado explicitamente escolhido -> consumer -> published revision -> receipt/readback -> ativação atômica; sem envio automático ao terminar ASR e sem sobrescrever conteúdo revisado. Owner: [Importação](integrations/transcript-import.md), subordinada ao lifecycle revisionado.
 - **Balde — mídia:** upload, verificação pública e eventual promoção de referências continuam operações deliberadas e separadas. Owner: [R2](integrations/r2.md).
 - **Catraca, Chaveiro e Contador de Feijão:** Auth, consulta de permissões e estatísticas mantêm seus próprios owners e evidências; mudanças de UX/estado não criam grants nem reabrem recortes concluídos sem defeito novo.
