@@ -167,41 +167,20 @@ export function WorldCommandPalette({
 				aria-modal="true"
 				aria-labelledby="world-command-palette-title"
 				onKeyDown={(event) => {
-					if (event.key === "Tab") {
-						const focusable = Array.from(
-							paletteRef.current?.querySelectorAll<HTMLElement>(PALETTE_FOCUSABLE) ?? [],
-						).filter((element) => element.offsetParent !== null);
-						if (focusable.length) {
-							const first = focusable[0];
-							const last = focusable[focusable.length - 1];
-							const active = document.activeElement;
-							if (event.shiftKey && (active === first || !paletteRef.current?.contains(active))) {
-								event.preventDefault();
-								last.focus();
-							} else if (!event.shiftKey && active === last) {
-								event.preventDefault();
-								first.focus();
-							}
-						}
-						return;
-					}
-					if (event.key === "ArrowDown") {
+					if (event.key !== "Tab") return;
+					const focusable = Array.from(
+						paletteRef.current?.querySelectorAll<HTMLElement>(PALETTE_FOCUSABLE) ?? [],
+					).filter((element) => element.offsetParent !== null && element.tabIndex >= 0);
+					if (!focusable.length) return;
+					const first = focusable[0];
+					const last = focusable[focusable.length - 1];
+					const active = document.activeElement;
+					if (event.shiftKey && (active === first || !paletteRef.current?.contains(active))) {
 						event.preventDefault();
-						setActiveIndex((current) =>
-							results.length ? (current + 1) % results.length : 0,
-						);
-						return;
-					}
-					if (event.key === "ArrowUp") {
+						last.focus();
+					} else if (!event.shiftKey && active === last) {
 						event.preventDefault();
-						setActiveIndex((current) =>
-							results.length ? (current - 1 + results.length) % results.length : 0,
-						);
-						return;
-					}
-					if (event.key === "Enter") {
-						event.preventDefault();
-						activate(results[activeIndex]);
+						first.focus();
 					}
 				}}
 			>
@@ -229,14 +208,38 @@ export function WorldCommandPalette({
 					<input
 						ref={inputRef}
 						type="search"
+						role="combobox"
 						value={query}
 						onChange={(event) => {
 							setQuery(event.target.value);
 							setActiveIndex(0);
 						}}
+						onKeyDown={(event) => {
+							if (event.key === "ArrowDown") {
+								event.preventDefault();
+								setActiveIndex((current) =>
+									results.length ? (current + 1) % results.length : 0,
+								);
+								return;
+							}
+							if (event.key === "ArrowUp") {
+								event.preventDefault();
+								setActiveIndex((current) =>
+									results.length ? (current - 1 + results.length) % results.length : 0,
+								);
+								return;
+							}
+							if (event.key === "Enter") {
+								event.preventDefault();
+								activate(results[activeIndex]);
+							}
+						}}
 						placeholder="Comando, personagem, lugar..."
 						autoComplete="off"
 						aria-controls="world-command-palette-results"
+						aria-expanded="true"
+						aria-haspopup="listbox"
+						aria-autocomplete="list"
 						aria-activedescendant={results[activeIndex]?.key ?? undefined}
 					/>
 				</label>
@@ -257,9 +260,11 @@ export function WorldCommandPalette({
 										id={result.key}
 										type="button"
 										role="option"
+										tabIndex={-1}
 										aria-selected={active}
 										data-active={active ? "true" : "false"}
 										onMouseEnter={() => setActiveIndex(index)}
+										onMouseDown={(event) => event.preventDefault()}
 										onClick={() => activate(result)}
 									>
 										<span className={styles.resultIcon} aria-hidden="true">⌘</span>
@@ -279,9 +284,11 @@ export function WorldCommandPalette({
 									id={result.key}
 									type="button"
 									role="option"
+									tabIndex={-1}
 									aria-selected={active}
 									data-active={active ? "true" : "false"}
 									onMouseEnter={() => setActiveIndex(index)}
+									onMouseDown={(event) => event.preventDefault()}
 									onClick={() => activate(result)}
 								>
 									<span className={styles.entityPortrait} aria-hidden="true">

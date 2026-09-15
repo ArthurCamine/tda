@@ -13,6 +13,7 @@ export default defineConfig({
 				TDA_READ_PUBLISHED_DATA: "false",
 				TDA_EDIT_UNSAFE: "true",
 				TDA_WORLD_DEMO_FALLBACK: "true",
+				TDA_E2E_FIXTURES: "true",
 				SUPABASE_PUBLISHABLE_KEY: "",
 				TDA_AUTH_ORIGIN: "",
 			},
