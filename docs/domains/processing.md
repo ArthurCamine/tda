@@ -3,7 +3,7 @@
 > Status: processamento local real implementado; lifecycle editorial pós-ASR aprovado e em implementação futura
 > Owner: processing/local-companion
 > Última revisão: 2026-09-15
-> Fonte de verdade: ADR-0003, ADR-0013, ADR-0015, `local-companion/tda_companion`, `docs/features/local-processing.md` e `docs/features/transcript-review-publication.md`
+> Fonte de verdade: ADR-0003, ADR-0013, ADR-0016, `local-companion/tda_companion`, `docs/features/local-processing.md` e `docs/features/transcript-review-publication.md`
 
 ## Objetivo
 
@@ -36,7 +36,7 @@ Unidade operacional da fila: algo a executar, pausar/cancelar/repetir e observar
 
 ### Run de transcrição
 
-Execução concreta de ASR para um source e uma configuração. ADR-0015 determina que múltiplos runs do mesmo source podem coexistir e que um run concluído é imutável.
+Execução concreta de ASR para um source e uma configuração. ADR-0016 determina que múltiplos runs do mesmo source podem coexistir e que um run concluído é imutável.
 
 ### Revision editorial
 
@@ -250,7 +250,7 @@ Requisitos:
 - sem service key irrestrita em cliente local;
 - sem áudio bruto no payload normal.
 
-A candidata existente de transcript import é fundação técnica, não fluxo produtivo final, e deve ser reconciliada com ADR-0015 antes de ativação.
+A candidata existente de transcript import é fundação técnica, não fluxo produtivo final, e deve ser reconciliada com ADR-0016 antes de ativação.
 
 ## Falhas
 
