@@ -1,0 +1,189 @@
+name: Yllith HQ one-shot publication
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/yllith-hq-publish-once.json"
+      - ".github/workflows/yllith-hq-publish-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yllith-hq-one-shot
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish-8-fixed-hq-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    env:
+      R2_PUBLIC_BUCKET: tda-media-public
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.3.4
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Publish fixed Yllith HQ carrier payloads to immutable R2 keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { createHash } from "node:crypto";
+          import {
+            GetObjectCommand,
+            HeadObjectCommand,
+            PutObjectCommand,
+            S3Client,
+          } from "@aws-sdk/client-s3";
+
+          const config = JSON.parse(fs.readFileSync(".github/yllith-hq-publish-once.json", "utf8"));
+          const EXPECTED_ORIGIN = "https://media.dnd.faysk.dev";
+          const EXPECTED_BUCKET = "tda-media-public";
+          const EXPECTED_NAMESPACE = "lore/yllith";
+          if (config.schemaVersion !== 1) throw new Error("invalid schemaVersion");
+          if (config.publicOrigin !== EXPECTED_ORIGIN) throw new Error("unexpected public origin");
+          if (config.bucket !== EXPECTED_BUCKET) throw new Error("unexpected bucket");
+          if (config.namespace !== EXPECTED_NAMESPACE) throw new Error("unexpected namespace");
+          if (!Array.isArray(config.assets) || config.assets.length !== 8) throw new Error("expected exactly 8 assets");
+
+          for (const key of ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
+            if (!process.env[key]) throw new Error(`missing ${key}`);
+          }
+
+          const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+          const client = new S3Client({
+            region: "auto",
+            endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+            credentials: {
+              accessKeyId: process.env.R2_ACCESS_KEY_ID,
+              secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+            },
+            requestChecksumCalculation: "WHEN_REQUIRED",
+          });
+
+          const bodyBytes = async (body) => {
+            if (!body?.transformToByteArray) throw new Error("R2 body is not byte-readable");
+            return Buffer.from(await body.transformToByteArray());
+          };
+
+          function parseCarrier(bytes) {
+            const signature = Buffer.from([137,80,78,71,13,10,26,10]);
+            if (bytes.length < 20 || !bytes.subarray(0, 8).equals(signature)) throw new Error("carrier is not PNG");
+            let offset = 8;
+            let payload = null;
+            let metadata = null;
+            while (offset + 12 <= bytes.length) {
+              const length = bytes.readUInt32BE(offset);
+              const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
+              const start = offset + 8;
+              const end = start + length;
+              if (end + 4 > bytes.length) throw new Error("truncated PNG carrier");
+              const data = bytes.subarray(start, end);
+              if (type === "raVM") metadata = JSON.parse(data.toString("utf8"));
+              if (type === "raVF") payload = Buffer.from(data);
+              offset = end + 4;
+              if (type === "IEND") break;
+            }
+            if (!payload || !metadata) throw new Error("carrier missing raVF/raVM");
+            return { payload, metadata };
+          }
+
+          async function inspectRemote(asset, key) {
+            try {
+              const head = await client.send(new HeadObjectCommand({ Bucket: EXPECTED_BUCKET, Key: key }));
+              if (head.ContentLength !== asset.bytes) throw new Error(`immutable size mismatch for ${key}`);
+              const got = await client.send(new GetObjectCommand({ Bucket: EXPECTED_BUCKET, Key: key }));
+              const bytes = await bodyBytes(got.Body);
+              if (bytes.length !== asset.bytes || sha256(bytes) !== asset.sha256) throw new Error(`immutable hash mismatch for ${key}`);
+              if (got.ContentType !== "image/avif") throw new Error(`immutable content-type mismatch for ${key}`);
+              return "reused";
+            } catch (error) {
+              const status = error?.$metadata?.httpStatusCode;
+              if (status === 404 || error?.name === "NotFound" || error?.name === "NoSuchKey") return "missing";
+              throw error;
+            }
+          }
+
+          const results = [];
+          for (const asset of config.assets) {
+            if (!/^[a-z0-9][a-z0-9-]*\.avif$/.test(asset.file)) throw new Error(`invalid filename ${asset.file}`);
+            if (!Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || asset.bytes > 2_000_000) throw new Error(`invalid bytes for ${asset.file}`);
+            if (!/^[a-f0-9]{64}$/.test(asset.sha256)) throw new Error(`invalid sha256 for ${asset.file}`);
+            const source = new URL(asset.sourceUrl);
+            if (source.protocol !== "https:" || !source.hostname.endsWith(".blob.core.windows.net")) throw new Error(`unapproved carrier source for ${asset.file}`);
+
+            const response = await fetch(source, { cache: "no-store" });
+            if (!response.ok) throw new Error(`carrier fetch failed ${response.status} for ${asset.file}`);
+            const carrier = Buffer.from(await response.arrayBuffer());
+            const { payload, metadata } = parseCarrier(carrier);
+            if (metadata.name !== asset.file || metadata.bytes !== asset.bytes || metadata.sha256 !== asset.sha256) {
+              throw new Error(`carrier metadata mismatch for ${asset.file}`);
+            }
+            if (payload.length !== asset.bytes) throw new Error(`carrier byte length mismatch for ${asset.file}`);
+            if (sha256(payload) !== asset.sha256) throw new Error(`carrier sha256 mismatch for ${asset.file}`);
+
+            const key = `${EXPECTED_NAMESPACE}/${asset.sha256}/${asset.file}`;
+            let state = await inspectRemote(asset, key);
+            if (state === "missing") {
+              await client.send(new PutObjectCommand({
+                Bucket: EXPECTED_BUCKET,
+                Key: key,
+                Body: payload,
+                ContentType: "image/avif",
+                CacheControl: "public, max-age=31536000, immutable",
+                IfNoneMatch: "*",
+              }));
+              state = "published";
+            }
+
+            const readback = await client.send(new GetObjectCommand({ Bucket: EXPECTED_BUCKET, Key: key }));
+            const readbackBytes = await bodyBytes(readback.Body);
+            if (readbackBytes.length !== asset.bytes || sha256(readbackBytes) !== asset.sha256) throw new Error(`R2 read-back mismatch for ${asset.file}`);
+            if (readback.ContentType !== "image/avif") throw new Error(`R2 read-back MIME mismatch for ${asset.file}`);
+
+            const publicUrl = `${EXPECTED_ORIGIN}/${key}`;
+            const publicResponse = await fetch(`${publicUrl}?tda_verify=${Date.now()}`, { cache: "no-store" });
+            if (!publicResponse.ok) throw new Error(`public GET failed ${publicResponse.status} for ${asset.file}`);
+            const publicBytes = Buffer.from(await publicResponse.arrayBuffer());
+            const publicType = publicResponse.headers.get("content-type")?.split(";")[0]?.trim();
+            if (publicBytes.length !== asset.bytes || sha256(publicBytes) !== asset.sha256) throw new Error(`public delivery hash mismatch for ${asset.file}`);
+            if (publicType !== "image/avif") throw new Error(`public delivery MIME mismatch for ${asset.file}: ${publicType}`);
+
+            console.log(`YLLITH_HQ_OK ${asset.file} ${state} ${asset.bytes} ${asset.sha256}`);
+            results.push({ file: asset.file, state, bytes: asset.bytes, sha256: asset.sha256, publicUrl });
+          }
+
+          fs.mkdirSync(".local", { recursive: true });
+          fs.writeFileSync(".local/yllith-hq-publication-receipt.json", JSON.stringify({
+            schemaVersion: 1,
+            createdAt: new Date().toISOString(),
+            bucket: EXPECTED_BUCKET,
+            namespace: EXPECTED_NAMESPACE,
+            assets: results,
+          }, null, 2) + "\n");
+          console.log(`YLLITH_HQ_PUBLICATION_OK ${results.length}/8`);
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yllith-hq-publication-receipt
+          path: .local/yllith-hq-publication-receipt.json
+          if-no-files-found: error
+          retention-days: 7
