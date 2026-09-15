@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: produto / arquitetura
-> Última revisão: 2026-09-11
+> Última revisão: 2026-09-15
 > Fonte de verdade: `Faysk/tda@main`, specs e documentos donos
 
 Este catálogo consolida a direção do TDA sem transformar automaticamente ideias históricas em schema. As referências históricas citadas abaixo vivem no legado `Faysk/dnd-scribe`.
@@ -20,7 +20,8 @@ Estados:
 | Feature | Estado no TDA | Base atual / decisão |
 | --- | --- | --- |
 | Edit Workbench / administração | arquitetura aprovada; implementação incremental iniciada | spec em `features/edit-workbench.md`, ADR-0007, paridade viva do `dnd-scribe`; shell/transcript e leitura com revision já avançaram, persistence/Auth canônicos ainda não convergiram |
-| Processamento local no Edit | arquitetura aprovada; candidato UI/adapters | [Contrato da tela e gates](features/local-processing.md); ensaio sintético não equivale a ASR real nem sincronização cloud |
+| Processamento local no Edit | ASR local real implementado; sync cloud desativado | [Contrato da tela e gates](features/local-processing.md), ADR-0003 e ADR-0013; Craig real roda localmente em Qwen/Whisper, conclusão local não publica |
+| Runs/revisão/publicação de transcrição | arquitetura aprovada; implementação pendente | [Contrato editorial completo](features/transcript-review-publication.md) + ADR-0015: runs imutáveis, comparação A/B, revisão derivada, publish explícito, revisions cloud, restore/unpublish/delete |
 | Perfis/jogadores | implementado no schema | `profiles`, identidade Supabase Auth, campaign membership e RBAC; maturidade do schema não implica que todo recorte de acesso administrativo esteja concluído |
 | Personagens jogáveis (PCs) | preparado | `entities(type=pc)` + `profile_characters` + `participants.character_entity_id`; Astel, Dandelion e Screacky já canonicalizados |
 | NPCs | preparado | `entities(type=npc)`; não precisam de profile humano |
@@ -91,6 +92,34 @@ A direção estrutural foi fechada em [ADR-0007](adr/0007-edit-workbench.md):
 
 A `main` já contém o workbench temporário e leitura autorizada com `revision`, mas isso não encerra a convergência: Auth oficial, persistence atômica/auditável, UX de conflito conectada ao resultado real e retirada do bypass continuam etapas distintas. O mapa corrente está no [roadmap](roadmap.md); os detalhes continuam nos documentos donos do Edit/banco/identity.
 
+## Transcrição local, revisão e publicação
+
+A direção estrutural do pós-ASR foi fechada em [ADR-0015](adr/0015-transcript-runs-review-publication.md) e na [spec detalhada](features/transcript-review-publication.md).
+
+O TDA passa a distinguir explicitamente:
+
+```text
+source Craig
+  -> run local imutável
+  -> revisão/comparação
+  -> published revision
+  -> revision atual
+```
+
+Decisões principais:
+
+- o mesmo source pode ter vários runs Qwen/Whisper/retries;
+- output bruto do modelo não é editado;
+- edição cria revision derivada;
+- concluir ASR não publica;
+- publicação exige ação humana explícita;
+- substituir cria/ativa nova revision e preserva a anterior;
+- restore/unpublish/delete possuem semânticas distintas;
+- áudio bruto continua local;
+- transcript publicado continua evidência/fonte e não vira canon automaticamente.
+
+A candidata de transcript import existente continua desativada até ser adaptada a esse lifecycle. Hashes, atomicidade, idempotência, authorization e receipt devem ser reaproveitados; o modelo de publicação direta sobre `transcript_segments` não deve ser ativado como atalho.
+
 ## Fontes históricas revalidadas
 
 - `Faysk/dnd-scribe/docs/01_objetivos_e_escopo.md`: objetivo de transformar sessões em memória auditável/publicável e futuro de wiki/grafo/timeline/busca.
@@ -108,12 +137,13 @@ Esses documentos são evidência histórica. A decisão vigente sempre é este c
 ## Ordem recomendada de evolução
 
 1. consolidar **Home/sessões públicas** e superfícies narrativas já publicadas: origem canônica, metadata comum, mídia pública verificável e release/smoke deliberados;
-2. fechar **Auth/capabilities + Edit transcript**: identidade verificada, optimistic concurrency/audit atômicos, adapter canônico, UX de conflito e retirada posterior do bypass temporário;
-3. popular **memória estruturada** (`entities`, mentions, canon) somente a partir de fontes revisadas/autorizadas;
-4. integrar **perfis editoriais e World Explorer** sobre contratos compartilhados, fixtures não-canônicas isoladas e projections públicas autorizadas;
-5. completar **relations first-class** com sources/audience/provenance e então ligar o World Explorer a dados reais;
-6. expandir perfis com timeline/wiki e demais superfícies derivadas;
-7. fechar modelo de **knowledge/audience**;
-8. evoluir busca semântica, mapas, músicas/performances, quests e consultas narrativas.
+2. fechar **operação local + revisão de transcrição**: runs imutáveis, biblioteca local, comparação, revisão derivada e UX clara de resultado não publicado;
+3. fechar **Auth/capabilities + publicação revisionada**: persistence atômica, receipt/readback, published revisions, current revision, conflito, restore/unpublish e retirada posterior dos bypasses temporários;
+4. popular **memória estruturada** (`entities`, mentions, canon) somente a partir de fontes revisadas/autorizadas;
+5. integrar **perfis editoriais e World Explorer** sobre contratos compartilhados, fixtures não-canônicas isoladas e projections públicas autorizadas;
+6. completar **relations first-class** com sources/audience/provenance e então ligar o World Explorer a dados reais;
+7. expandir perfis com timeline/wiki e demais superfícies derivadas;
+8. fechar modelo de **knowledge/audience**;
+9. evoluir busca semântica, mapas, músicas/performances, quests e consultas narrativas.
 
-Essa ordem preserva primeiro o produto público que já existe, depois o fluxo administrativo crítico de transcrição e só então aumenta a superfície narrativa. Design System, documentação viva, segurança, cloud gratuita/Hobby quando possível e processamento pesado local permanecem transversais a todas as etapas.
+Essa ordem preserva primeiro o produto público que já existe, depois transforma o ASR local em uma fonte editorial realmente confiável e só então aumenta a superfície narrativa. Design System, documentação viva, segurança proporcional, cloud gratuita/Hobby quando possível e processamento pesado local permanecem transversais a todas as etapas.
