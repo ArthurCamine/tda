@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+	isCompanionInstallableTag,
 	selectCompanionAsset,
 	selectCompanionAssetInfo,
+	selectCompanionInstallableAssetInfo,
+	selectLatestCompanionInstallableRelease,
 	selectLatestCompanionTag,
 	selectLatestWhisperRuntimeTag,
 	selectWhisperRuntimeAsset,
@@ -152,6 +155,60 @@ describe("selectCompanionAssetInfo", () => {
 				"companion-v0.3.0",
 			),
 		).toBeNull();
+	});
+});
+
+describe("newest installable Companion release", () => {
+	it("accepts stable and immutable RC tag shapes only", () => {
+		expect(isCompanionInstallableTag("companion-v0.3.4")).toBe(true);
+		expect(isCompanionInstallableTag("companion-rc-v0.3.4-abcdef123456")).toBe(true);
+		expect(isCompanionInstallableTag("companion-rc-v0.3.4-latest")).toBe(false);
+		expect(isCompanionInstallableTag("companion-v0.3.4-beta")).toBe(false);
+	});
+
+	it("selects a newer RC over an older stable release", () => {
+		const stable = release("companion-v0.3.2");
+		const rc = release("companion-rc-v0.3.4-abcdef123456", { prerelease: true });
+		expect(selectLatestCompanionInstallableRelease([stable, rc])).toEqual({
+			channel: "rc",
+			tag: "companion-rc-v0.3.4-abcdef123456",
+			version: "0.3.4",
+			url: "https://github.com/Faysk/tda/releases/download/companion-rc-v0.3.4-abcdef123456/TDACompanion-x64.msi",
+			sha256: "a".repeat(64),
+			size: 16_000_000,
+		});
+	});
+
+	it("prefers stable when RC and stable have the same semantic version", () => {
+		const rc = release("companion-rc-v0.3.4-abcdef123456", { prerelease: true });
+		const stable = release("companion-v0.3.4");
+		expect(selectLatestCompanionInstallableRelease([rc, stable])?.channel).toBe("stable");
+		expect(selectLatestCompanionInstallableRelease([rc, stable])?.tag).toBe(
+			"companion-v0.3.4",
+		);
+	});
+
+	it("fails closed when the release channel state does not match its tag", () => {
+		const rcTag = "companion-rc-v0.3.4-abcdef123456";
+		expect(selectCompanionInstallableAssetInfo(release(rcTag), rcTag)).toBeNull();
+		expect(
+			selectCompanionInstallableAssetInfo(
+				release("companion-v0.3.4", { prerelease: true }),
+				"companion-v0.3.4",
+			),
+		).toBeNull();
+	});
+
+	it("ignores drafts and malformed Companion-like releases", () => {
+		const valid = release("companion-v0.3.2");
+		const draftNewer = release("companion-rc-v9.9.9-abcdef123456", {
+			draft: true,
+			prerelease: true,
+		});
+		const malformed = release("companion-rc-v9.9.9-notasha", { prerelease: true });
+		expect(selectLatestCompanionInstallableRelease([draftNewer, malformed, valid])?.tag).toBe(
+			"companion-v0.3.2",
+		);
 	});
 });
 
