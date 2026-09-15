@@ -1,14 +1,9 @@
-import {
-	selectCompanionAssetInfo,
-	selectLatestCompanionTag,
-} from "@/features/edit/processing/companion-release";
+import { selectLatestCompanionInstallableRelease } from "@/features/edit/processing/companion-release";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const TAGS_URL =
-	"https://api.github.com/repos/Faysk/tda/git/matching-refs/tags/companion-v";
-const RELEASE_BY_TAG_URL = "https://api.github.com/repos/Faysk/tda/releases/tags/";
+const RELEASES_URL = "https://api.github.com/repos/Faysk/tda/releases?per_page=100";
 const GITHUB_HEADERS = {
 	Accept: "application/vnd.github+json",
 	"X-GitHub-Api-Version": "2022-11-28",
@@ -21,52 +16,33 @@ const NO_STORE_HEADERS = {
 
 export async function GET() {
 	try {
-		const tagsResponse = await fetch(TAGS_URL, {
+		const releasesResponse = await fetch(RELEASES_URL, {
 			headers: GITHUB_HEADERS,
 			cache: "no-store",
 		});
-		if (!tagsResponse.ok) {
+		if (!releasesResponse.ok) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_LOOKUP_FAILED" },
 				{ status: 503, headers: NO_STORE_HEADERS },
 			);
 		}
 
-		const tag = selectLatestCompanionTag(await tagsResponse.json());
-		if (!tag) {
+		const asset = selectLatestCompanionInstallableRelease(await releasesResponse.json());
+		if (!asset) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_NOT_FOUND" },
 				{ status: 404, headers: NO_STORE_HEADERS },
 			);
 		}
 
-		const releaseResponse = await fetch(`${RELEASE_BY_TAG_URL}${encodeURIComponent(tag)}`, {
-			headers: GITHUB_HEADERS,
-			cache: "no-store",
-		});
-		if (!releaseResponse.ok) {
-			return Response.json(
-				{ error: "COMPANION_RELEASE_LOOKUP_FAILED" },
-				{ status: 503, headers: NO_STORE_HEADERS },
-			);
-		}
-
-		const asset = selectCompanionAssetInfo(await releaseResponse.json(), tag);
-		if (!asset) {
-			return Response.json(
-				{ error: "COMPANION_RELEASE_INVALID" },
-				{ status: 503, headers: NO_STORE_HEADERS },
-			);
-		}
-
 		return Response.json(
 			{
-				channel: "stable",
+				channel: asset.channel,
 				version: asset.version,
 				tag: asset.tag,
 				minimum_api: "1",
 				asset: {
-					url: `/api/downloads/companion/windows?version=${encodeURIComponent(asset.version)}`,
+					url: `/api/downloads/companion/windows?tag=${encodeURIComponent(asset.tag)}`,
 					sha256: asset.sha256,
 					size: asset.size,
 				},

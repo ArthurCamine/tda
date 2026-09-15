@@ -1,6 +1,8 @@
 const ASSET_NAME = "TDACompanion-x64.msi";
 const TAG_PATTERN = /^companion-v(\d+)\.(\d+)\.(\d+)$/;
 const REF_PATTERN = /^refs\/tags\/(companion-v(\d+)\.(\d+)\.(\d+))$/;
+const COMPANION_RC_TAG_PATTERN =
+	/^companion-rc-v(\d+)\.(\d+)\.(\d+)-([a-f0-9]{12})$/;
 const DOWNLOAD_PREFIX = "https://github.com/Faysk/tda/releases/download/";
 
 const WHISPER_TAG_PATTERN = /^companion-whisper-runtime-v(\d+)\.(\d+)\.(\d+)$/;
@@ -41,6 +43,12 @@ export type CompanionAssetInfo = {
 	size: number;
 };
 
+export type CompanionChannel = "stable" | "rc";
+
+export type CompanionInstallableRelease = CompanionAssetInfo & {
+	channel: CompanionChannel;
+};
+
 export type WhisperRuntimeAssetInfo = CompanionAssetInfo;
 export type QwenRuntimeAssetInfo = CompanionAssetInfo;
 
@@ -52,6 +60,11 @@ function isNewer(
 		if (left[index] !== right[index]) return left[index] > right[index];
 	}
 	return false;
+}
+
+function versionTuple(version: string): readonly [number, number, number] {
+	const [major, minor, patch] = version.split(".").map(Number);
+	return [major, minor, patch];
 }
 
 function selectLatestTag(refs: unknown, pattern: RegExp): string | null {
@@ -92,12 +105,13 @@ function releaseAsset(
 	expectedTag: string,
 	tagPattern: RegExp,
 	assetName: string,
+	expectedPrerelease = false,
 ): ReleaseAsset | null {
 	if (!tagPattern.test(expectedTag) || !value || typeof value !== "object") return null;
 	const release = value as GithubRelease;
 	if (
-		release.draft === true ||
-		release.prerelease === true ||
+		release.draft !== false ||
+		release.prerelease !== expectedPrerelease ||
 		release.tag_name !== expectedTag ||
 		!Array.isArray(release.assets)
 	) {
@@ -116,8 +130,15 @@ function selectAsset(
 	expectedTag: string,
 	tagPattern: RegExp,
 	assetName: string,
+	expectedPrerelease = false,
 ): string | null {
-	const asset = releaseAsset(value, expectedTag, tagPattern, assetName);
+	const asset = releaseAsset(
+		value,
+		expectedTag,
+		tagPattern,
+		assetName,
+		expectedPrerelease,
+	);
 	if (!asset || typeof asset.browser_download_url !== "string") return null;
 	const expectedUrl = `${DOWNLOAD_PREFIX}${expectedTag}/${assetName}`;
 	return asset.browser_download_url === expectedUrl ? expectedUrl : null;
@@ -128,9 +149,22 @@ function selectAssetInfo(
 	expectedTag: string,
 	tagPattern: RegExp,
 	assetName: string,
+	expectedPrerelease = false,
 ): CompanionAssetInfo | null {
-	const url = selectAsset(value, expectedTag, tagPattern, assetName);
-	const asset = releaseAsset(value, expectedTag, tagPattern, assetName);
+	const url = selectAsset(
+		value,
+		expectedTag,
+		tagPattern,
+		assetName,
+		expectedPrerelease,
+	);
+	const asset = releaseAsset(
+		value,
+		expectedTag,
+		tagPattern,
+		assetName,
+		expectedPrerelease,
+	);
 	const tagMatch = tagPattern.exec(expectedTag);
 	if (!url || !asset || !tagMatch) return null;
 	if (typeof asset.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)) {
@@ -146,6 +180,69 @@ function selectAssetInfo(
 		sha256: asset.digest.slice("sha256:".length),
 		size: asset.size,
 	};
+}
+
+function companionChannel(tag: string): CompanionChannel | null {
+	if (TAG_PATTERN.test(tag)) return "stable";
+	if (COMPANION_RC_TAG_PATTERN.test(tag)) return "rc";
+	return null;
+}
+
+export function isCompanionInstallableTag(tag: string): boolean {
+	return companionChannel(tag) !== null;
+}
+
+export function selectCompanionInstallableAssetInfo(
+	value: unknown,
+	expectedTag: string,
+): CompanionInstallableRelease | null {
+	const channel = companionChannel(expectedTag);
+	if (!channel) return null;
+	const info =
+		channel === "stable"
+			? selectAssetInfo(value, expectedTag, TAG_PATTERN, ASSET_NAME, false)
+			: selectAssetInfo(
+					value,
+					expectedTag,
+					COMPANION_RC_TAG_PATTERN,
+					ASSET_NAME,
+					true,
+				);
+	return info ? { ...info, channel } : null;
+}
+
+export function selectLatestCompanionInstallableRelease(
+	value: unknown,
+): CompanionInstallableRelease | null {
+	if (!Array.isArray(value)) return null;
+	let latest: CompanionInstallableRelease | null = null;
+
+	for (const entry of value) {
+		if (!entry || typeof entry !== "object") continue;
+		const tag = (entry as GithubRelease).tag_name;
+		if (typeof tag !== "string") continue;
+		const candidate = selectCompanionInstallableAssetInfo(entry, tag);
+		if (!candidate) continue;
+		if (!latest) {
+			latest = candidate;
+			continue;
+		}
+
+		const candidateVersion = versionTuple(candidate.version);
+		const latestVersion = versionTuple(latest.version);
+		if (isNewer(candidateVersion, latestVersion)) {
+			latest = candidate;
+			continue;
+		}
+		const sameVersion = candidateVersion.every(
+			(part, index) => part === latestVersion[index],
+		);
+		if (sameVersion && candidate.channel === "stable" && latest.channel === "rc") {
+			latest = candidate;
+		}
+	}
+
+	return latest;
 }
 
 export function selectCompanionAsset(
