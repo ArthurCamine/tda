@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: dados/Supabase + operations
-> Última revisão: 2026-09-15
+> Última revisão: 2026-09-10
 > Projeto canônico: `dmrqnbdvbkfqzctcerbx`
 
 Este documento registra reconciliações **nominais** entre arquivos locais e entradas já existentes no migration history remoto. Reconciliação nominal não executa DDL: o SQL precisa permanecer byte-identical ao blob local previamente validado e a entrada remota precisa já existir no projeto canônico.
