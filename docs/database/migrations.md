@@ -671,7 +671,7 @@ Rollback lógico:
 
 ### `20260916001000_add_sparse_transcript_fk_indexes`
 
-**Estado:** migration deployável versionada nesta branch; **ainda não aplicada no Supabase canônico**.
+**Estado:** aplicada no Supabase canônico em 2026-09-16 pelo Production CD #109 do commit `4da70a9effddb01bb0d4e847b6c4e2baeccf39b2`.
 
 Objetivo:
 
@@ -694,7 +694,37 @@ Compatibilidade e limites:
 - usa `CREATE INDEX IF NOT EXISTS` e predicates `IS NOT NULL`, mantendo footprint e write amplification pequenos para colunas esparsas;
 - não tenta otimizar queries de sessão já cobertas pelos índices compostos existentes em `(session_id, ...)`.
 
+Validação pós-migration:
+
+- os quatro índices parciais foram confirmados fisicamente no Supabase canônico;
+- não restaram FKs de `transcript_segments` sem índice iniciando pela coluna do FK;
+- uma consulta representativa por `source_file_id` passou de `Seq Scan` (~3,83 ms / 1.205 buffers no preflight) para `Index Scan` pelo `idx_transcript_segments_source_file_id_fk` (~1,78 ms / 28 blocos acessados na validação pós-release).
+
 Rollback lógico:
 
 - se algum índice provar custo maior que benefício, remover somente esse índice em migration corretiva posterior;
 - não há dado para restaurar, pois a mudança é exclusivamente de estrutura de acesso.
+
+## Hardening de grants autenticados do Ordo
+
+### `20260916002000_harden_ordo_authenticated_grants`
+
+**Estado:** migration versionada na PR #373; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- reduzir o grant direto de `authenticated` sobre `public.ordo_access_members` ao contrato realmente usado pela aplicação;
+- revogar somente `REFERENCES`, `TRIGGER` e `TRUNCATE`, que não fazem parte do fluxo de acesso do Ordo;
+- preservar `SELECT`, `INSERT`, `UPDATE` e `DELETE`, ainda governados pelas policies RLS existentes.
+
+Revisão de segurança:
+
+- a inspeção do schema real confirmou RLS habilitado e policies de acesso self/master já existentes;
+- a mudança não altera policies, dados, constraints, funções ou grants de outros roles;
+- como `REVOKE` contrai capacidade SQL, a migration contém o marker `TDA:ALLOW_DESTRUCTIVE_MIGRATION` exigido pelo guardrail após revisão explícita do impacto;
+- o marker não amplia o escopo: documenta que esta contração específica foi deliberadamente revisada.
+
+Rollback lógico:
+
+- se um consumidor legítimo for identificado, uma migration corretiva posterior pode regrantar somente o privilégio realmente necessário;
+- não há dado a restaurar e o CRUD autenticado permanece intacto durante este recorte.
