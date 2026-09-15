@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
+from .runtime_compat import qwen_runtime_version_compatible
+
 RUNTIME_SCHEMA = "tda_asr_runtime_v1"
 QWEN_RUNTIME_ID = "qwen3-transformers"
 QWEN_WORKER_EXE = "TDAQwenWorker.exe"
@@ -106,6 +108,8 @@ def inspect_qwen_runtime(runtime_root: Path, *, verify_worker: bool = False) -> 
         return {"status": "corrupt", "version": version, "worker": None}
     if verify_worker and _sha256_file(worker) != marker["worker_sha256"]:
         return {"status": "corrupt", "version": version, "worker": None}
+    if not qwen_runtime_version_compatible(version):
+        return {"status": "incompatible", "version": version, "worker": None}
     return {"status": "ready", "version": version, "worker": str(worker.resolve())}
 
 
@@ -227,8 +231,8 @@ def install_qwen_runtime_archive(
 
 
 def current_qwen_worker(runtime_root: Path) -> Path | None:
-    # Supervisor execution is an integrity boundary: never return a runtime worker
-    # before its on-disk executable matches the hash recorded at installation.
+    # Supervisor execution is an integrity and compatibility boundary: never
+    # return a worker until its bytes and minimum runtime version are accepted.
     state = inspect_qwen_runtime(runtime_root, verify_worker=True)
     worker = state.get("worker")
     return Path(worker) if state.get("status") == "ready" and isinstance(worker, str) else None

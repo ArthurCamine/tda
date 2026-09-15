@@ -311,10 +311,13 @@ class WorkerSupervisor:
         worker_command.encode()
 
         runtime_command = None
-        if profile_id.startswith("whisper-") and self.runtime_root is not None:
+        if profile_id.startswith("whisper-"):
+            if self.runtime_root is None:
+                raise WorkerProcessError("WHISPER_RUNTIME_UNCONFIGURED")
             worker = current_whisper_worker(self.runtime_root)
-            if worker is not None:
-                runtime_command = [str(worker)]
+            if worker is None:
+                raise WorkerProcessError("WHISPER_RUNTIME_UNAVAILABLE")
+            runtime_command = [str(worker)]
         elif profile_id.startswith("qwen-"):
             if self.runtime_root is None or self.state_root is None:
                 raise WorkerProcessError("QWEN_RUNTIME_UNCONFIGURED")

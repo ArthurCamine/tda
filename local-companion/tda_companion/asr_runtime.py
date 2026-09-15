@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
+from .runtime_compat import whisper_runtime_version_compatible
+
 RUNTIME_SCHEMA = "tda_asr_runtime_v1"
 WHISPER_RUNTIME_ID = "whisper-ctranslate2"
 WHISPER_WORKER_EXE = "TDAWhisperWorker.exe"
@@ -199,6 +201,8 @@ def inspect_whisper_runtime(runtime_root: Path, *, verify_worker: bool = False) 
         return {"status": "corrupt", "version": version, "worker": None}
     if verify_worker and _sha256_file(worker) != marker["worker_sha256"]:
         return {"status": "corrupt", "version": version, "worker": None}
+    if not whisper_runtime_version_compatible(version):
+        return {"status": "incompatible", "version": version, "worker": None}
     return {"status": "ready", "version": version, "worker": str(worker.resolve())}
 
 

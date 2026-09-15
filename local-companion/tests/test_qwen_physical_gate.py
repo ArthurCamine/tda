@@ -17,6 +17,7 @@ from tda_companion.qwen_physical_gate import (
     record_qwen_physical_gate,
 )
 from tda_companion.qwen_runtime import install_qwen_runtime_archive
+from tda_companion.runtime_compat import MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
 
 
 def _install_runtime(root: Path) -> None:
@@ -29,7 +30,7 @@ def _install_runtime(root: Path) -> None:
     install_qwen_runtime_archive(
         archive,
         root / "Runtime",
-        version="1.0.0",
+        version=MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
         expected_sha256=digest,
     )
 
@@ -137,7 +138,7 @@ def test_physical_gate_binds_runtime_model_aligner_and_contains_no_private_text(
     )
 
     assert gate["ready"] is True
-    assert gate["runtime_version"] == "1.0.0"
+    assert gate["runtime_version"] == MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
     assert gate["metrics"]["audio_seconds"] == MIN_GATE_AUDIO_SECONDS
     persisted = (state / "qwen-physical-gates" / "qwen-fast.json").read_text(encoding="utf-8")
     assert "transcript_sha256" not in persisted
@@ -178,7 +179,7 @@ def test_gate_is_invalidated_when_worker_or_model_content_changes(tmp_path: Path
     state, runtime, models = _prepared(tmp_path)
     record_qwen_physical_gate(state, runtime, models, _receipt(), profile_id="qwen-fast")
 
-    worker = runtime / "qwen" / "1.0.0" / "TDAQwenWorker.exe"
+    worker = runtime / "qwen" / MIN_COMPATIBLE_QWEN_RUNTIME_VERSION / "TDAQwenWorker.exe"
     worker.write_bytes(b"tampered")
     stale = inspect_qwen_physical_gate(state, runtime, models, profile_id="qwen-fast")
     assert stale["ready"] is False

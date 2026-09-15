@@ -11,7 +11,7 @@ O contrato editorial pós-processamento é definido em [Transcrição — runs l
 
 ## Estado atual
 
-A `main` entrega:
+A base vigente e o candidato 0.3.5 desta entrega cobrem:
 
 - workbench próprio do Edit;
 - conexão explícita com `http://127.0.0.1:8765/api/v1`;
@@ -25,30 +25,73 @@ A `main` entrega:
 - submissão real de `transcription.craig` ao pipeline canônico do Companion;
 - fluxo Desktop equivalente, com picker nativo, participantes, perfis de qualidade e acompanhamento do job;
 - perfis atuais `qwen-quality`, `qwen-fast`, `whisper-detailed` e `whisper-turbo`, derivados das capabilities anunciadas pelo Agent;
-- escrita local atômica do `transcript.json` somente após conclusão/validação do worker;
-- resultado local com `sync.status = "not_configured"`.
+- escrita local atômica de transcript somente após conclusão/validação do worker;
+- **múltiplos runs concluídos imutáveis por source**, identificados por job + attempt;
+- `run.json` versionado com lineage, modelo/perfil, hashes e métricas factuais;
+- espelho `staging/<source>/transcript.json` mantido somente para compatibilidade 0.3.x, sem ser a fonte de verdade;
+- migração não destrutiva de `transcript.json` legado válido para run histórico;
+- endpoint local autenticado `GET /api/v1/sources/<source_id>/runs` com apenas metadados sanitizados;
+- resultado do job com `sync.status = "not_configured"`.
 
 O processamento Craig já é ASR real ponta a ponta no Web e no Desktop. `synthetic.fixture` continua existindo somente como ensaio sintético quando anunciado. Sincronização/publicação cloud permanece desativada: conclusão local não implica importação, revisão, canon ou publicação.
 
-Na fotografia desta revisão, o candidato instalável é o **TDA Companion 0.3.4 RC**, publicado como prerelease por bytes validados do CI. O pipeline continua com Whisper runtime 1.1.1 e Qwen runtime 1.0.1 até novo runtime versionado. Gate físico por perfil continua obrigatório quando o contrato de release exigir evidência da GPU real.
+### Versão instalável versus candidato de código
 
-## Direção aprovada para resultados locais
+Na fotografia anterior a esta entrega, a versão pública instalável é o **TDA Companion 0.3.4 RC**. Como o Slice 1 altera os bytes do Companion, esta entrega sobe a linha de código para **0.3.5** em vez de reutilizar a identidade do RC 0.3.4.
 
-O estado atual ainda trabalha com um resultado final local por source. A direção aprovada evolui para **múltiplos runs imutáveis por source**, sem overwrite entre Qwen/Whisper/retries.
+`0.3.5` só passa a ser versão instalável quando o candidato for integrado em `main` e o pipeline de release publicar o RC correspondente a esses bytes exatos. Merge/PR não deve ser descrito antecipadamente como release publicada.
 
-Exemplo alvo:
+O pipeline continua com Whisper runtime 1.1.1 e Qwen runtime 1.0.1 até novo runtime versionado. Gate físico por perfil continua obrigatório quando o contrato de release exigir evidência da GPU real.
+
+## Runs locais imutáveis — Slice 1
+
+O Slice 1 implementa a fundação de **múltiplos runs por source**, sem overwrite entre Qwen/Whisper/retries.
+
+Layout efetivo deste corte:
+
+```text
+Data/staging/craig-<source_sha>/
+  manifest.json
+  tracks/...
+  transcript.json                 # somente mirror de compatibilidade 0.3.x
+  runs/
+    run-<job_id>-a1/
+      transcript.json             # output bruto imutável
+      run.json
+    run-<job_id>-a2/
+      transcript.json
+      run.json
+```
+
+O uso de `staging/<source>` neste primeiro corte preserva o package root já consumido pelos engines e evita mover tracks/fontes durante a introdução do novo lifecycle. Não existe rotina automática que transforme `transcript.json` da raiz em fonte autoritativa: os diretórios de run são a evidência persistida.
+
+Regras implementadas:
+
+- nova tentativa ASR cria `run-<job>-a<attempt>` distinto;
+- run concluído anterior nunca é reescrito por novo processamento;
+- `run.json` é escrito somente depois do transcript final e funciona como commit do run concluído;
+- diretório parcial/sem `run.json` não aparece como resultado concluído;
+- hash integral pode revalidar o transcript do run;
+- a listagem normal valida estrutura/tamanho sem rehash pesado a cada poll; publish futuro deve voltar a verificar hash integral antes de confiar nos bytes;
+- contexto e glossário são representados no manifest por SHA-256 neste corte, sem expor o texto na listagem;
+- transcript legado válido é copiado byte a byte para um run histórico e o original é preservado;
+- mirror da raiz cujo hash já corresponde a um run existente não cria falso run legado duplicado;
+- transcript legado inválido/corrompido não é promovido nem apagado automaticamente;
+- a listagem local não retorna transcript integral nem caminho absoluto.
+
+O endpoint de listagem já prepara a futura área **Resultados locais**, mas **a UI ainda não apresenta a biblioteca nesta etapa**. Revisão derivada, comparação A/B, archive/Trash e publicação revisionada permanecem nos slices seguintes da [spec dona](transcript-review-publication.md).
+
+Exemplo de estado que a fundação passa a suportar:
 
 ```text
 Craig source
   ├── Qwen Quality — concluído
   ├── Whisper Detailed — concluído
   ├── Qwen Quality + outro contexto — concluído
-  └── Qwen Fast — interrompido
+  └── tentativa interrompida — sem run concluído promovido
 ```
 
-Cada run concluído preserva seu output bruto. Correções humanas criam revision derivada. A biblioteca local poderá comparar runs antes de publicar e continuará útil depois da primeira publicação para reprocessar, substituir ou restaurar conteúdo.
-
-Detalhes, estados, delete, lixeira, retenção, comparação A/B e publicação versionada pertencem à [spec dona](transcript-review-publication.md); este documento continua dono da superfície operacional/fila/Agent.
+Cada run concluído preserva seu output bruto. Correções humanas futuras criarão revision derivada. A biblioteca local poderá comparar runs antes de publicar e continuará útil depois da primeira publicação para reprocessar, substituir ou restaurar conteúdo.
 
 ## Download e instalação
 
@@ -86,7 +129,7 @@ A tela segue a regra de que uma superfície operacional deve mostrar primeiro o 
 7. detalhes e log do trabalho observado;
 8. estado de sincronização/publicação.
 
-Quando a biblioteca de runs for implementada, **fila operacional** e **resultados editoriais concluídos** devem continuar conceitos visualmente distintos. Um run antigo não pode parecer trabalho ainda em execução.
+Quando a biblioteca de runs entrar na UI, **fila operacional** e **resultados editoriais concluídos** devem continuar conceitos visualmente distintos. Um run antigo não pode parecer trabalho ainda em execução.
 
 O título é compacto. A navegação própria do Edit é restrita a destinos de trabalho; o logo TDA é a saída intencional para a superfície pública.
 
@@ -152,7 +195,7 @@ Antes de enviar Bearer para um Agent encontrado no loopback, o Desktop empacotad
 
 Falha recuperável/interrupção permite **Repetir trabalho**, sem prometer checkpoint exato. Cancelar exige confirmação. Retomar fila confirma que trabalhos pendentes podem voltar a executar; pausar impede novos claims sem interromper o trabalho já ativo.
 
-Com runs versionados, retry deve criar nova tentativa/run ou continuar o mesmo run somente quando a semântica de checkpoint estiver explicitamente suportada. Resultado concluído anterior nunca é substituído por uma tentativa nova.
+No Slice 1, retry terminalizado cria nova `attempt` e, portanto, identidade de run distinta. Continuar o mesmo run só poderá ser introduzido quando a semântica de checkpoint do engine for explicitamente segura. Resultado concluído anterior nunca é substituído por uma tentativa nova.
 
 O ensaio sintético existe apenas quando `synthetic.fixture` é anunciado e não usa áudio/modelo/GPU para produzir transcrição.
 
@@ -170,6 +213,8 @@ Nada foi publicado no TDA.
 [ Processar novamente ]
 [ Publicar no TDA ]
 ```
+
+O Slice 1 implementa a persistência/listagem local necessária para essa UX, mas **não habilita ainda esses controles editoriais na interface**.
 
 Publicação futura deve consumir **resultado/revision aprovado**, não o evento terminal do worker.
 
@@ -196,9 +241,9 @@ A candidata histórica de transcript import contém primitives úteis de hash/id
 
 ## Retenção e armazenamento
 
-A evolução de runs deve preservar por default resultados concluídos e source/staging necessário para reprocessamento. Delete local comum usa Trash com retenção de 7 dias conforme a spec dona.
+Neste Slice 1, runs concluídos e source/staging permanecem locais até ação futura explícita de cleanup. Não foi adicionada limpeza automática de runs.
 
-A UI deve permitir entender consumo por modelos/runtimes, áudio/source, runs/revisions, cache e lixeira. Limpeza de source não pode apagar transcrições concluídas implicitamente.
+Trash de 7 dias, archive e painel de armazenamento pertencem ao Slice 6. Quando entrarem, limpeza de source não poderá apagar transcrições concluídas implicitamente e deverá explicar quando novo processamento exigirá selecionar o ZIP Craig novamente.
 
 ## Validação
 
@@ -223,11 +268,22 @@ Gates do Companion:
 - rollback/upgrade/preserve/purge quando o workflow correspondente for afetado;
 - gates dos artifacts Whisper/Qwen e dependency freshness no SHA candidato.
 
-Quando runs/review/publicação forem implementados, adicionar testes específicos para:
+Cobertura específica do Slice 1 inclui:
 
-- dois runs do mesmo source sem overwrite;
-- falha/interrupção sem promover `.partial`;
+- dois runs do mesmo source coexistindo sem overwrite;
+- retry/attempt com identidade distinta;
+- mirror de compatibilidade mudando sem mutar run anterior;
+- migração legada idempotente e não destrutiva;
+- legado inválido sem promoção/delete implícito;
+- tamper detectado por hash integral;
+- listagem sanitizada sem transcript/path local;
+- worker reprocessando sem criar falso run legado a partir do mirror;
+- boundary HTTP de runs com autenticação/CORS estreitos.
+
+Slices futuros devem acrescentar testes para:
+
 - revisão sem mutar output bruto;
+- comparação A/B por speaker/timeline;
 - publish explícito/idempotente;
 - substituição preservando anterior;
 - restore/unpublish/delete conforme escopo;

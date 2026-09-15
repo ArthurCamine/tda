@@ -13,6 +13,7 @@ from tda_companion.qwen_runtime import (
     inspect_qwen_runtime,
     install_qwen_runtime_archive,
 )
+from tda_companion.runtime_compat import MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
 
 
 def _runtime_zip(path: Path, *, member: str = "TDAQwenWorker.exe", payload: bytes = b"worker") -> str:
@@ -26,23 +27,40 @@ def test_verified_qwen_runtime_installs_versioned_and_switches_current_atomicall
     archive = tmp_path / "runtime.zip"
     digest = _runtime_zip(archive)
     runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
 
     marker = install_qwen_runtime_archive(
         archive,
         runtime_root,
-        version="1.0.0",
+        version=version,
         expected_sha256=digest,
     )
 
-    worker = runtime_root / "qwen" / "1.0.0" / "TDAQwenWorker.exe"
+    worker = runtime_root / "qwen" / version / "TDAQwenWorker.exe"
     assert worker.read_bytes() == b"worker"
     assert marker["archive_sha256"] == digest
     state = inspect_qwen_runtime(runtime_root, verify_worker=True)
     assert state["status"] == "ready"
-    assert state["version"] == "1.0.0"
+    assert state["version"] == version
     assert current_qwen_worker(runtime_root) == worker.resolve()
     selector = json.loads((runtime_root / "qwen" / "current.json").read_text(encoding="utf-8"))
-    assert selector["version"] == "1.0.0"
+    assert selector["version"] == version
+
+
+def test_pre_runs_qwen_runtime_is_valid_but_incompatible(tmp_path: Path):
+    archive = tmp_path / "runtime-old.zip"
+    digest = _runtime_zip(archive)
+    runtime_root = tmp_path / "Runtime"
+    install_qwen_runtime_archive(
+        archive,
+        runtime_root,
+        version="1.0.1",
+        expected_sha256=digest,
+    )
+
+    state = inspect_qwen_runtime(runtime_root, verify_worker=True)
+    assert state == {"status": "incompatible", "version": "1.0.1", "worker": None}
+    assert current_qwen_worker(runtime_root) is None
 
 
 def test_qwen_runtime_hash_mismatch_does_not_materialize_runtime(tmp_path: Path):
@@ -85,13 +103,14 @@ def test_qwen_runtime_requires_expected_worker_and_detects_tamper(tmp_path: Path
 
     good = tmp_path / "good.zip"
     good_digest = _runtime_zip(good)
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
     install_qwen_runtime_archive(
         good,
         runtime_root,
-        version="1.0.1",
+        version=version,
         expected_sha256=good_digest,
     )
-    worker = runtime_root / "qwen" / "1.0.1" / "TDAQwenWorker.exe"
+    worker = runtime_root / "qwen" / version / "TDAQwenWorker.exe"
     worker.write_bytes(b"tampered")
     assert inspect_qwen_runtime(runtime_root, verify_worker=True)["status"] == "corrupt"
     assert current_qwen_worker(runtime_root) is None
@@ -99,15 +118,16 @@ def test_qwen_runtime_requires_expected_worker_and_detects_tamper(tmp_path: Path
 
 def test_qwen_runtime_can_atomically_repair_corrupt_current_version(tmp_path: Path):
     runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
     first = tmp_path / "first.zip"
     first_digest = _runtime_zip(first, payload=b"worker-v1-corrupt-me")
     install_qwen_runtime_archive(
         first,
         runtime_root,
-        version="1.0.0",
+        version=version,
         expected_sha256=first_digest,
     )
-    worker = runtime_root / "qwen" / "1.0.0" / "TDAQwenWorker.exe"
+    worker = runtime_root / "qwen" / version / "TDAQwenWorker.exe"
     worker.write_bytes(b"tampered")
     assert inspect_qwen_runtime(runtime_root, verify_worker=True)["status"] == "corrupt"
 
@@ -116,7 +136,7 @@ def test_qwen_runtime_can_atomically_repair_corrupt_current_version(tmp_path: Pa
     marker = install_qwen_runtime_archive(
         replacement,
         runtime_root,
-        version="1.0.0",
+        version=version,
         expected_sha256=replacement_digest,
         replace_corrupt=True,
     )
@@ -125,7 +145,7 @@ def test_qwen_runtime_can_atomically_repair_corrupt_current_version(tmp_path: Pa
     assert marker["archive_sha256"] == replacement_digest
     state = inspect_qwen_runtime(runtime_root, verify_worker=True)
     assert state["status"] == "ready"
-    assert state["version"] == "1.0.0"
+    assert state["version"] == version
     assert not list((runtime_root / "qwen").glob("*.backup"))
     assert not list((runtime_root / "qwen").glob("*.partial"))
 
@@ -134,10 +154,11 @@ def test_qwen_runtime_refuses_repair_of_healthy_current_version(tmp_path: Path):
     runtime_root = tmp_path / "Runtime"
     archive = tmp_path / "runtime.zip"
     digest = _runtime_zip(archive)
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
     install_qwen_runtime_archive(
         archive,
         runtime_root,
-        version="1.0.0",
+        version=version,
         expected_sha256=digest,
     )
 
@@ -145,7 +166,7 @@ def test_qwen_runtime_refuses_repair_of_healthy_current_version(tmp_path: Path):
         install_qwen_runtime_archive(
             archive,
             runtime_root,
-            version="1.0.0",
+            version=version,
             expected_sha256=digest,
             replace_corrupt=True,
         )

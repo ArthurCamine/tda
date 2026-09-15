@@ -13,6 +13,7 @@ from tda_companion.asr_runtime import (
     inspect_whisper_runtime,
     install_whisper_runtime_archive,
 )
+from tda_companion.runtime_compat import MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
 
 
 def _runtime_zip(path: Path, *, member: str = "TDAWhisperWorker.exe", payload: bytes = b"worker") -> str:
@@ -26,23 +27,40 @@ def test_verified_runtime_installs_versioned_and_switches_current_atomically(tmp
     archive = tmp_path / "runtime.zip"
     digest = _runtime_zip(archive)
     runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
 
     marker = install_whisper_runtime_archive(
         archive,
         runtime_root,
-        version="1.0.0",
+        version=version,
         expected_sha256=digest,
     )
 
-    worker = runtime_root / "whisper" / "1.0.0" / "TDAWhisperWorker.exe"
+    worker = runtime_root / "whisper" / version / "TDAWhisperWorker.exe"
     assert worker.read_bytes() == b"worker"
     assert marker["archive_sha256"] == digest
     state = inspect_whisper_runtime(runtime_root, verify_worker=True)
     assert state["status"] == "ready"
-    assert state["version"] == "1.0.0"
+    assert state["version"] == version
     assert current_whisper_worker(runtime_root) == worker.resolve()
     selector = json.loads((runtime_root / "whisper" / "current.json").read_text(encoding="utf-8"))
-    assert selector["version"] == "1.0.0"
+    assert selector["version"] == version
+
+
+def test_pre_runs_whisper_runtime_is_valid_but_incompatible(tmp_path: Path):
+    archive = tmp_path / "runtime-old.zip"
+    digest = _runtime_zip(archive)
+    runtime_root = tmp_path / "Runtime"
+    install_whisper_runtime_archive(
+        archive,
+        runtime_root,
+        version="1.1.1",
+        expected_sha256=digest,
+    )
+
+    state = inspect_whisper_runtime(runtime_root, verify_worker=True)
+    assert state == {"status": "incompatible", "version": "1.1.1", "worker": None}
+    assert current_whisper_worker(runtime_root) is None
 
 
 def test_runtime_archive_hash_mismatch_does_not_materialize_runtime(tmp_path: Path):
@@ -85,12 +103,13 @@ def test_runtime_requires_expected_worker_and_detects_worker_tamper(tmp_path: Pa
 
     good = tmp_path / "good.zip"
     good_digest = _runtime_zip(good)
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
     install_whisper_runtime_archive(
         good,
         runtime_root,
-        version="1.0.1",
+        version=version,
         expected_sha256=good_digest,
     )
-    worker = runtime_root / "whisper" / "1.0.1" / "TDAWhisperWorker.exe"
+    worker = runtime_root / "whisper" / version / "TDAWhisperWorker.exe"
     worker.write_bytes(b"tampered")
     assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "corrupt"

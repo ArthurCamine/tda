@@ -66,12 +66,22 @@ def test_runtime_manifest_rejects_wrong_identity_digest_and_size():
         parse_whisper_runtime_manifest(manifest_value(size=MAX_RUNTIME_DOWNLOAD_BYTES + 1))
 
 
-def test_runtime_update_comparison_handles_missing_and_semver():
+def test_runtime_update_comparison_handles_missing_semver_and_compatibility_floor():
     value = parse_whisper_runtime_manifest(manifest_value())
     assert whisper_runtime_update_available(None, value) is True
     assert whisper_runtime_update_available("1.2.2", value) is True
     assert whisper_runtime_update_available("1.2.3", value) is False
     assert whisper_runtime_update_available("2.0.0", value) is False
+
+    obsolete = WhisperRuntimeManifest(
+        version="1.1.1",
+        tag="companion-whisper-runtime-v1.1.1",
+        url="https://dnd.faysk.dev/api/downloads/companion/windows/whisper-runtime?version=1.1.1",
+        sha256="a" * 64,
+        size=123,
+    )
+    assert whisper_runtime_update_available(None, obsolete) is False
+    assert whisper_runtime_update_available("1.1.1", obsolete) is False
 
 
 class FakeResponse:
@@ -187,3 +197,4 @@ def test_runtime_download_reports_hash_mismatch_as_typed_error(tmp_path: Path, m
 
     with pytest.raises(NetworkError, match="^HASH_MISMATCH$"):
         download_whisper_runtime(manifest, tmp_path / "Cache", prefer_bits=False)
+    assert not any((tmp_path / "Cache").rglob("*.partial"))

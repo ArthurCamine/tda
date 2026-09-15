@@ -13,6 +13,12 @@ from .asr_models import ModelRegistryError, get_profile
 from .asr_whisper import WhisperRuntimeError, transcribe_craig_package
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
+from .transcription_runs import (
+    TranscriptionRunError,
+    migrate_legacy_transcript,
+    write_compatibility_mirror,
+    write_completed_run,
+)
 from .worker_protocol import (
     MAX_LINE_BYTES,
     WorkerCancelCommand,
@@ -96,7 +102,10 @@ def _worker_root(name: str) -> Path:
 def _stable_error_code(error: BaseException) -> str:
     code = str(error)
     if re.fullmatch(r"[A-Z0-9_]{1,96}", code):
-        if isinstance(error, (WhisperRuntimeError, ModelRegistryError, CraigPackageError)):
+        if isinstance(
+            error,
+            (WhisperRuntimeError, ModelRegistryError, CraigPackageError, TranscriptionRunError),
+        ):
             return code
         if error.__class__.__name__ == "QwenRuntimeError":
             return code
@@ -131,6 +140,14 @@ def _run_craig(command: WorkerRunCommand, emitter: _Emitter, cancelled: threadin
             raise CraigPackageError("CRAIG_STAGING_PATH_INVALID")
         package = load_craig_package(package_root)
         profile = get_profile(str(command.payload["profile_id"]))
+
+        # Preserve a valid pre-runs transcript before any compatibility mirror can
+        # replace it. Migration is idempotent and never removes the legacy file.
+        migrate_legacy_transcript(
+            package_root,
+            source_id=source_id,
+            source_sha256=package.source_sha256,
+        )
 
         def report(value: dict) -> None:
             event_type = value.get("type")
@@ -179,9 +196,23 @@ def _run_craig(command: WorkerRunCommand, emitter: _Emitter, cancelled: threadin
         if cancelled.is_set():
             emitter.emit("cancelled", {"stage": "result_prepare"})
             return 0
-        target = package_root / "transcript.json"
-        document.write_atomic(target)
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+
+        manifest = write_completed_run(
+            package_root,
+            document,
+            job_id=command.job_id,
+            attempt=command.attempt,
+            glossary=str(command.payload.get("glossary") or ""),
+            context=str(command.payload.get("context") or ""),
+        )
+        run_id = str(manifest["run_id"])
+        digest = str(manifest["transcript_sha256"])
+
+        # Existing 0.3.x API/result consumers still validate the root transcript.
+        # Keep it only as a compatibility mirror; immutable runs are authoritative.
+        if write_compatibility_mirror(package_root, run_id) != digest:
+            raise TranscriptionRunError("TRANSCRIPTION_RUN_MIRROR_HASH_MISMATCH")
+
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=1.0)
         emitter.emit(
@@ -192,6 +223,7 @@ def _run_craig(command: WorkerRunCommand, emitter: _Emitter, cancelled: threadin
                 "source_id": source_id,
                 "profile_id": profile.id,
                 "artifact": "transcript.json",
+                "run_id": run_id,
                 "sha256": digest,
             },
         )
@@ -204,7 +236,7 @@ def _run_craig(command: WorkerRunCommand, emitter: _Emitter, cancelled: threadin
             return 0
         emitter.emit("error", {"code": _stable_error_code(exc), "recoverable": True})
         return 66
-    except (ModelRegistryError, CraigPackageError) as exc:
+    except (ModelRegistryError, CraigPackageError, TranscriptionRunError) as exc:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=1.0)
         emitter.emit("error", {"code": _stable_error_code(exc), "recoverable": True})

@@ -33,7 +33,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$TDA_SOURCE_SHA"
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
-          version: '0.12.13'
+          version: '0.12.15'
       - run: uv venv --python 3.12.14
       - run: uv pip install -c local-companion/requirements-test.lock -e ./local-companion[test]
       - run: ${{ matrix.python }} local-companion/packaging/verify_dependency_lock.py local-companion/requirements-test.lock
@@ -60,7 +60,7 @@ jobs:
           if ($actual -ne $env:TDA_SOURCE_SHA.ToLowerInvariant()) { throw "BUILD_SOURCE_SHA_MISMATCH:$actual" }
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
-          version: '0.12.13'
+          version: '0.12.15'
       - run: uv venv --python 3.12.14
       - run: uv pip install -c local-companion/requirements-test.lock -e ./local-companion[test,packaging,desktop]
       - run: .venv/Scripts/python.exe local-companion/packaging/verify_dependency_lock.py local-companion/requirements-test.lock --require-all

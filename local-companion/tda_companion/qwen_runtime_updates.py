@@ -17,6 +17,7 @@ from .qwen_runtime_bundle import (
     parse_qwen_runtime_bundle_manifest,
 )
 from .release_download import ReleaseRedirectError, open_verified_release
+from .runtime_compat import qwen_runtime_version_compatible
 
 PRODUCTION_ORIGIN = "https://dnd.faysk.dev"
 MANIFEST_URL = f"{PRODUCTION_ORIGIN}/api/downloads/companion/windows/qwen-runtime/manifest"
@@ -93,6 +94,10 @@ def qwen_runtime_update_available(
     current_version: str | None,
     manifest: QwenRuntimeDownloadManifest,
 ) -> bool:
+    # Companion 0.3.5 cannot install an obsolete Stable when the compatible
+    # 1.0.2+ worker is still only available through the dedicated RC gate.
+    if not qwen_runtime_version_compatible(manifest.version):
+        return False
     if current_version is None:
         return True
     return _version_tuple(manifest.version) > _version_tuple(current_version)

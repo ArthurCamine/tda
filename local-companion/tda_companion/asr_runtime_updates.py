@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from .large_download import download_verified_release_asset, github_release_asset_url
 from .network import NetworkClient, NetworkError, classify_network_error
 from .release_download import ReleaseRedirectError, open_verified_release
+from .runtime_compat import whisper_runtime_version_compatible
 
 PRODUCTION_ORIGIN = "https://dnd.faysk.dev"
 MANIFEST_URL = f"{PRODUCTION_ORIGIN}/api/downloads/companion/windows/whisper-runtime/manifest"
@@ -122,6 +123,11 @@ def whisper_runtime_update_available(
     current_version: str | None,
     manifest: WhisperRuntimeManifest,
 ) -> bool:
+    # Companion 0.3.5 must never install an older stable worker just because no
+    # compatible runtime is currently selected. RC runtimes use the dedicated
+    # physical-acceptance path until these versions are promoted to Stable.
+    if not whisper_runtime_version_compatible(manifest.version):
+        return False
     if current_version is None:
         return True
     return _version_tuple(manifest.version) > _version_tuple(current_version)

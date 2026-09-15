@@ -9,6 +9,10 @@ import pytest
 from tda_companion.asr_runtime import WHISPER_RUNTIME_ID
 from tda_companion.qwen_physical_gate import GATE_SCHEMA as QWEN_GATE_SCHEMA
 from tda_companion.qwen_runtime import QWEN_RUNTIME_ID
+from tda_companion.runtime_compat import (
+    MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
+    MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+)
 from tda_companion.runtime_release_evidence import (
     ACCEPTANCE_SCHEMA,
     RuntimeReleaseEvidenceError,
@@ -30,7 +34,11 @@ def _json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def _whisper_assets(root: Path, *, version: str = "1.1.1") -> tuple[Path, str]:
+def _whisper_assets(
+    root: Path,
+    *,
+    version: str = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+) -> tuple[Path, str]:
     root.mkdir(parents=True, exist_ok=True)
     archive = root / f"TDAWhisperRuntime-{version}-windows-x64.zip"
     archive.write_bytes(b"whisper-runtime")
@@ -39,7 +47,11 @@ def _whisper_assets(root: Path, *, version: str = "1.1.1") -> tuple[Path, str]:
     return archive, digest
 
 
-def _qwen_assets(root: Path, *, version: str = "1.0.1") -> tuple[Path, str]:
+def _qwen_assets(
+    root: Path,
+    *,
+    version: str = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
+) -> tuple[Path, str]:
     root.mkdir(parents=True, exist_ok=True)
     part_name = f"TDAQwenRuntime-{version}-windows-x64.zip.part001"
     part = root / part_name
@@ -130,9 +142,10 @@ def test_whisper_candidate_binds_exact_archive_and_sidecar(tmp_path: Path) -> No
         workflow_run_id=123,
     )
 
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
     assert candidate["runtime_archive_sha256"] == digest
-    assert candidate["candidate_tag"] == f"companion-whisper-runtime-rc-v1.1.1-{SOURCE_SHA[:12]}"
-    assert candidate["stable_tag"] == "companion-whisper-runtime-v1.1.1"
+    assert candidate["candidate_tag"] == f"companion-whisper-runtime-rc-v{version}-{SOURCE_SHA[:12]}"
+    assert candidate["stable_tag"] == f"companion-whisper-runtime-v{version}"
     assert {item["name"] for item in candidate["assets"]} == {archive.name, archive.name + ".sha256"}
 
 
@@ -162,7 +175,8 @@ def test_whisper_physical_seal_requires_exact_installed_runtime_and_both_profile
         workflow_run_id=3,
     )
     runtime_root = tmp_path / "Runtime"
-    _runtime_marker(runtime_root, "whisper", "1.1.1", archive_sha)
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+    _runtime_marker(runtime_root, "whisper", version, archive_sha)
     turbo = _whisper_receipt(tmp_path / "turbo.json", "whisper-turbo")
 
     with pytest.raises(RuntimeReleaseEvidenceError, match="RUNTIME_WHISPER_EVIDENCE_INCOMPLETE"):
@@ -176,7 +190,7 @@ def test_whisper_physical_seal_requires_exact_installed_runtime_and_both_profile
     assert [item["profile_id"] for item in receipt["profiles"]] == ["whisper-turbo", "whisper-detailed"]
 
     wrong_root = tmp_path / "WrongRuntime"
-    _runtime_marker(wrong_root, "whisper", "1.1.1", "f" * 64)
+    _runtime_marker(wrong_root, "whisper", version, "f" * 64)
     with pytest.raises(RuntimeReleaseEvidenceError, match="RUNTIME_PHYSICAL_ARCHIVE_MISMATCH"):
         seal_physical(candidate, wrong_root, whisper_receipts=[turbo, detailed])
 
@@ -191,19 +205,20 @@ def test_qwen_physical_seal_requires_both_gates_bound_to_same_archive(tmp_path: 
         workflow_run_id=4,
     )
     runtime_root = tmp_path / "Runtime"
-    _runtime_marker(runtime_root, "qwen", "1.0.1", archive_sha)
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
+    _runtime_marker(runtime_root, "qwen", version, archive_sha)
     state_root = tmp_path / "State"
     gate_root = state_root / "qwen-physical-gates"
-    _qwen_gate(gate_root / "qwen-fast.json", "qwen-fast", "1.0.1", archive_sha)
+    _qwen_gate(gate_root / "qwen-fast.json", "qwen-fast", version, archive_sha)
 
     with pytest.raises(RuntimeReleaseEvidenceError, match="RUNTIME_PHYSICAL_EVIDENCE_INVALID"):
         seal_physical(candidate, runtime_root, qwen_state_root=state_root)
 
-    _qwen_gate(gate_root / "qwen-quality.json", "qwen-quality", "1.0.1", archive_sha)
+    _qwen_gate(gate_root / "qwen-quality.json", "qwen-quality", version, archive_sha)
     receipt = seal_physical(candidate, runtime_root, qwen_state_root=state_root)
     assert [item["profile_id"] for item in receipt["profiles"]] == ["qwen-fast", "qwen-quality"]
 
-    _qwen_gate(gate_root / "qwen-quality.json", "qwen-quality", "1.0.1", "e" * 64)
+    _qwen_gate(gate_root / "qwen-quality.json", "qwen-quality", version, "e" * 64)
     with pytest.raises(RuntimeReleaseEvidenceError, match="RUNTIME_QWEN_EVIDENCE_INVALID"):
         seal_physical(candidate, runtime_root, qwen_state_root=state_root)
 
@@ -218,16 +233,17 @@ def test_promotion_rehashes_release_assets_and_rejects_identity_drift(tmp_path: 
         workflow_run_id=5,
     )
     runtime_root = tmp_path / "Runtime"
-    _runtime_marker(runtime_root, "whisper", "1.1.1", archive_sha)
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+    _runtime_marker(runtime_root, "whisper", version, archive_sha)
     receipts = [
         _whisper_receipt(tmp_path / "turbo.json", "whisper-turbo"),
         _whisper_receipt(tmp_path / "detailed.json", "whisper-detailed"),
     ]
     acceptance = seal_physical(candidate, runtime_root, whisper_receipts=receipts)
     promotion = verify_promotion(candidate, acceptance, tmp_path / "assets")
-    assert promotion["stable_tag"] == "companion-whisper-runtime-v1.1.1"
+    assert promotion["stable_tag"] == f"companion-whisper-runtime-v{version}"
 
-    archive = tmp_path / "assets" / "TDAWhisperRuntime-1.1.1-windows-x64.zip"
+    archive = tmp_path / "assets" / f"TDAWhisperRuntime-{version}-windows-x64.zip"
     archive.write_bytes(b"changed-after-physical-test")
     with pytest.raises(RuntimeReleaseEvidenceError, match="RUNTIME_CANDIDATE_ASSET_MISMATCH"):
         verify_promotion(candidate, acceptance, tmp_path / "assets")

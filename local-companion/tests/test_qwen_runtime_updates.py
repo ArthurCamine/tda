@@ -76,12 +76,16 @@ def test_qwen_download_manifest_accepts_only_matching_stable_identity_and_bundle
         parse_qwen_runtime_download_manifest(wrong)
 
 
-def test_qwen_runtime_update_comparison_handles_missing_and_semver():
+def test_qwen_runtime_update_comparison_handles_missing_semver_and_compatibility_floor():
     manifest = _manifest()
     assert qwen_runtime_update_available(None, manifest) is True
     assert qwen_runtime_update_available("1.2.2", manifest) is True
     assert qwen_runtime_update_available("1.2.3", manifest) is False
     assert qwen_runtime_update_available("2.0.0", manifest) is False
+
+    obsolete = _manifest(version="1.0.1", payloads=(b"old",))
+    assert qwen_runtime_update_available(None, obsolete) is False
+    assert qwen_runtime_update_available("1.0.1", obsolete) is False
 
 
 class FakeResponse:
