@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: dados/Supabase
-> Última revisão: 2026-09-15
+> Última revisão: 2026-09-16
 > Fonte: migration history do Supabase `dmrqnbdvbkfqzctcerbx`
 
 ## Princípio
@@ -644,7 +644,7 @@ Contrato detalhado: [World entity media foundation](../features/world-entity-med
 
 ### `20260915223000_align_profile_claim_discord_identity`
 
-**Estado:** migration deployável versionada nesta branch; **ainda não aplicada no Supabase canônico**.
+**Estado:** aplicada no Supabase canônico em 2026-09-15 pelo Production CD do commit `1b4931677b7f52f127f508d0c1eae18197d0d848`.
 
 Objetivo:
 
@@ -666,3 +666,35 @@ Rollback lógico:
 
 - se a função precisar ser revertida, criar migration corretiva posterior com a definição anterior revisada; não editar migration history nem reintroduzir `google_claim` silenciosamente;
 - nenhum dado existente precisa ser revertido por esta migration porque ela altera somente o comportamento futuro da RPC.
+
+## Hardening de índices esparsos de transcrição
+
+### `20260916001000_add_sparse_transcript_fk_indexes`
+
+**Estado:** migration deployável versionada nesta branch; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- cobrir os quatro FKs restantes de `public.transcript_segments` que ainda não possuíam índice iniciando pela coluna referenciada;
+- criar índices btree parciais em `participant_id`, `source_chunk_id`, `source_file_id` e `speaker_profile_id`, somente quando o valor não é nulo;
+- reduzir custo de verificações de FK e de lookups diretos sem adicionar índices indiscriminadamente às 61 sugestões do advisor.
+
+Medição pré-migration em produção:
+
+- `transcript_segments`: 30.857 linhas, cerca de 17 MB incluindo índices;
+- `participant_id`: 2.464 valores não nulos / 18 distintos;
+- `source_chunk_id`: 2.464 valores não nulos / 305 distintos;
+- `source_file_id`: 2.464 valores não nulos / 18 distintos;
+- `speaker_profile_id`: 41 valores não nulos / 5 distintos;
+- `entity_relations` possui apenas 4 linhas e `profile_claims` está vazio, portanto esses advisor findings foram deliberadamente deixados sem índice até existir uso que justifique o custo.
+
+Compatibilidade e limites:
+
+- não altera dados, FK, constraints, RLS, grants ou comportamento da aplicação;
+- usa `CREATE INDEX IF NOT EXISTS` e predicates `IS NOT NULL`, mantendo footprint e write amplification pequenos para colunas esparsas;
+- não tenta otimizar queries de sessão já cobertas pelos índices compostos existentes em `(session_id, ...)`.
+
+Rollback lógico:
+
+- se algum índice provar custo maior que benefício, remover somente esse índice em migration corretiva posterior;
+- não há dado para restaurar, pois a mudança é exclusivamente de estrutura de acesso.
