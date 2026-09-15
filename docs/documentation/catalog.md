@@ -30,8 +30,8 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [ADR-0007 — Edit como workbench server-first orientado a capabilities](../adr/0007-edit-workbench.md) | Não declarado | Não declarado | Não declarado |
 | [ADR-0008 — autorização orientada a capabilities e scope](../adr/0008-capability-authorization.md) | identity/access + arquitetura + segurança | accepted | Não declarado |
 | [ADR-0009 — World Explorer multi-hub e layout espacial reorganizável](../adr/0009-world-explorer-multihub-layout.md) | frontend / narrative-memory | accepted | 2026-09-08 |
-| [ADR-0010 — persistência editorial do layout do World Explorer separada do canon](../adr/0010-world-explorer-editorial-layout-persistence.md) | frontend / narrative-memory | accepted | 2026-09-08 |
-| [ADR-0011 — persistência física candidata do layout editorial do World Explorer](../adr/0011-world-explorer-layout-physical-persistence.md) | frontend / narrative-memory / identity-access | accepted | Não declarado |
+| [ADR-0010 — persistência editorial do layout do World Explorer separada do canon](../adr/0010-world-explorer-editorial-layout-persistence.md) | frontend / narrative-memory / identity-access | accepted | 2026-09-08 |
+| [ADR-0011 — persistência física candidata do layout editorial do World Explorer](../adr/0011-world-explorer-layout-physical-persistence.md) | frontend / narrative-memory / dados / identity-access | accepted | Não declarado |
 | [ADR-0012 — GitHub Actions controla a entrega; Vercel Git auto-deploy permanece desligado](../adr/0012-github-actions-controlled-delivery.md) | operations / arquitetura / dados | accepted | Não declarado |
 | [ADR-0013 — TDA Companion como Agent local, Desktop de controle e runtime ASR multi-engine](../adr/0013-companion-agent-desktop-asr.md) | local-companion / processing | accepted | Não declarado |
 | [ADR-0014 — R2 como boundary de mídia publicada](../adr/0014-r2-media-storage-and-publishing.md) | Não declarado | Não declarado | Não declarado |
@@ -117,7 +117,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Edit — modo temporário sem autenticação](../features/edit-unsafe-development.md) | Edit / aplicação + segurança | compatibilidade temporária de desenvolvimento | 2026-09-07 |
 | [Edit Workbench — área administrativa do TDA](../features/edit-workbench.md) | Edit / produto + frontend | arquitetura aprovada; implementação incremental em andamento | 2026-09-07 |
 | [Feature — Perfis editoriais de entities](../features/entity-profiles.md) | narrative-memory / frontend | preparado; projection publicada pendente | 2026-09-08 |
-| [Feature — Timeline por entidade](../features/entity-timeline.md) | narrative-memory | preparado | 2026-09-06 |
+| [Feature — Timeline por entidade](../features/entity-timeline.md) | narrative-memory | preparado; projection publicada pendente | 2026-09-08 |
 | [Lores independentes — publicação, liberdade visual e catálogo](../features/independent-lores.md) | narrative-memory / frontend / produto | arquitetura aprovada; decisão editorial, não comprovação de implementação | 2026-09-13 |
 | [Feature/conceito — Intents / intenção](../features/intents.md) | não atribuído | **não definido / não encontrado como conceito canônico** | 2026-09-06 |
 | [Feature — Conhecimento e audiência](../features/knowledge-audience.md) | narrative-memory/security | em desenho | 2026-09-06 |
