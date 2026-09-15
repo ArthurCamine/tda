@@ -1,9 +1,12 @@
 import sqlite3
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+import tda_companion.telemetry as telemetry_module
 from tda_companion.api import create_app
 from tda_companion.store import Store
+from tda_companion.telemetry import SystemTelemetry
 
 TOKEN = "s" * 43
 ORIGIN = "https://panel.example"
@@ -36,6 +39,60 @@ def test_system_telemetry_is_authenticated_and_best_effort(tmp_path):
         capabilities = client.get("/api/v1/capabilities", headers=HEADERS).json()
         assert "system.telemetry" in capabilities["capabilities"]
         assert "job.events" in capabilities["capabilities"]
+
+
+def test_gpu_telemetry_recovers_after_transient_nvml_failure(monkeypatch):
+    class RecoveringNvml:
+        def __init__(self) -> None:
+            self.init_calls = 0
+
+        def nvmlInit(self) -> None:
+            self.init_calls += 1
+            if self.init_calls == 1:
+                raise RuntimeError("transient driver reset")
+
+        @staticmethod
+        def nvmlDeviceGetCount() -> int:
+            return 1
+
+        @staticmethod
+        def nvmlDeviceGetHandleByIndex(index: int) -> int:
+            return index
+
+        @staticmethod
+        def nvmlDeviceGetName(_handle: int) -> bytes:
+            return b"NVIDIA Test GPU"
+
+        @staticmethod
+        def nvmlDeviceGetMemoryInfo(_handle: int) -> SimpleNamespace:
+            return SimpleNamespace(used=1024, total=4096)
+
+        @staticmethod
+        def nvmlDeviceGetUtilizationRates(_handle: int) -> SimpleNamespace:
+            return SimpleNamespace(gpu=37)
+
+    fake_nvml = RecoveringNvml()
+    monkeypatch.setattr(telemetry_module, "pynvml", fake_nvml)
+
+    telemetry = SystemTelemetry()
+    assert telemetry._gpu_snapshot() == []
+    assert fake_nvml.init_calls == 1
+
+    assert telemetry._gpu_snapshot() == [
+        {
+            "index": 0,
+            "name": "NVIDIA Test GPU",
+            "utilization_percent": 37,
+            "memory_used_bytes": 1024,
+            "memory_total_bytes": 4096,
+        }
+    ]
+    assert fake_nvml.init_calls == 2
+
+
+def test_gpu_telemetry_stays_optional_without_pynvml(monkeypatch):
+    monkeypatch.setattr(telemetry_module, "pynvml", None)
+    assert SystemTelemetry()._gpu_snapshot() == []
 
 
 def test_structured_events_keep_facts_and_job_context(tmp_path):
