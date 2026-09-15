@@ -43,6 +43,7 @@ describe("R2 public session delivery", () => {
 		"https://media.dnd.faysk.dev/private/master.png",
 		"https://tda-media-private.example/master.png",
 		"https://tda-media-preview.example/image.png",
+		"https://raw.githubusercontent.com/Faysk/dnd-scribe/48f8a43e8145e782d3bf4186a4a9b4218a92c643/web/assets/sessions/2026-07-25/card.webp",
 	])("rejects out-of-scope image %s in both boundaries", (url) => {
 		expect(
 			toPublishedSession({ ...row, cover_image_url: url }),
