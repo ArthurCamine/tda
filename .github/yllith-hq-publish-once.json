@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "namespace": "lore/yllith",
+  "bucket": "tda-media-public",
+  "publicOrigin": "https://media.dnd.faysk.dev",
+  "assets": [
+    {
+      "file": "yllith-hq.avif",
+      "bytes": 270660,
+      "sha256": "80f34c65d49c46eea9abc77b689dbc3a35db6169833942023cc77a3b2e2b732c",
+      "sourceUrl": "https://oaisdmntprdenmarkeast.blob.core.windows.net/files/00000000-9b78-8210-b594-7a3f598d73ab/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T19%3A16%3A24Z&ske=2026-09-15T19%3A16%3A24Z&sks=b&skv=2026-02-06&sig=NKnHZtBVqpTJRsqowPkZchazesdkYcMHJ5pz/G3zzmc%3D"
+    },
+    {
+      "file": "yllith-jornada-hq.avif",
+      "bytes": 145395,
+      "sha256": "696815188f4bf602c1b288b7b8f7f2741373e52055fbe06ba7cccb44b591784c",
+      "sourceUrl": "https://oaisdmntprdenmarkeast.blob.core.windows.net/files/00000000-9d68-8210-8783-fc1e201739d3/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T20%3A04%3A48Z&ske=2026-09-15T20%3A04%3A48Z&sks=b&skv=2026-02-06&sig=/YLkB9a%2Bbz6c3K7hi1swS7K55ZcXX/sxcSwdfWe5kEo%3D"
+    },
+    {
+      "file": "despedida-pais-hq.avif",
+      "bytes": 206324,
+      "sha256": "15eed32a0da97d8303e3390d7792293b51af11cce6a98338f59f85f360605036",
+      "sourceUrl": "https://oaisdmntprukwest.blob.core.windows.net/files/00000000-2290-8243-8719-2a9abeee35a8/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T19%3A14%3A06Z&ske=2026-09-15T19%3A14%3A06Z&sks=b&skv=2026-02-06&sig=rhhHlVywAtytMNuUuocWKGrgB5qQZJ2MD4oZyyEsCFY%3D"
+    },
+    {
+      "file": "despedida-tios-hq.avif",
+      "bytes": 232976,
+      "sha256": "1640491d2fe6dc6d90636f0e05d013bfae013f39b2fd3449e96e24c77ff4baec",
+      "sourceUrl": "https://oaisdmntprpolandcentral.blob.core.windows.net/files/00000000-eeec-820a-bdbe-146359f4c092/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-15T02%3A02%3A35Z&ske=2026-09-16T02%3A02%3A35Z&sks=b&skv=2026-02-06&sig=YrtVedPXUQ9dAy1Ji0MJU0Ceoh5sl1FryVc3TjIFZ0M%3D"
+    },
+    {
+      "file": "sonho-hq.avif",
+      "bytes": 76358,
+      "sha256": "c5899e7ee7b1154c5db8bd3d6b58b8a120d5527317dc101ef613139fbe902d70",
+      "sourceUrl": "https://oaisdmntprnortheu.blob.core.windows.net/files/00000000-e79c-81f4-abef-717a245690d9/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T20%3A22%3A51Z&ske=2026-09-15T20%3A22%3A51Z&sks=b&skv=2026-02-06&sig=Hz7u%2BdLiGgf4VZmBRnnIPdF3XKFZI9Bj217Vp07YM6g%3D"
+    },
+    {
+      "file": "mapa-hq.avif",
+      "bytes": 329394,
+      "sha256": "4516fd1fcaa6d97f56369007bfb5ddd320427e5a53bb850a8e9a267b7051e73a",
+      "sourceUrl": "https://oaisdmntprdenmarkeast.blob.core.windows.net/files/00000000-8edc-8210-95ed-743107e79575/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T20%3A07%3A14Z&ske=2026-09-15T20%3A07%3A14Z&sks=b&skv=2026-02-06&sig=IV8hAgPDzToQH2E8eCybQPVozAYxMFwgM6uatvZ8oV0%3D"
+    },
+    {
+      "file": "jornada-hq.avif",
+      "bytes": 244263,
+      "sha256": "febe6350fb80ea3c7a84b76ee5673f44365d231d7729ccdae57c0fedaaebd834",
+      "sourceUrl": "https://oaisdmntprdenmarkeast.blob.core.windows.net/files/00000000-a558-8210-b8bf-64b9a36a0987/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T20%3A16%3A02Z&ske=2026-09-15T20%3A16%3A02Z&sks=b&skv=2026-02-06&sig=uR3BNqriNmSIHXbbXWjhfi1G8YVfSvsC3SOrPB5DuI4%3D"
+    },
+    {
+      "file": "horizonte-hq.avif",
+      "bytes": 238231,
+      "sha256": "95c30d52b452ef0560a755fdbcb1138b5e9066cd3dfa2496b03d30d350681197",
+      "sourceUrl": "https://oaisdmntprdenmarkeast.blob.core.windows.net/files/00000000-d9d4-8210-ac5d-6d070b78aa94/raw?se=2026-09-15T02%3A19%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=dc4c1025-4733-4845-9946-b870771c616a&skoid=8981e47a-681f-4a6a-b86c-73d6347614b7&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-14T20%3A02%3A44Z&ske=2026-09-15T20%3A02%3A44Z&sks=b&skv=2026-02-06&sig=g8jojzPV22263xIJ1B0dwpLN2hLr9p320cVdODyIDDs%3D"
+    }
+  ]
+}
