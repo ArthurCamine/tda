@@ -10,6 +10,68 @@ Entradas novas devem ser adicionadas no topo, preservando as anteriores.
 
 ---
 
+## 2026-09-15 — contrato canônico de review de transcrição (#73)
+
+### Escopo
+
+Aplicação controlada e read-back da migration que formaliza no schema físico a semântica já adotada pelo TDA: `review_status` é a fonte canônica do estado editorial para leitura e `needs_review` permanece somente como projeção de compatibilidade para novas escritas. Os dados históricos foram preservados deliberadamente.
+
+### Aplicação
+
+A PR #368 foi integrada na `main` pelo merge `ec70d65920ec3be61c8389b501e728420ee845d2` após `required-ci` verde no head exato `45f8c187cff11b7c0ab32ce85f83597cd537f94d`.
+
+O SQL versionado como:
+
+- `20260915211000_transcript_review_contract_comments.sql`
+
+foi aplicado pelo mecanismo de migration do Supabase canônico. O migration history remoto registrou:
+
+- `20260915211245 transcript_review_contract_comments`.
+
+A divergência de timestamp é nominal. Não reexecutar o DDL nem editar `supabase_migrations.schema_migrations` apenas para alinhar o número; o arquivo local e o ID remoto ficam documentados como o mesmo changeset.
+
+### Verificação pós-aplicação
+
+Read-back físico confirmou:
+
+- `review_status DEFAULT 'pending'::text`;
+- `needs_review DEFAULT true`;
+- comentário de `review_status`: `Canonical editorial review state and application source of truth. Historical needs_review values may not match it.`;
+- comentário de `needs_review`: `Legacy compatibility projection for new writes: true for review_status pending/needs_review and false for approved/discarded. Historical rows are preserved and may differ; do not use as canonical read state.`.
+
+A distribuição permaneceu exatamente:
+
+- total: `30.857` segmentos;
+- `pending/false`: `30.839`;
+- `pending/true`: `17`;
+- `needs_review/true`: `1`;
+- `approved/false`: `0`;
+- `discarded/false`: `0`.
+
+Nenhum `UPDATE`, backfill, CHECK, trigger, grant, RLS, RPC, Auth ou mudança de conteúdo foi executado por esta migration.
+
+### Advisors
+
+Os advisors foram reexecutados após a aplicação:
+
+- security: `48` ocorrências `rls_enabled_no_policy` (INFO), `8` funções `SECURITY DEFINER` executáveis por `authenticated` (WARN) e Leaked Password Protection desabilitada (WARN);
+- performance: `61` FKs sem covering index (INFO) e `30` índices sem uso registrado (INFO).
+
+Nenhuma classe de alerta é atribuível à migration COMMENT-only e nenhuma remediação automática foi executada para silenciar avisos gerais existentes.
+
+### Estado final
+
+Os critérios da #73 ficam satisfeitos sem reinterpretar o legado:
+
+- `review_status` está documentado no app e no schema como fonte canônica do workflow editorial;
+- writers novos mantêm a projeção `pending/needs_review => true` e `approved/discarded => false`;
+- o default físico impede novos `pending/false` por omissão;
+- os `30.839 pending/false` históricos permanecem preservados porque a auditoria mostrou semântica legada distinta;
+- o Edit não depende mais de `needs_review` para leitura e Statistics não o consome;
+- PostgreSQL sintético e read-back do Supabase real cobrem o contrato escolhido.
+
+---
+
 ## 2026-09-10 — aplicação da autoria canônica do World Explorer (#119)
 
 ### Escopo
