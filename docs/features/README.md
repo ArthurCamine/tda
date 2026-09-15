@@ -2,7 +2,7 @@
 
 > Status: vivo
 > Owner: produto + domínios
-> Última revisão: 2026-09-12
+> Última revisão: 2026-09-15
 > Fonte de verdade: specs deste diretório e `../feature-catalog.md`
 
 O [catálogo de features](../feature-catalog.md) responde **qual é o status canônico na `main`**. Este diretório responde **o que a feature significa, quais dados usa, o que falta decidir e qual é o critério para implementá-la sem quebrar o modelo**.
@@ -12,6 +12,8 @@ PRs abertas podem conter implementação validada e documentação candidata sem
 ## Índice
 
 [Fidelidade dos pacotes de D e Seika](lore-pack-fidelity.md) — contrato visual e aceite da restauração das páginas independentes.
+
+[Transcrição — runs locais, revisão, comparação e publicação versionada](transcript-review-publication.md) — arquitetura aprovada para manter múltiplos resultados ASR, revisar/comparar antes de publicar, versionar publicações e suportar substituição, restore, unpublish e delete sem sobrescrita acidental.
 
 Candidato em revisão: [Estatísticas privadas de transcrições](transcript-statistics.md) — palavras e duração registrada por sessão, totais completos autorizados; implementação de branch, sem publicação.
 
@@ -23,7 +25,8 @@ Candidato em revisão: [World entity media foundation](world-entity-media-founda
 | --- | --- | --- |
 | Edit Workbench / administração | implementação incremental | [Edit Workbench](edit-workbench.md) |
 | Edit / permissões | candidato somente leitura; sem grant/revoke | [Consulta de permissões](edit-permissions.md) |
-| Edit / processamento local | candidato UI/adapters e ensaio sintético; ASR/sync cloud pendentes | [Processamento local](local-processing.md) |
+| Edit / processamento local | ASR local real; sync cloud desativado | [Processamento local](local-processing.md) |
+| Edit / revisão e publicação de transcrição | arquitetura aprovada; implementação pendente | [Runs, revisão e publicação](transcript-review-publication.md) |
 | Edit / transcript server-side | leitura autorizada com `revision`; persistence atômica ainda pendente | [Slice server-side de transcrição](edit-transcript-server-slice.md) |
 | Edit / bypass temporário | workbench disponível por flag explícita, desligada por default | [Modo temporário sem autenticação](edit-unsafe-development.md) |
 | PCs/NPCs | preparado | [Personagens e NPCs](characters-and-npcs.md) |
@@ -49,6 +52,8 @@ Features com superfície visual forte devem apontar para o [Design System oficia
 O World Explorer possui também um contrato de composição em [world-explorer-ui.md](../design-system/world-explorer-ui.md).
 
 O Edit usa o mesmo Design System e possui boundary técnico próprio em [arquitetura do Edit](../architecture/edit-workbench.md), com paridade histórica rastreada em [Edit — paridade com o legado](../legacy/edit-parity.md). A exceção transitória que permite validar a UI antes da convergência Auth/persistence está isolada em [modo temporário sem autenticação](edit-unsafe-development.md).
+
+Para transcrição, a superfície operacional da fila e a biblioteca editorial de resultados não devem ser confundidas: [Processamento local](local-processing.md) é dono do Agent/fila/telemetria; [Runs, revisão e publicação](transcript-review-publication.md) é dono do lifecycle editorial após o processamento.
 
 ## Template mínimo para feature futura
 

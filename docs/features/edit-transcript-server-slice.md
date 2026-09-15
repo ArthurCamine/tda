@@ -2,7 +2,7 @@
 
 > Status: leitura autorizada implementada com revision; mutation canônica preparada; persistence atômica pendente; bypass temporário de UI separado
 > Owner: Edit / aplicação + dados
-> Última revisão: 2026-09-07
+> Última revisão: 2026-09-15
 
 ## Objetivo
 
@@ -11,6 +11,24 @@ Entregar a primeira fronteira server-side do Edit para transcrição sem expor o
 A leitura autorizada e o contrato da mutation canônica já existem. A PR #33 aplicou a coluna física de concorrência otimista e a PR #34 passou a entregar `revision` no boundary autorizado. Este slice prepara a menor persistence SQL necessária para `update + revision + audit` na mesma transação. A candidata foi validada em PostgreSQL isolado no SHA exato `f44a74c653d416a614bb3468ffc112d741bc4893`, mas permanece desligada até aplicação produtiva controlada e integração pelo Edit/Auth.
 
 Durante a construção da UI existe uma exceção deliberada e isolada em [modo temporário sem autenticação](edit-unsafe-development.md). Ela não altera os contratos descritos abaixo.
+
+## Limite do conceito `revision`
+
+A `revision` descrita neste documento é **exclusivamente a versão concorrente de uma linha de `transcript_segments`**. Ela existe para optimistic concurrency e evita lost update de um segmento.
+
+ADR-0016 e [Transcrição — runs locais, revisão, comparação e publicação versionada](transcript-review-publication.md) introduzem um conceito diferente: **published revision da transcrição completa da sessão**.
+
+Não reutilizar o mesmo campo/número para os dois significados:
+
+```text
+transcript_segments.revision
+  = concorrência de edição da linha
+
+published transcript revision
+  = versão editorial completa da sessão
+```
+
+O slice futuro de publicação deve compor esses contratos sem reescrever a evidência histórica desta página.
 
 ## Leitura autorizada
 

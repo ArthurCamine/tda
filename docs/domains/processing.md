@@ -1,209 +1,302 @@
 # Processamento, jobs e áudio
 
-> Status: legado funcional + modernização planejada
+> Status: processamento local real implementado; lifecycle editorial pós-ASR aprovado e em implementação futura
 > Owner: processing/local-companion
-> Última revisão: 2026-09-06
+> Última revisão: 2026-09-15
+> Fonte de verdade: ADR-0003, ADR-0013, ADR-0016, `local-companion/tda_companion`, `docs/features/local-processing.md` e `docs/features/transcript-review-publication.md`
 
 ## Objetivo
 
-Executar ingestão/transcrição/classificação e tarefas pesadas de forma rastreável, retomável e econômica sem tornar o site dependente do PC local ligado.
+Executar ingestão/transcrição e tarefas pesadas de forma rastreável, retomável e econômica sem tornar o site dependente do PC local ligado, preservando liberdade para experimentar com diferentes modelos antes de transformar um resultado em conteúdo editorial publicado.
 
 ## Decisão arquitetural
 
 **Site/Edit em cloud; processamento pesado local.**
 
-A cloud guarda conteúdo sincronizado/metadados necessários ao produto. O companion local executa trabalho pesado e sincroniza resultados autorizados.
+A cloud guarda somente conteúdo explicitamente publicado/sincronizado e metadados necessários ao produto. O Companion local executa trabalho pesado, mantém fontes/runs locais e só envia resultado quando houver uma ação editorial explícita.
 
 Motivações:
 
 - custo previsível;
 - aproveitar hardware local;
 - evitar retenção cloud desnecessária de áudio bruto;
-- manter o produto web disponível independentemente do worker local.
+- manter o produto web disponível independentemente do worker local;
+- permitir Qwen/Whisper/retries sem risco de sobrescrever imediatamente a versão publicada;
+- separar qualidade de ASR da decisão humana de publicação.
+
+## Fonte, job, run e revision são conceitos diferentes
+
+### Source
+
+Identidade do material de origem. Para Craig, o Companion usa identidade baseada no conteúdo do ZIP e staging local reutilizável quando seguro.
+
+### Job
+
+Unidade operacional da fila: algo a executar, pausar/cancelar/repetir e observar.
+
+### Run de transcrição
+
+Execução concreta de ASR para um source e uma configuração. ADR-0016 determina que múltiplos runs do mesmo source podem coexistir e que um run concluído é imutável.
+
+### Revision editorial
+
+Versão derivada para revisão/edição/publicação. Não é o mesmo que um run e não é o mesmo que `transcript_segments.revision` usado para optimistic concurrency de linha.
 
 ## Processing job
 
-`processing_jobs` é lifecycle de uma unidade de trabalho.
-
-Estados:
+O Companion atual possui fila local persistida e estados próprios. Conceitualmente:
 
 ```text
-queued -> running -> succeeded
-             ├──> failed -> retrying -> running
-             └──> cancelled
+queued
+  -> preparing
+  -> running
+  -> completed
+  -> failed
+  -> cancelled
+  -> interrupted
 ```
 
-O contrato final de transições pode ser refinado, mas retries devem ser seguros.
+`completed` é o único estado capaz de promover um output local final. `failed`, `cancelled` ou `interrupted` não produzem candidato publicável.
 
-## Job steps
+Retry precisa ser seguro. Quando houver checkpoint real do engine, resume pode continuar um run conforme contrato explícito; quando não houver, repetir cria nova tentativa/run em vez de fingir retomada exata.
 
-`processing_job_steps` quebra job em etapas observáveis.
+## Job steps e eventos
 
-Benefícios:
+Etapas/eventos existem para:
 
 - progresso granular;
-- retry de subetapa;
 - diagnóstico;
 - UI de monitoramento;
+- telemetria factual;
+- recuperação;
 - evitar request web bloqueado por minutos.
+
+Eventos técnicos/editoriais de job não são automaticamente audit trail de publicação. A revisão/publicação possui lifecycle próprio.
 
 ## Idempotência
 
-Cada job persistente deve definir chave de idempotência/source identity quando possível.
+Cada operação persistente deve definir a identidade apropriada.
 
 Exemplos:
 
-- ZIP Craig por recording/source hash;
-- transcrição por audio hash + model + prompt/config;
-- classificação por segment/content hash + model/prompt version;
-- publicação por source run/candidate identity.
+- source Craig por hash do ZIP;
+- download de runtime/modelo por versão/hash;
+- publicação por revision/candidate + transcript hash;
+- retry de sync pelo mesmo receipt/identidade.
 
-Retry não deve criar segunda sessão, segundo participant ou duplicar candidate sem intenção.
+**Importante:** run de ASR não deve ser deduplicado de forma rígida apenas por `source + model + config`. O usuário pode querer rodar a mesma configuração novamente para comparar estabilidade, runtime novo ou simplesmente verificar um resultado duvidoso.
+
+A UI pode avisar que já existe run equivalente, mas deve permitir processar novamente.
 
 ## Craig ingest
 
-Pipeline histórico preparado:
+O pipeline canônico atual:
 
 ```text
-Craig ZIP/info
- -> craig_manifest
- -> validation
- -> track extraction steps
- -> recording_files/participants
- -> audio work units
+Craig ZIP
+  -> snapshot local
+  -> SHA-256 / source_id
+  -> validação ZIP/path/limites
+  -> staging content-addressed
+  -> tracks por participante
+  -> job transcription.craig
 ```
 
-`craig_manifests` preserva recording metadata, timezone, temporal quality e validation errors.
+O mesmo ZIP pode reutilizar staging validado. Caminho absoluto do usuário não é contrato cloud/browser.
 
-`craig_track_extraction_steps` registra cada track e seu resultado.
+Tracks Craig já carregam identidade de participante; diarização primária não é necessária quando a track é conhecida.
+
+## Engines e perfis
+
+Perfis atuais:
+
+- `qwen-quality`;
+- `qwen-fast`;
+- `whisper-detailed`;
+- `whisper-turbo`.
+
+Modelos/runtimes pesados são gerenciados fora do MSI e possuem gates próprios de integridade/aceitação. Qualidade real continua dependente de evidência em áudio de campanha, não só unit tests.
+
+## Runs locais e output imutável
+
+Direção aprovada:
+
+```text
+source
+  ├── run Qwen quality
+  ├── run Qwen fast
+  ├── run Whisper detailed
+  └── run Whisper turbo
+```
+
+Cada run registra lineage suficiente para explicar sua origem: engine, modelo, model revision, profile, runtime, source hash, contexto/glossário, duração/RTF/warnings quando disponíveis.
+
+Um output bruto concluído não é editado. Correções criam revision derivada.
+
+O arquivo final só aparece após validação/escrita atômica; `.partial` e checkpoints não são resultados editoriais.
+
+## Comparação e auditoria
+
+O domínio de processamento fornece dados factuais necessários à revisão, mas a UX detalhada pertence a [transcript-review-publication.md](../features/transcript-review-publication.md).
+
+Comparação deve priorizar:
+
+- mesmo source;
+- speaker/track;
+- tempo sobreposto;
+- similaridade textual;
+- warnings e métricas objetivas.
+
+O sistema não deve inventar uma nota absoluta de qualidade. A escolha final é humana.
 
 ## Áudio
 
-Existem três conceitos históricos que precisam permanecer distinguíveis:
+Três conceitos históricos continuam úteis para distinguir responsabilidade:
 
-### Recording file
+### Recording/source file
 
-Arquivo fonte cadastrado para session/participant.
+Arquivo fonte da gravação/sessão.
 
-### Chunk / speech slice
+### Chunk / speech slice / janela
 
-Unidade técnica temporária/derivada para processamento.
+Unidade técnica temporária para processamento ou gate.
 
 ### Audio artifact
 
-Registry mais geral de lifecycle/retention/lineage.
+Artefato derivado com lifecycle/retention específico.
 
-Modernização deve convergir responsabilidades sem quebrar dados existentes; não criar uma quarta identidade de arquivo.
+No reboot, **áudio bruto não integra retenção cloud obrigatória**. Craig ZIP, FLACs extraídos e janelas de aceitação permanecem locais salvo decisão futura explícita.
 
-## Silêncio
+## Retenção local
 
-Schema guarda RMS/peak/dBFS/flags de silêncio e `audio_speech_slices`. Objetivo é evitar transcrever silêncio e reduzir custo/tempo.
+Defaults aprovados pelo lifecycle editorial:
 
-Thresholds são parâmetros técnicos e precisam ser medidos com dados reais; não tratá-los como regra narrativa.
+- runs concluídos: manter até ação do usuário;
+- revisions locais: manter até ação do usuário;
+- source/staging: manter por default para permitir reprocessamento/comparação;
+- falhos/interrompidos: manter enquanto úteis para retry/diagnóstico, com limpeza disponível;
+- Trash local: 7 dias;
+- modelos/runtimes: lifecycle próprio;
+- logs: política própria do Companion.
 
-## Retenção
-
-`audio_retention_policies` e `audio_artifacts.retention_class` modelam lifecycle histórico.
-
-Classes incluem:
-
-- permanent;
-- permanent_compact;
-- review_hold;
-- work_temp;
-- delete_after_success;
-- delete_candidate;
-- legal_hold.
-
-**Decisão do reboot:** áudio bruto não integra retenção cloud obrigatória. O fato de o schema suportar `permanent` não significa que raw Craig deva ser enviado/mantido no R2 novo.
+Limpeza de source deve explicar que novo processamento pode exigir importar o ZIP novamente.
 
 ## Cleanup
 
-Deleção segura precisa validar:
+Nunca limpar source/raw apenas porque um job possui status genérico `completed/succeeded`.
 
-- artifact realmente superseded/temporário;
-- output necessário foi produzido;
-- lineage/hashes permanecem suficientes;
-- nenhuma review depende daquele áudio;
-- policy/hold permite delete;
-- evento de lifecycle é registrado.
+Antes de remover dados compartilhados, considerar:
 
-Nunca limpar raw/source apenas porque um job possui status genérico `succeeded` sem verificar qual etapa/output teve sucesso.
+- runs que dependem do source;
+- possibilidade de reprocessamento;
+- revisions locais;
+- conteúdo publicado cloud independente;
+- existência do ZIP original fora do TDA;
+- escolha explícita do usuário.
 
-## Transcription cache
+Delete comum de run/draft passa por lixeira local. Hard delete total é ação distinta.
 
-Cache é chave para custo/tempo. Deve ser reaproveitado apenas quando source + configuração realmente equivalem.
+## Cache
 
-Mudança de modelo/prompt/language pode invalidar reuse sem apagar a resposta histórica.
+Cache técnico pode ser reutilizado quando source + configuração + runtime realmente equivalem e o artefato for seguro para reuse.
 
-## AI usage ledger
+Cache não substitui o conceito de run histórico. Mesmo quando inferência reutiliza resultado/cache, a experiência pode registrar uma nova tentativa lógica com lineage apropriado.
 
-Toda operação cara deve idealmente registrar:
+Mudança de modelo/prompt/language/revision pode invalidar reuse sem apagar respostas históricas.
 
-- provider/model;
-- operation type;
-- session/job;
-- input metrics;
-- tokens/minutos;
-- estimated/actual cost;
-- cache/skip/failure;
-- run/provider IDs.
+## Observabilidade e métricas
 
-Isso permite comparar local vs cloud e detectar custo inesperado.
+Registrar quando factual e disponível:
 
-## Sincronização cloud
+- job/run status;
+- started/completed/elapsed;
+- error code explícito;
+- source/model/runtime identity;
+- track/segment/word counts;
+- RTF;
+- device/GPU/VRAM quando mensurável;
+- warnings;
+- hashes relevantes;
+- cache/reuse.
 
-Companion deve enviar dados derivados autorizados de maneira autenticada e retomável.
+Métrica ausente fica desconhecida. Não preencher com estimativa para deixar a UI mais bonita.
 
-Requisitos futuros:
+## Sincronização e publicação cloud
+
+Companion **não deve sincronizar automaticamente ao concluir ASR**.
+
+Fluxo alvo:
+
+```text
+run completed
+  -> review/compare/edit local
+  -> explicit Publish
+  -> server-side auth/capability
+  -> validated revision payload
+  -> atomic commit + receipt
+  -> readback
+  -> activate current revision
+```
+
+Requisitos:
 
 - protocolo/versionamento;
 - idempotency key;
 - auth com capability mínima;
-- batch/resume;
-- checksum;
+- checksum/hash;
 - confirmação server-side;
-- sem depender de service key irrestrita em UI local distribuída.
+- retry após perda de resposta;
+- conflito explícito;
+- sem service key irrestrita em cliente local;
+- sem áudio bruto no payload normal.
+
+A candidata existente de transcript import é fundação técnica, não fluxo produtivo final, e deve ser reconciliada com ADR-0016 antes de ativação.
 
 ## Falhas
 
 ### ZIP inválido
 
-Manifest fica invalid/warning; não criar session data como se ingest tivesse sido confiável.
+Não criar source utilizável como se ingest tivesse sido confiável.
 
-### Track faltando
+### Track faltando/corrompida
 
-Registrar step failed/missing; não remapear silenciosamente para outro participant.
+Falhar ou avisar conforme contrato do pacote; nunca remapear silenciosamente para outro participante.
 
 ### Transcrição falha
 
-Preservar chunk/source e permitir retry/cache alternativo.
+Preservar source e runs concluídos anteriores. O run novo falha/interrompe sem substituir resultado existente.
 
-### Classificação falha
+### Resultado ruim
 
-Transcript continua válido como evidência; candidate não é requisito para guardar transcript.
+Não é falha técnica obrigatória. O usuário pode comparar, arquivar, excluir ou reprocessar e escolher outro run para publicação.
 
-### Sync falha
+### Sync/publicação falha
 
-Fila local deve poder retomar sem duplicar conteúdo remoto.
+Resultado local continua disponível. A revision cloud atual permanece intacta quando o novo commit não foi confirmado.
 
-## Observabilidade
+### Resposta perdida depois do commit
 
-Usar:
+Consultar receipt/readback antes de repetir; retry coerente não cria duplicata.
 
-- job/step status;
-- timestamps/duração;
-- error explícito;
-- manifest validation errors;
-- artifact lifecycle events;
-- AI usage/cost;
-- hashes/IDs de fonte.
+### Disco cheio
 
-## Futuro executável
+Não promover `.partial`; preservar resultados já concluídos e orientar limpeza explícita.
 
-- modernizar companion existente em vez de reescrever sem baseline;
-- benchmark qualidade/tempo/memória;
-- UI de jobs/retry no Edit;
-- sincronização autenticada;
-- cleanup comprovadamente seguro;
-- documentação de distribuição/update do companion.
+## Segurança proporcional
+
+O domínio mantém segurança básica: loopback protegido, payload limitado, hashes, auth/capability em writes cloud, atomicidade e conflitos explícitos.
+
+Não é objetivo adicionar controles financeiros/médicos, retenção legal ou trilha criptográfica por tecla.
+
+## Próximas evoluções
+
+1. múltiplos runs locais imutáveis;
+2. biblioteca/histórico de resultados;
+3. revisão local e marcação de trechos;
+4. comparação A/B temporal por speaker;
+5. publicação revisionada com receipt/readback;
+6. edit/substitute/restore/unpublish;
+7. delete/archive/storage polish;
+8. benchmark pessoal baseado em escolhas reais, sem autoeleger modelo vencedor.
+
+A especificação dona desse lifecycle é [Transcrição — runs locais, revisão, comparação e publicação versionada](../features/transcript-review-publication.md).
