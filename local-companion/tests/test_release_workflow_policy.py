@@ -22,11 +22,18 @@ def test_normal_companion_ci_never_publishes_a_stable_release():
     assert "retention-days: 90" in value
 
 
-def test_rc_workflow_is_manual_reuses_validated_artifact_and_never_rebuilds():
+def test_rc_workflow_auto_publishes_only_validated_main_artifacts_and_never_rebuilds():
     value = _read("companion-rc.yml")
     assert "workflow_dispatch:" in value
-    assert "pull_request:" not in value
-    assert "branches: [main, Preview]" not in value
+    assert "workflow_run:" in value
+    assert "workflows: [CI]" in value
+    assert "types: [completed]" in value
+    assert "branches: [main]" in value
+    assert "github.event.workflow_run.conclusion == 'success'" in value
+    assert "AUTO_RC_TRIGGER_SOURCE_MISMATCH" in value
+    assert "AUTO_RC_TRIGGER_NOT_MAIN_PUSH" in value
+    assert "TDACompanion-windows-x64" in value
+    assert "No Companion artifact" in value
     assert "gh run download" in value
     assert "candidate-manifest" in value
     assert "--source-tree-sha" in value

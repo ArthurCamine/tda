@@ -7,6 +7,10 @@ on:
         description: Exact 40-character source SHA from a successful Companion workflow run
         required: true
         type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
@@ -15,10 +19,12 @@ permissions:
 jobs:
   publish-rc:
     name: publish immutable Companion RC
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.event.workflow_run.head_sha }}
+      TRIGGER_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Validate source SHA
@@ -29,7 +35,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -45,14 +51,45 @@ jobs:
           test -f local-companion/tda_companion/release_evidence.py
           echo "tree_sha=$TREE_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve successful exact-source Companion workflow run
-        id: validated_run
+      - name: Resolve exact validated artifact source
+        id: artifact
         shell: bash
         run: |
           set -euo pipefail
-          gh run list --repo "$GITHUB_REPOSITORY" --workflow companion.yml --commit "$SOURCE_SHA" --status success --limit 50 \
-            --json databaseId,headSha,conclusion,status,workflowName,createdAt > companion-runs.json
-          RUN_ID="$(python - <<'PY'
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            [[ "$TRIGGER_RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRIGGER_RUN_ID" > trigger-run.json
+            python - <<'PY'
+          import json, os
+          value = json.load(open('trigger-run.json', encoding='utf-8'))
+          if value.get('name') != 'CI':
+              raise SystemExit('AUTO_RC_TRIGGER_WORKFLOW_INVALID')
+          if value.get('head_sha') != os.environ['SOURCE_SHA']:
+              raise SystemExit('AUTO_RC_TRIGGER_SOURCE_MISMATCH')
+          if value.get('conclusion') != 'success' or value.get('status') != 'completed':
+              raise SystemExit('AUTO_RC_TRIGGER_NOT_SUCCESSFUL')
+          if value.get('event') != 'push' or value.get('head_branch') != 'main':
+              raise SystemExit('AUTO_RC_TRIGGER_NOT_MAIN_PUSH')
+          PY
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRIGGER_RUN_ID/artifacts?per_page=100" > trigger-artifacts.json
+            COUNT="$(python - <<'PY'
+          import json
+          rows = json.load(open('trigger-artifacts.json', encoding='utf-8')).get('artifacts', [])
+          exact = [a for a in rows if a.get('name') == 'TDACompanion-windows-x64' and not a.get('expired', False)]
+          print(len(exact))
+          PY
+          )"
+            if [[ "$COUNT" == "0" ]]; then
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "No Companion artifact in CI run $TRIGGER_RUN_ID; nothing to publish." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            [[ "$COUNT" == "1" ]] || { echo "::error::Expected one Companion artifact in CI run $TRIGGER_RUN_ID, found $COUNT"; exit 1; }
+            RUN_ID="$TRIGGER_RUN_ID"
+          else
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow companion.yml --commit "$SOURCE_SHA" --status success --limit 50 \
+              --json databaseId,headSha,conclusion,status,workflowName,createdAt > companion-runs.json
+            RUN_ID="$(python - <<'PY'
           import json, os
           source = os.environ['SOURCE_SHA']
           rows = json.load(open('companion-runs.json', encoding='utf-8'))
@@ -63,15 +100,18 @@ jobs:
           print(exact[-1]['databaseId'])
           PY
           )"
-          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+            [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
       - name: Download exact validated Windows artifact
+        if: steps.artifact.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          gh run download "${{ steps.validated_run.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" --name TDACompanion-windows-x64 --dir dist
+          gh run download "${{ steps.artifact.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" --name TDACompanion-windows-x64 --dir dist
           test -f dist/TDACompanion-x64.msi
           test -f dist/TDACompanion-x64.msi.sha256
           test -f dist/TDACompanion-payload-manifest.json
@@ -79,6 +119,7 @@ jobs:
           [[ "$ZIP_COUNT" == "1" ]] || { echo "::error::Expected exactly one Companion Windows ZIP, found $ZIP_COUNT"; exit 1; }
 
       - name: Build immutable candidate manifest v2
+        if: steps.artifact.outputs.available == 'true'
         id: candidate
         shell: bash
         run: |
@@ -87,7 +128,7 @@ jobs:
           RC_TAG="$(PYTHONPATH=local-companion python -m tda_companion.release_evidence candidate-manifest \
             --source-sha "$SOURCE_SHA" \
             --source-tree-sha "${{ steps.source.outputs.tree_sha }}" \
-            --workflow-run-id "${{ steps.validated_run.outputs.run_id }}" \
+            --workflow-run-id "${{ steps.artifact.outputs.run_id }}" \
             --msi dist/TDACompanion-x64.msi \
             --checksum dist/TDACompanion-x64.msi.sha256 \
             --zip "$ZIP_PATH" \
@@ -97,6 +138,7 @@ jobs:
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Detect existing RC
+        if: steps.artifact.outputs.available == 'true'
         id: existing
         shell: bash
         run: |
@@ -108,7 +150,7 @@ jobs:
           fi
 
       - name: Publish immutable prerelease candidate
-        if: steps.existing.outputs.exists != 'true'
+        if: steps.artifact.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -124,7 +166,7 @@ jobs:
 
           - Source SHA: ${SOURCE_SHA}
           - Source tree SHA: ${{ steps.source.outputs.tree_sha }}
-          - Companion workflow run: ${{ steps.validated_run.outputs.run_id }}
+          - Validated artifact workflow run: ${{ steps.artifact.outputs.run_id }}
           - MSI SHA-256: ${MSI_SHA}
           - Canal: RC / prerelease
           - Promoção exige receipt v2 do mesmo source/tree/MSI/payload manifest.
@@ -136,6 +178,7 @@ jobs:
             dist/TDACompanion-payload-manifest.json dist/TDACompanion-candidate.json
 
       - name: Verify existing or freshly published RC
+        if: steps.artifact.outputs.available == 'true'
         shell: bash
         env:
           RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
@@ -172,4 +215,4 @@ jobs:
           PY
           git fetch --force origin "refs/tags/$RC_TAG:refs/tags/$RC_TAG"
           [[ "$(git rev-list -n 1 "$RC_TAG")" == "$SOURCE_SHA" ]] || { echo "::error::RC tag target mismatch"; exit 1; }
-          echo "RC_READY tag=$RC_TAG source=$SOURCE_SHA tree=$EXPECTED_TREE run=${{ steps.validated_run.outputs.run_id }}"
+          echo "RC_READY tag=$RC_TAG source=$SOURCE_SHA tree=$EXPECTED_TREE run=${{ steps.artifact.outputs.run_id }}"
