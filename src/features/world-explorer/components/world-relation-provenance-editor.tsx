@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { relationHasActiveCanonProvenance } from "../relation-provenance-contract";
+import {
+	activeRelationCanonSourceIds,
+	relationHasActiveCanonProvenance,
+} from "../relation-provenance-contract";
 import {
 	loadWorldRelationProvenanceAction,
 	replaceWorldRelationProvenanceAction,
@@ -94,7 +97,7 @@ export function WorldRelationProvenanceEditor({
 		setFeedback(null);
 		const replaceResult = await replaceWorldRelationProvenanceAction(
 			relationId,
-			selectedCanonEntryIds,
+			activeRelationCanonSourceIds(selectedCanonEntryIds, activeCanonEntryIds),
 		);
 		if (!replaceResult.ok) {
 			setSaving(false);
@@ -156,7 +159,7 @@ export function WorldRelationProvenanceEditor({
 				</div>
 			) : null}
 
-			{provenance?.persisted && provenance.options.length > 0 ? (
+			{provenance?.persisted && (provenance.options.length > 0 || staleSourceCount > 0) ? (
 				<div className={styles.stack}>
 					{provenance.options.map((option) => (
 						<label className={styles.checkbox} key={option.id}>
