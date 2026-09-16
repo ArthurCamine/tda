@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import { SessionList } from "@/components/session-list";
 import { Eyebrow } from "@/components/ui";
@@ -7,16 +8,31 @@ import {
 	formatArchiveNumber,
 	summarizeSessionArchive,
 } from "@/features/sessions/archive";
+import { sessionPublicMetadataImage } from "@/features/sessions/metadata";
 import { listPublishedSessionArchive } from "@/features/sessions/repository";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
-export const metadata = buildPublicMetadata({
-	title: "Sessões",
-	description:
-		"Arquivo público das sessões, histórias e memórias da campanha no TDA — Tem Dado Aqui.",
-	pathname: "/sessoes",
-});
+
+const sessionsDescription =
+	"Arquivo público das sessões, histórias e memórias da campanha no TDA — Tem Dado Aqui.";
+
+export async function generateMetadata(): Promise<Metadata> {
+	let image: ReturnType<typeof sessionPublicMetadataImage>;
+	try {
+		const latest = (await listPublishedSessionArchive())?.[0];
+		image = latest ? sessionPublicMetadataImage(latest) : undefined;
+	} catch {
+		image = undefined;
+	}
+
+	return buildPublicMetadata({
+		title: "Sessões",
+		description: sessionsDescription,
+		pathname: "/sessoes",
+		...(image ? { image } : {}),
+	});
+}
 
 function ArchiveStat({ value, label }: { value: string; label: string }) {
 	return (
