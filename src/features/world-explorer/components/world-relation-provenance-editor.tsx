@@ -78,7 +78,7 @@ export function WorldRelationProvenanceEditor({
 	const activeCanonEntrySet = useMemo(() => new Set(activeCanonEntryIds), [activeCanonEntryIds]);
 	const publicEligible = relationHasActiveCanonProvenance(
 		provenance?.persisted === true,
-		selectedCanonEntryIds,
+		provenance?.selectedCanonEntryIds ?? [],
 		activeCanonEntryIds,
 	);
 	const staleSourceCount = selectedCanonEntryIds.filter(
@@ -109,7 +109,9 @@ export function WorldRelationProvenanceEditor({
 			setProvenance(null);
 			setSelectedCanonEntryIds([]);
 			setLoadFailure(refreshed.reason);
-			setFeedback("As referências foram salvas, mas não foi possível confirmar o estado atualizado. A publicação pública permanece bloqueada.");
+			setFeedback(
+				"As referências foram salvas, mas não foi possível confirmar o estado atualizado. A publicação pública permanece bloqueada.",
+			);
 			return;
 		}
 		setLoadFailure(null);
@@ -195,8 +197,8 @@ export function WorldRelationProvenanceEditor({
 			{provenance?.persisted ? (
 				<p className={styles.editorHint}>
 					{publicEligible
-						? "Há proveniência canônica ativa; a visibilidade pública pode ser selecionada no rascunho."
-						: "Sem proveniência canônica ativa, a visibilidade pública permanece bloqueada."}
+						? "Há proveniência canônica ativa salva; a visibilidade pública pode ser selecionada no rascunho."
+						: "Sem proveniência canônica ativa salva, a visibilidade pública permanece bloqueada."}
 				</p>
 			) : null}
 		</div>
