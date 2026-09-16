@@ -129,7 +129,19 @@ jobs:
       - run: python -m unittest discover -s tools/media -p test_lore_svg.py
       - name: Typecheck
         run: pnpm typecheck
-      - name: Lint
+      - name: "Lint: package.json"
+        run: pnpm exec biome lint package.json --max-diagnostics=500
+      - name: "Lint: provenance contract"
+        run: pnpm exec biome lint src/features/world-explorer/relation-provenance-contract.ts --max-diagnostics=500
+      - name: "Lint: provenance contract test"
+        run: pnpm exec biome lint src/features/world-explorer/relation-provenance-contract.test.ts --max-diagnostics=500
+      - name: "Lint: relation provenance editor"
+        run: pnpm exec biome lint src/features/world-explorer/components/world-relation-provenance-editor.tsx --max-diagnostics=500
+      - name: "Lint: world content editor"
+        run: pnpm exec biome lint src/features/world-explorer/components/world-content-editor.tsx --max-diagnostics=500
+      - name: "Lint: world content editor base"
+        run: pnpm exec biome lint src/features/world-explorer/components/world-content-editor-base.tsx --max-diagnostics=500
+      - name: "Lint: full repository"
         run: pnpm lint
       - name: Unit tests
         run: pnpm test
