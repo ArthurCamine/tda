@@ -33,14 +33,17 @@ begin
        select 1
        from unnest(coalesce(p_canon_entry_ids, '{}'::uuid[])) requested(candidate_id)
        where requested.candidate_id is null
-     )
-     or not exists (
-       select 1
-       from public.profiles profile
-       where profile.id = p_actor_profile_id
-         and profile.auth_user_id = p_auth_user_id
      ) then
     return jsonb_build_object('ok', false, 'reason', 'invalid_payload');
+  end if;
+
+  if not exists (
+    select 1
+    from public.profiles profile
+    where profile.id = p_actor_profile_id
+      and profile.auth_user_id = p_auth_user_id
+  ) then
+    return jsonb_build_object('ok', false, 'reason', 'forbidden');
   end if;
 
   select campaign.id
