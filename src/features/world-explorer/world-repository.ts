@@ -277,6 +277,7 @@ export async function loadWorldDataset(
 				.from("canon_entries")
 				.select("id")
 				.eq("campaign_id", campaign.id)
+				.eq("status", "active")
 				.in("id", referencedCanonEntryIds);
 			if (canonError) {
 				throw new Error(`World canon provenance lookup failed: ${canonError.message}`);
