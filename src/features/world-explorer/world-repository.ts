@@ -4,6 +4,7 @@ import {
 	editDataClient,
 	publishedDataClient,
 } from "@/integrations/supabase/server";
+import { evidenceBackedRelationIds } from "./canonical-publication-contract";
 import { DANDELION_WORLD_DEMO } from "./fixtures/dandelion";
 import type {
 	WorldDemoDataset,
@@ -56,6 +57,15 @@ type RelationRow = {
 	color_override: string | null;
 	line_style_override: string | null;
 	line_width_override: number | string | null;
+};
+
+type RelationSourceRow = {
+	relation_id: string;
+	canon_entry_id: string;
+};
+
+type CanonEntryRow = {
+	id: string;
 };
 
 const EMPTY_WORLD: WorldDemoDataset = {
@@ -243,8 +253,46 @@ export async function loadWorldDataset(
 	}
 	const { data: relationData, error: relationError } = await relationQuery.order("created_at");
 	if (relationError) throw new Error(`World relation lookup failed: ${relationError.message}`);
+	const relationRows = (relationData ?? []) as RelationRow[];
 
-	const edges = ((relationData ?? []) as RelationRow[]).flatMap((row) => {
+	let publicBackedRelationIds: Set<string> | null = null;
+	if (audience === "public") {
+		const relationIds = relationRows.map((row) => row.id);
+		let sources: RelationSourceRow[] = [];
+		if (relationIds.length > 0) {
+			const { data: sourceData, error: sourceError } = await client
+				.from("entity_relation_sources")
+				.select("relation_id,canon_entry_id")
+				.in("relation_id", relationIds);
+			if (sourceError) {
+				throw new Error(`World relation provenance lookup failed: ${sourceError.message}`);
+			}
+			sources = (sourceData ?? []) as RelationSourceRow[];
+		}
+
+		const referencedCanonEntryIds = [...new Set(sources.map((source) => source.canon_entry_id))];
+		let reviewedCanonEntryIds: string[] = [];
+		if (referencedCanonEntryIds.length > 0) {
+			const { data: canonData, error: canonError } = await client
+				.from("canon_entries")
+				.select("id")
+				.eq("campaign_id", campaign.id)
+				.in("id", referencedCanonEntryIds);
+			if (canonError) {
+				throw new Error(`World canon provenance lookup failed: ${canonError.message}`);
+			}
+			reviewedCanonEntryIds = ((canonData ?? []) as CanonEntryRow[]).map((entry) => entry.id);
+		}
+
+		publicBackedRelationIds = evidenceBackedRelationIds(
+			relationRows,
+			sources,
+			reviewedCanonEntryIds,
+		);
+	}
+
+	const edges = relationRows.flatMap((row) => {
+		if (publicBackedRelationIds && !publicBackedRelationIds.has(row.id)) return [];
 		const type = typeBySlug.get(row.relation_type_slug);
 		if (!type || !visibleIds.has(row.source_entity_id) || !visibleIds.has(row.target_entity_id)) {
 			return [];
