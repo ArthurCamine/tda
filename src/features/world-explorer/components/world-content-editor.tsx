@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { relationHasActiveCanonProvenance } from "../relation-provenance-contract";
 import type { WorldGraphDraft, WorldVisibility } from "../model";
 import { loadWorldRelationProvenanceAction } from "../world-relation-provenance-actions";
 import { WorldContentEditor as BaseWorldContentEditor } from "./world-content-editor-base";
 import styles from "./world-content-editor.module.css";
 import { WorldRelationProvenanceEditor } from "./world-relation-provenance-editor";
+
+const IGNORE_PUBLICATION_ELIGIBILITY = () => undefined;
 
 function isPublicVisibility(visibility: WorldVisibility | undefined): boolean {
 	return visibility === "public_campaign" || visibility === "public_web";
@@ -33,7 +35,6 @@ export function WorldContentEditor({
 	onSelect: (id: string | null) => void;
 }) {
 	const draftRef = useRef(draft);
-	draftRef.current = draft;
 	const [provenanceRelationId, setProvenanceRelationId] = useState<string | null>(null);
 	const [gateMessage, setGateMessage] = useState<string | null>(null);
 	const activeRelations = useMemo(
@@ -43,6 +44,10 @@ export function WorldContentEditor({
 	const selectedProvenanceRelation = provenanceRelationId
 		? activeRelations.find((edge) => edge.id === provenanceRelationId) ?? null
 		: null;
+
+	useEffect(() => {
+		draftRef.current = draft;
+	}, [draft]);
 
 	function handleDraftChange(nextDraft: WorldGraphDraft, message?: string) {
 		const visibilityChange = nextDraft.edges.find((nextEdge) => {
@@ -148,7 +153,7 @@ export function WorldContentEditor({
 						<WorldRelationProvenanceEditor
 							key={selectedProvenanceRelation.id}
 							relationId={selectedProvenanceRelation.id}
-							onPublicationEligibilityChange={() => undefined}
+							onPublicationEligibilityChange={IGNORE_PUBLICATION_ELIGIBILITY}
 						/>
 					) : (
 						<div className={styles.emptyCallout}>
