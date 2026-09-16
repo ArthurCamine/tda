@@ -1,8 +1,10 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import { PublicLink as Link } from "@/components/public-link";
 import { Eyebrow, SectionTitle } from "@/components/ui";
 import { buildPublicMetadata, SITE_NAME } from "@/config/public-metadata";
 import { LoreHomeEntry } from "@/features/lore/components/lore-home-entry";
+import { sessionPublicMetadataImage } from "@/features/sessions/metadata";
 import {
 	formatSessionDate,
 	type PublishedSession,
@@ -12,13 +14,26 @@ import styles from "./home.module.css";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = buildPublicMetadata({
-	title: SITE_NAME,
-	description:
-		"Um arquivo vivo das sessões, decisões e memórias que construímos juntos ao redor da mesa.",
-	pathname: "/",
-	absoluteTitle: true,
-});
+const homeDescription =
+	"Um arquivo vivo das sessões, decisões e memórias que construímos juntos ao redor da mesa.";
+
+export async function generateMetadata(): Promise<Metadata> {
+	let latest: PublishedSession | undefined;
+	try {
+		latest = (await listPublishedSessions())?.[0];
+	} catch {
+		latest = undefined;
+	}
+	const image = latest ? sessionPublicMetadataImage(latest) : undefined;
+
+	return buildPublicMetadata({
+		title: SITE_NAME,
+		description: homeDescription,
+		pathname: "/",
+		absoluteTitle: true,
+		...(image ? { image } : {}),
+	});
+}
 
 function SessionArtwork({
 	session,
