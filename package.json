@@ -12,7 +12,7 @@
 		"build": "next build",
 		"start": "next start",
 		"typecheck": "next typegen && tsc --noEmit",
-		"lint": "biome lint .",
+		"lint": "biome lint . --max-diagnostics=500",
 		"test": "vitest run && node --test tools/media/recovery.test.mjs tools/media/publication-contract.test.mjs tools/media/lore-assets.test.mjs tools/media/pipeline.test.mjs tools/media/verify-public.test.mjs tools/world-entity-media-r2-policy.test.mjs",
 		"check": "pnpm typecheck && pnpm lint && pnpm test && pnpm media:validate && pnpm design:check && pnpm docs:check && pnpm db:docs:check",
 		"media:validate": "node tools/media/pipeline.mjs validate",
