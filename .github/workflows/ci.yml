@@ -127,8 +127,20 @@ jobs:
           fi
 
       - run: python -m unittest discover -s tools/media -p test_lore_svg.py
-      - name: Typecheck, lint, unit and repository checks
-        run: pnpm check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Unit tests
+        run: pnpm test
+      - name: Validate media repository
+        run: pnpm media:validate
+      - name: Validate design system
+        run: pnpm design:check
+      - name: Validate documentation
+        run: pnpm docs:check
+      - name: Validate database governance docs
+        run: pnpm db:docs:check
       - name: Build application
         run: pnpm build
 
