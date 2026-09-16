@@ -131,7 +131,7 @@ export function WorldRelationProvenanceEditor({
 	}
 
 	return (
-		<div className={styles.referencePanel} aria-label="Proveniência canônica da ligação">
+		<section className={styles.referencePanel} aria-label="Proveniência canônica da ligação">
 			<div className={styles.formHeading}>
 				<div>
 					<span>Proveniência</span>
@@ -200,6 +200,6 @@ export function WorldRelationProvenanceEditor({
 						: "Sem proveniência canônica ativa salva, a visibilidade pública permanece bloqueada."}
 				</p>
 			) : null}
-		</div>
+		</section>
 	);
 }
