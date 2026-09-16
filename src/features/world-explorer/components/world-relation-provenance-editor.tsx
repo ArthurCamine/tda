@@ -26,7 +26,6 @@ function failureMessage(reason: WorldRelationProvenanceFailure): string {
 			return "A relação ainda não foi persistida. Publique-a primeiro como privada ou em revisão.";
 		case "review_required":
 			return "Uma relação pública ativa precisa manter ao menos uma decisão canônica ativa como fonte.";
-		case "dependency_unavailable":
 		default:
 			return "Não foi possível consultar a proveniência agora. A publicação pública permanece bloqueada.";
 	}
