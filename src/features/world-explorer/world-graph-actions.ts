@@ -232,6 +232,7 @@ export async function publishWorldEditStateAction(
 			.from("canon_entries")
 			.select("id")
 			.eq("campaign_id", campaign.id)
+			.eq("status", "active")
 			.in("id", referencedCanonEntryIds);
 		if (canonError) {
 			console.error("World publication canon lookup failed", canonError.message);
