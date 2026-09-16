@@ -9,3 +9,12 @@ export function relationHasActiveCanonProvenance(
 	const activeCanonEntries = new Set(activeCanonEntryIds);
 	return selectedCanonEntryIds.some((id) => activeCanonEntries.has(id));
 }
+
+export function activeRelationCanonSourceIds(
+	selectedCanonEntryIds: readonly string[],
+	activeCanonEntryIds: readonly string[],
+): string[] {
+	if (selectedCanonEntryIds.length === 0 || activeCanonEntryIds.length === 0) return [];
+	const activeCanonEntries = new Set(activeCanonEntryIds);
+	return [...new Set(selectedCanonEntryIds.filter((id) => activeCanonEntries.has(id)))];
+}
