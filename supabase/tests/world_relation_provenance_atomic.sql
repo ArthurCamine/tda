@@ -310,3 +310,175 @@ begin
   end if;
 end;
 $$;
+
+-- Semantic invalidation is a separate DB invariant from source replacement.
+-- The trigger is privileged only for internal trigger execution and must not
+-- become a callable service/browser API.
+do $$
+declare
+  secure boolean;
+  config text;
+begin
+  select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '')
+  into secure, config
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.oid = 'public.enforce_world_relation_provenance_on_write()'::regprocedure;
+
+  if secure is not true
+     or position('search_path=pg_catalog, public' in config) = 0 then
+    raise exception 'semantic provenance trigger must be SECURITY DEFINER with pinned search_path';
+  end if;
+  if has_function_privilege('anon', 'public.enforce_world_relation_provenance_on_write()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.enforce_world_relation_provenance_on_write()', 'EXECUTE')
+     or has_function_privilege('service_role', 'public.enforce_world_relation_provenance_on_write()', 'EXECUTE') then
+    raise exception 'semantic provenance trigger function must not be directly executable';
+  end if;
+  if not exists (
+    select 1
+    from pg_trigger trigger
+    join pg_class relation on relation.oid = trigger.tgrelid
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'entity_relations'
+      and trigger.tgname = 'entity_relations_provenance_write_guard'
+      and not trigger.tgisinternal
+  ) then
+    raise exception 'semantic provenance trigger is missing';
+  end if;
+end;
+$$;
+
+-- Reattach reviewed evidence, then mutate a semantic field while the relation is
+-- still review-only. The source must disappear and the invalidation must audit in
+-- the same transaction.
+set role service_role;
+do $$
+declare
+  result jsonb;
+begin
+  result := public.replace_world_relation_sources_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    '18181818-1818-4818-8818-181818181818',
+    array['30303030-3030-4030-8030-303030303030'::uuid]
+  );
+  if result <> '{"ok":true,"status":"saved","sourceCount":1}'::jsonb then
+    raise exception 'semantic invalidation fixture source attach failed: %', result;
+  end if;
+
+  update public.entity_relations
+  set label_override = 'Semântica revisada',
+      updated_by = '33333333-3333-4333-8333-333333333333'
+  where id = '18181818-1818-4818-8818-181818181818';
+end;
+$$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from public.entity_relation_sources)
+     or (select count(*) from public.audit_log where action='world_relation.provenance.invalidate') <> 1 then
+    raise exception 'semantic edit must clear sources and emit one invalidation audit';
+  end if;
+end;
+$$;
+
+-- Promotion without re-review is blocked even for a direct service-role table
+-- update, so bypassing the app/RPC cannot make the stale relation public.
+set role service_role;
+do $$
+declare
+  failed boolean := false;
+begin
+  begin
+    update public.entity_relations
+    set visibility = 'public_web'
+    where id = '18181818-1818-4818-8818-181818181818';
+  exception when others then
+    if sqlerrm = 'world_relation_review_required' then
+      failed := true;
+    else
+      raise;
+    end if;
+  end;
+  if not failed then
+    raise exception 'unsourced visibility promotion must fail closed';
+  end if;
+end;
+$$;
+reset role;
+
+-- Re-review the current semantics. Visibility-only promotion then succeeds, but
+-- changing the meaning while public remains forbidden and preserves the source.
+set role service_role;
+do $$
+declare
+  result jsonb;
+  failed boolean := false;
+begin
+  result := public.replace_world_relation_sources_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    '18181818-1818-4818-8818-181818181818',
+    array['31313131-3131-4131-8131-313131313131'::uuid]
+  );
+  if result->>'ok' <> 'true' then
+    raise exception 're-review after semantic edit failed: %', result;
+  end if;
+
+  update public.entity_relations
+  set visibility = 'public_web'
+  where id = '18181818-1818-4818-8818-181818181818';
+
+  begin
+    update public.entity_relations
+    set label_override = 'Mudança pública indevida',
+        updated_by = '33333333-3333-4333-8333-333333333333'
+    where id = '18181818-1818-4818-8818-181818181818';
+  exception when others then
+    if sqlerrm = 'world_relation_review_required' then
+      failed := true;
+    else
+      raise;
+    end if;
+  end;
+  if not failed then
+    raise exception 'public semantic edit must require demotion/review';
+  end if;
+end;
+$$;
+reset role;
+
+do $$
+begin
+  if (select visibility from public.entity_relations where id='18181818-1818-4818-8818-181818181818') <> 'public_web'
+     or (select label_override from public.entity_relations where id='18181818-1818-4818-8818-181818181818') <> 'Semântica revisada'
+     or (select count(*) from public.entity_relation_sources) <> 1
+     or (select count(*) from public.audit_log where action='world_relation.provenance.invalidate') <> 1 then
+    raise exception 'blocked public semantic edit must preserve relation, source and audit state';
+  end if;
+end;
+$$;
+
+-- Demotion plus semantic correction is allowed; evidence is invalidated again
+-- because it belonged to the previous public fact.
+set role service_role;
+update public.entity_relations
+set visibility = 'review_only',
+    label_override = 'Semântica em nova revisão',
+    updated_by = '33333333-3333-4333-8333-333333333333'
+where id = '18181818-1818-4818-8818-181818181818';
+reset role;
+
+do $$
+begin
+  if exists (select 1 from public.entity_relation_sources)
+     or (select count(*) from public.audit_log where action='world_relation.provenance.invalidate') <> 2 then
+    raise exception 'demoted semantic edit must invalidate the previous public evidence';
+  end if;
+end;
+$$;
