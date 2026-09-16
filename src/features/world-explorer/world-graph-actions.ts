@@ -5,6 +5,7 @@ import { authorizeCampaignCapabilityServer } from "@/features/auth/server";
 import { EDIT_CAPABILITIES } from "@/features/edit/access/policy";
 import { CAMPAIGN_SLUG } from "@/features/sessions/model";
 import { editDataClient } from "@/integrations/supabase/server";
+import { evidenceBackedRelationIds } from "./canonical-publication-contract";
 import { sanitizeWorldGraphDraft } from "./graph-contract";
 import type { WorldGraphDraft } from "./model";
 import { worldEntityMediaDraftHasIntent } from "./world-entity-media-intent";
@@ -174,7 +175,8 @@ export async function publishWorldEditStateAction(
 
 	// Public relation facts must remain behind the existing canon/review gate.
 	// The World editor may persist private/review material, but it cannot promote
-	// an active relation to a published audience until a canon source is attached.
+	// an active relation to a published audience until reviewed same-campaign canon
+	// provenance is attached.
 	const { data: campaign, error: campaignError } = await client
 		.from("campaigns")
 		.select("id")
@@ -210,14 +212,38 @@ export async function publishWorldEditStateAction(
 	if (publishedRelationIds.length) {
 		const { data: sources, error: sourceError } = await client
 			.from("entity_relation_sources")
-			.select("relation_id")
+			.select("relation_id,canon_entry_id")
 			.in("relation_id", publishedRelationIds);
 		if (sourceError) {
 			console.error("World publication source lookup failed", sourceError.message);
 			return { ok: false, reason: "dependency_unavailable" };
 		}
-		const sourcedRelationIds = new Set((sources ?? []).map((source) => source.relation_id));
-		if (publishedRelationIds.some((relationId) => !sourcedRelationIds.has(relationId))) {
+
+		const relationSources = (sources ?? []) as Array<{
+			relation_id: string;
+			canon_entry_id: string;
+		}>;
+		const referencedCanonEntryIds = [
+			...new Set(relationSources.map((source) => source.canon_entry_id)),
+		];
+		if (!referencedCanonEntryIds.length) return { ok: false, reason: "review_required" };
+
+		const { data: canonEntries, error: canonError } = await client
+			.from("canon_entries")
+			.select("id")
+			.eq("campaign_id", campaign.id)
+			.in("id", referencedCanonEntryIds);
+		if (canonError) {
+			console.error("World publication canon lookup failed", canonError.message);
+			return { ok: false, reason: "dependency_unavailable" };
+		}
+
+		const backedRelationIds = evidenceBackedRelationIds(
+			publishedRelationIds.map((id) => ({ id })),
+			relationSources,
+			(canonEntries ?? []).map((entry) => entry.id),
+		);
+		if (publishedRelationIds.some((relationId) => !backedRelationIds.has(relationId))) {
 			return { ok: false, reason: "review_required" };
 		}
 	}
