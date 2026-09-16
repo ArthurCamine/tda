@@ -733,7 +733,7 @@ Rollback lógico:
 
 ### `20260916113000_world_relation_provenance_atomic`
 
-**Estado:** migration versionada na PR #380; **ainda não aplicada no Supabase canônico**.
+**Estado:** aplicada no Supabase canônico em 2026-09-16 pelo Production CD #116 do commit `77aad98a0eeca402411e88fa4ddb82a4c6eed326`; migration history, definição física/grants da RPC e `/api/version` canônico foram verificados por read-back independente.
 
 Objetivo:
 
@@ -760,8 +760,52 @@ Compatibilidade e rollout:
 - o consumidor de UI será integrado em recorte separado após a função estar validada/aplicada;
 - relações novas continuam seguindo `draft -> persistir privado/review -> anexar canon revisado -> promover público` enquanto provenance não fizer parte de um publish atômico futuro.
 
+Validação pós-release:
+
+- migration history contém `20260916113000 world_relation_provenance_atomic`;
+- `replace_world_relation_sources_atomic(...)` está `SECURITY DEFINER`, owner `postgres`, com `search_path=pg_catalog, public`;
+- somente `postgres` e `service_role` possuem `EXECUTE` entre os roles relevantes;
+- `service_role` permaneceu apenas com `SELECT` em `entity_relation_sources`;
+- aplicação da migration não criou source ou audit de provenance e o domínio canônico respondeu o merge commit esperado.
+
 Rollback lógico:
 
 - antes de existir consumidor, uma migration corretiva pode revogar/remover a função sem tocar em facts ou source rows;
 - após ativação de consumidor, primeiro retirar o server action/UI e só depois remover o RPC em migration corretiva;
 - nunca apagar `entity_relation_sources`, `canon_entries` ou `audit_log` para simular rollback.
+
+## Invalidação semântica de provenance das relações do World Explorer
+
+### `20260916120000_world_graph_provenance_semantic_invalidation`
+
+**Estado:** migration versionada na PR #381; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- impedir que uma fonte canônica aprovada para um fato continue validando silenciosamente outro fato editado sob o mesmo UUID de relation;
+- tratar mudança de `source_entity_id`, `target_entity_id`, `relation_type_slug`, `label_override` ou `status` como mudança semântica;
+- manter `visibility` e overrides visuais fora da identidade semântica da provenance;
+- invalidar atomicamente `entity_relation_sources` quando uma relation privada/review muda de semântica e registrar `world_relation.provenance.invalidate` no `audit_log`;
+- impedir INSERT de relation já `active/public_*`, promoção sem source ativa da mesma campaign e mudança semântica direta enquanto a relation permanece pública;
+- exigir o fluxo explícito `review/private -> revisar/anexar canon -> promover público`.
+
+Boundary e segurança:
+
+- `enforce_world_relation_provenance_on_write()` é trigger `SECURITY DEFINER` com `search_path = pg_catalog, public` e sem `EXECUTE` direto para `public`, `anon`, `authenticated` ou `service_role`;
+- o trigger `entity_relations_provenance_write_guard` roda `BEFORE INSERT OR UPDATE` em `entity_relations`, portanto também cobre callers internos que tentem contornar o server action;
+- a invalidação de sources e o audit acontecem na mesma transação da alteração semântica; falha do audit reverte a mudança inteira;
+- `publish_world_edit_state_atomic(...)` recebe um guard forward-only adicional para retornar `review_required` antes de qualquer write quando um draft público tenta alterar a semântica de relation já persistida;
+- o guard de publish respeita inversão de endpoints quando o tipo de relation do draft é simétrico.
+
+Preflight e validação:
+
+- produção possuía 4 `entity_relations`, 0 relations ativas públicas e 0 `entity_relation_sources`, portanto não existe evidence atual para backfill/invalidação durante a migration;
+- PostgreSQL 16 descartável aplicou a candidata e passou o contrato de World, incluindo direct bypass, invalidação automática, audit, promoção bloqueada sem evidence, re-review, promoção por visibility e bloqueio de semantic edit pública;
+- migration safety policy passou; o primeiro CI vermelho foi exclusivamente o guardrail documental por ausência deste registro.
+
+Compatibilidade e rollback lógico:
+
+- não cria nem altera lore/canon durante a aplicação e não faz backfill;
+- `TDA_WORLD_CANONICAL_ENABLED` permanece desligado;
+- para rollback, retirar primeiro consumidores que dependam do novo invariante e usar migration corretiva explícita para remover trigger/restaurar a definição revisada do publish RPC;
+- não restaurar automaticamente sources invalidadas: elas foram evidência de uma semântica anterior e exigem nova revisão para voltar a existir.
