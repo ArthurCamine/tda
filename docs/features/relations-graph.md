@@ -1,8 +1,8 @@
 # Feature — Relações entre entidades e grafo
 
-> Status: arquitetura visual aprovada; schema de relations em desenho
+> Status: fundação física e autoria factual implementadas; provenance/review integrado ao fluxo editorial; dataset público real ainda depende de curadoria e ativação deliberada
 > Owner: narrative-memory
-> Última revisão: 2026-09-06
+> Última revisão: 2026-09-16
 
 ## Valor
 
@@ -17,6 +17,10 @@ O reboot revalida **relations** como direção, mas separa knowledge/segredos qu
 ## Base existente
 
 - registry `entities`;
+- `relation_types` por campanha;
+- `entity_relations` first-class;
+- `entity_relation_sources` para provenance canônica;
+- `world_relation_styles` separado da semântica factual;
 - canon/evidence;
 - visibility;
 - mentions/timeline;
@@ -24,7 +28,7 @@ O reboot revalida **relations** como direção, mas separa knowledge/segredos qu
 - World Explorer documentado;
 - Design System/Brand Pack oficiais.
 
-Não existe tabela de relation aprovada atualmente.
+A fundação física de relations já foi aplicada e o contrato detalhado vigente está em [relations-data-contract.md](relations-data-contract.md). Isso não implica que um dataset real tenha sido publicado em `/mundo`.
 
 ## Decisão de visualização
 
@@ -53,7 +57,7 @@ A visualização oficial da feature está descrita em [World Explorer](world-exp
 
 ## Contrato de domínio
 
-A proposta detalhada para revisão está em [relations-data-contract.md](relations-data-contract.md).
+O contrato detalhado está em [relations-data-contract.md](relations-data-contract.md).
 
 Uma relation first-class precisa definir pelo menos:
 
@@ -67,6 +71,20 @@ Uma relation first-class precisa definir pelo menos:
 - canon source;
 - review/provenance;
 - auditabilidade.
+
+## Estado operacional atual — 2026-09-16
+
+O fluxo factual do World separa rascunho, persistência e legitimidade pública:
+
+1. a relação é criada/editada no draft factual;
+2. relação nova precisa ser publicada primeiro como privada ou `review_only`;
+3. uma relação já persistida pode receber referências em `entity_relation_sources` pelo boundary server-side dedicado;
+4. `replace_world_relation_sources_atomic` exige `campaign.content.edit` e `narrative.canon.approve`, aceita somente `canon_entries` `active` da mesma campanha e grava auditoria;
+5. a UI descarta referências stale do payload de substituição e permite limpá-las mesmo quando não há opções canônicas ativas disponíveis;
+6. promoção para `public_campaign`/`public_web` revalida provenance salva no servidor;
+7. o guard transacional do banco permanece a última barreira fail-closed e não permite relação pública ativa sem ao menos uma fonte canônica ativa.
+
+Esse fluxo não cria nem promove `canon_entries`, não fabrica lore e não ativa sozinho a projection canônica pública. `/mundo` continua sujeito ao gate `TDA_WORLD_CANONICAL_ENABLED=true`; enquanto ele não for deliberadamente habilitado após curadoria e validação, a experiência pública existente permanece separada do dataset canônico.
 
 ## Exemplos de semântica
 
@@ -163,7 +181,7 @@ O contrato principal de relation V1 continua entity ↔ entity.
 
 ### Custom nodes/edges
 
-A identidade visual vem do TDA Design System. Cores da relation são derivadas de semântica/tokens na UI, nunca persistidas como hex no banco.
+A identidade visual vem do TDA Design System. Cores da relation são derivadas de semântica/tokens na UI; persistência visual explícita, quando usada, fica em `world_relation_styles`/overrides e não define a semântica factual.
 
 ## Primeiro vertical slice
 
@@ -182,12 +200,10 @@ Objetivos:
 - validar keyboard/list fallback;
 - validar projection boundary.
 
-## Critérios de aceite do modelo
-
-Antes da migration real:
+## Critérios preservados do modelo
 
 - homônimos resolvidos por UUID/slug;
-- relation tem canon source ou origem manual revisada transformada em canon;
+- relation tem canon source ou origem manual revisada transformada em canon antes de legitimidade pública;
 - player não recebe edge secreto;
 - directed/symmetric sem ambiguidade;
 - retcon/end não apaga histórico;
@@ -196,13 +212,13 @@ Antes da migration real:
 - relation type é catálogo estruturado;
 - fontes não ficam em array JSON sem FK;
 - UI visual não é única forma de consumir dados;
-- advisors/RLS/grants são revisados após migration.
+- advisors/RLS/grants são revisados após migrations relevantes.
 
-## Não fazer agora
+## Não fazer
 
 - `relations` em JSON dentro de `entities.metadata`;
 - edge canônico por simples coocorrência de mentions;
 - schema com `x`, `y`, handle ou propriedades específicas de React Flow;
-- cor física no banco;
+- misturar apresentação visual com semântica/canon;
 - misturar rumor/mentira/knowledge sem semântica;
-- aplicar migration antes de fechar as open questions da [spec de dados](relations-data-contract.md).
+- criar nova DDL de relations sem atualizar o contrato, consumers, validação e rollback correspondentes.
