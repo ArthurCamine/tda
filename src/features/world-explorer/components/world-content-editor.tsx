@@ -35,6 +35,7 @@ export function WorldContentEditor({
 	onSelect: (id: string | null) => void;
 }) {
 	const draftRef = useRef(draft);
+	const publicationValidationRef = useRef(0);
 	const [provenanceRelationId, setProvenanceRelationId] = useState<string | null>(null);
 	const [gateMessage, setGateMessage] = useState<string | null>(null);
 	const activeRelations = useMemo(
@@ -50,12 +51,13 @@ export function WorldContentEditor({
 	}, [draft]);
 
 	function handleDraftChange(nextDraft: WorldGraphDraft, message?: string) {
-		const visibilityChange = nextDraft.edges.find((nextEdge) => {
-			if (!isPublicVisibility(nextEdge.visibility)) return false;
+		const changedVisibilities = nextDraft.edges.filter((nextEdge) => {
 			const previous = draft.edges.find((edge) => edge.id === nextEdge.id);
 			return previous?.visibility !== nextEdge.visibility;
 		});
+		const visibilityChange = changedVisibilities.find((edge) => isPublicVisibility(edge.visibility));
 		if (!visibilityChange) {
+			if (changedVisibilities.length > 0) publicationValidationRef.current += 1;
 			setGateMessage(null);
 			onDraftChange(nextDraft, message);
 			return;
@@ -63,14 +65,18 @@ export function WorldContentEditor({
 
 		const previous = draft.edges.find((edge) => edge.id === visibilityChange.id);
 		if (!previous) {
+			publicationValidationRef.current += 1;
 			setGateMessage(
 				"Ligação nova não pode nascer pública. Crie-a como privada ou em revisão, publique o rascunho, anexe uma decisão canônica ativa e depois promova a visibilidade.",
 			);
 			return;
 		}
 
+		const validationId = publicationValidationRef.current + 1;
+		publicationValidationRef.current = validationId;
 		setGateMessage("Validando proveniência canônica salva…");
 		void loadWorldRelationProvenanceAction(visibilityChange.id).then((result) => {
+			if (publicationValidationRef.current !== validationId) return;
 			if (!result.ok) {
 				setGateMessage(
 					"Não foi possível confirmar a proveniência canônica. A promoção pública foi bloqueada.",
@@ -90,8 +96,8 @@ export function WorldContentEditor({
 			}
 
 			const latestDraft = draftRef.current;
-			const stillExists = latestDraft.edges.some((edge) => edge.id === visibilityChange.id);
-			if (!stillExists) {
+			const latestEdge = latestDraft.edges.find((edge) => edge.id === visibilityChange.id);
+			if (!latestEdge || latestEdge.status === "archived") {
 				setGateMessage("A ligação mudou enquanto a proveniência era validada. Tente novamente.");
 				return;
 			}
