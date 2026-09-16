@@ -5,6 +5,7 @@ export const EDIT_CAPABILITIES = {
 	permissionsManage: "campaign.permissions.manage",
 	transcriptImport: "campaign.transcript.import",
 	worldLayoutEdit: "campaign.world.layout.edit",
+	canonApprove: "narrative.canon.approve",
 } as const;
 
 export type EditCapability =

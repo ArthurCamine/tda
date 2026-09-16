@@ -728,3 +728,40 @@ Rollback lógico:
 
 - se um consumidor legítimo for identificado, uma migration corretiva posterior pode regrantar somente o privilégio realmente necessário;
 - não há dado a restaurar e o CRUD autenticado permanece intacto durante este recorte.
+
+## Mutation atômica de provenance das relações do World Explorer
+
+### `20260916113000_world_relation_provenance_atomic`
+
+**Estado:** migration versionada na PR #380; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- criar `replace_world_relation_sources_atomic(...)` como boundary server-only para substituir fontes canônicas de uma relação em uma única transação;
+- manter provenance fora do JSON editorial do World e persistida exclusivamente em `entity_relation_sources`;
+- exigir que a relation já exista fisicamente em `entity_relations`, evitando fabricar provenance para uma edge que existe apenas no draft;
+- aceitar somente `canon_entries` com `status='active'` e pertencentes à mesma campaign da relation;
+- preservar o invariante de que relation `active` em `public_campaign`/`public_web` não pode terminar sem ao menos uma fonte canônica válida;
+- registrar `world_relation.provenance.replace` no `audit_log` com conjunto anterior e novo de canon IDs.
+
+Segurança e autorização:
+
+- a função é `SECURITY DEFINER` com `search_path = pg_catalog, public`;
+- exige identidade/profile válidos e, cumulativamente, `campaign.content.edit` + `narrative.canon.approve` no scope efetivo da campaign ou do projeto `tda`;
+- `EXECUTE` fica revogado de `public`, `anon` e `authenticated` e concedido apenas a `service_role`;
+- `service_role` continua sem `INSERT/DELETE` direto em `entity_relation_sources`; o RPC é o único boundary de escrita proposto por este recorte;
+- o payload é limitado a 50 canon IDs, rejeita nulos/cross-campaign/inativos e deduplica IDs antes da troca.
+
+Compatibilidade e rollout:
+
+- não altera relations, canon entries, visibilities ou source rows durante a aplicação da migration;
+- não cria canon automaticamente nem amplia `campaign.content.edit` para permitir aprovação canônica;
+- `TDA_WORLD_CANONICAL_ENABLED` permanece desligado;
+- o consumidor de UI será integrado em recorte separado após a função estar validada/aplicada;
+- relações novas continuam seguindo `draft -> persistir privado/review -> anexar canon revisado -> promover público` enquanto provenance não fizer parte de um publish atômico futuro.
+
+Rollback lógico:
+
+- antes de existir consumidor, uma migration corretiva pode revogar/remover a função sem tocar em facts ou source rows;
+- após ativação de consumidor, primeiro retirar o server action/UI e só depois remover o RPC em migration corretiva;
+- nunca apagar `entity_relation_sources`, `canon_entries` ou `audit_log` para simular rollback.
