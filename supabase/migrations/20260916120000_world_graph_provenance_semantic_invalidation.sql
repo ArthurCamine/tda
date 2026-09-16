@@ -13,6 +13,7 @@ set search_path = pg_catalog, public
 as $function$
 declare
   v_semantic_changed boolean := false;
+  v_previous_sources uuid[] := '{}'::uuid[];
 begin
   if tg_op = 'INSERT' then
     -- A new relation cannot already have a source because the FK target does not
@@ -43,8 +44,33 @@ begin
         message = 'world_relation_review_required';
     end if;
 
-    delete from public.entity_relation_sources source
+    select coalesce(array_agg(source.canon_entry_id order by source.canon_entry_id), '{}'::uuid[])
+    into v_previous_sources
+    from public.entity_relation_sources source
     where source.relation_id = new.id;
+
+    if cardinality(v_previous_sources) > 0 then
+      delete from public.entity_relation_sources source
+      where source.relation_id = new.id;
+
+      insert into public.audit_log(
+        campaign_id,
+        actor_id,
+        action,
+        table_name,
+        record_id,
+        old_value,
+        new_value
+      ) values (
+        new.campaign_id,
+        new.updated_by,
+        'world_relation.provenance.invalidate',
+        'entity_relation_sources',
+        new.id,
+        jsonb_build_object('canonEntryIds', to_jsonb(v_previous_sources)),
+        jsonb_build_object('canonEntryIds', '[]'::jsonb)
+      );
+    end if;
 
     return new;
   end if;
@@ -71,7 +97,7 @@ end;
 $function$;
 
 comment on function public.enforce_world_relation_provenance_on_write() is
-  'Internal trigger boundary: semantic relation changes invalidate attached canon; active public insert/promotion requires reviewed provenance.';
+  'Internal trigger boundary: semantic relation changes atomically invalidate/audit attached canon; active public insert/promotion requires reviewed provenance.';
 
 revoke all on function public.enforce_world_relation_provenance_on_write()
   from public, anon, authenticated, service_role;
