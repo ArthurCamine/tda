@@ -214,11 +214,6 @@ end;
 $$;
 reset role;
 
-if false then
-  -- psql parser anchor; the assertions below are executed by DO blocks.
-  select 1;
-end if;
-
 do $$
 begin
   if (select count(*) from public.entity_relation_sources) <> 1
