@@ -34,10 +34,6 @@
       <File Id="TDACompanionMaintenanceExe" Source="!(bindpath.App)\TDACompanionMaintenance.exe" KeyPath="yes" />
     </Component>
 
-    <!-- The embedded helper is available before files are committed or removed.
-         Install/repair/upgrade and direct uninstall both establish a guard before
-         InstallInitialize so an obsolete Startup/UI process cannot race Windows
-         Installer after the old Agent has been stopped. -->
     <Binary
       Id="TDACompanionMaintenanceUpgradeBinary"
       SourceFile="!(bindpath.App)\TDACompanionMaintenance.exe" />
@@ -90,10 +86,13 @@
         KeyPath="yes" />
     </Component>
 
+    <!-- $(Version) is a WiX build-time define, deliberately used instead of an
+         MSI property so the deferred verification action receives an immutable
+         literal target without depending on deferred CustomActionData access. -->
     <CustomAction
       Id="PrepareInstall"
       BinaryRef="TDACompanionMaintenanceUpgradeBinary"
-      ExeCommand="--prepare-major-upgrade --target-version [ProductVersion]"
+      ExeCommand="--prepare-major-upgrade --target-version $(Version)"
       Execute="immediate"
       Return="check" />
 
@@ -107,7 +106,7 @@
     <CustomAction
       Id="VerifyInstalledTarget"
       BinaryRef="TDACompanionMaintenanceUpgradeBinary"
-      ExeCommand="--verify-installed-target --target-version [ProductVersion]"
+      ExeCommand="--verify-installed-target --target-version $(Version)"
       Execute="deferred"
       Impersonate="yes"
       Return="check" />
@@ -144,9 +143,6 @@
       Impersonate="yes"
       Return="ignore" />
 
-    <!-- Second proof immediately before file removal. The pre-transaction guard
-         above prevents reopen races; this deferred check prevents deletion if a
-         process somehow escaped or appeared through an unsupported path. -->
     <CustomAction
       Id="PrepareUninstall"
       FileRef="TDACompanionMaintenanceExe"
