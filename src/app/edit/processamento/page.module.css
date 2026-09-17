@@ -9,6 +9,14 @@
 	gap: 2px;
 }
 
+.companionDownloadGroup {
+	display: flex;
+	align-items: stretch;
+	justify-content: flex-end;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
 .companionDownload {
 	display: grid;
 	min-width: 176px;
@@ -45,9 +53,22 @@
 	font-size: 0.59rem;
 }
 
+.companionDownloadRc {
+	border-style: dashed;
+	background: transparent;
+}
+
+.companionDownloadRc:hover {
+	background: var(--ds-surface-hover);
+}
+
 @media (max-width: 720px) {
 	.pageHeaderActions {
 		grid-template-columns: 1fr;
+	}
+
+	.companionDownloadGroup {
+		justify-content: flex-start;
 	}
 
 	.companionDownload {

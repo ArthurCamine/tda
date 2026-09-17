@@ -24,7 +24,13 @@ export default async function ProcessingPage() {
 					<div className={styles.breadcrumb}>Edit / Processamento</div>
 					<h1>Processamento</h1>
 				</div>
-				<CompanionDownload className={pageStyles.companionDownload} />
+				<div className={pageStyles.companionDownloadGroup}>
+					<CompanionDownload className={pageStyles.companionDownload} />
+					<CompanionDownload
+						className={`${pageStyles.companionDownload} ${pageStyles.companionDownloadRc}`}
+						channel="rc"
+					/>
+				</div>
 			</header>
 			<ProcessingSubmission />
 			<ProcessingPanel />
