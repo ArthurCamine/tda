@@ -191,6 +191,29 @@ def test_older_binary_redirects_forward_instead_of_deleting_newer_install(tmp_pa
     assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.9"
 
 
+def test_registered_product_wins_over_uncommitted_newer_directory(tmp_path: Path, monkeypatch):
+    paths = _paths(tmp_path)
+    committed = _installed_executable(paths, "0.3.8")
+    orphan = _installed_executable(paths, "0.3.9")
+    (paths.companion_root / "current-version.txt").write_text("0.3.9\n", encoding="utf-8")
+    monkeypatch.setattr(sav, "_registered_installed_version", lambda _paths, _installed: "0.3.8")
+
+    result = reconcile_packaged_installation(
+        paths,
+        "0.3.9",
+        orphan,
+        current_pid=9009,
+        scan=lambda: [],
+        terminate_pid=lambda _pid: pytest.fail("uncommitted candidate must not kill committed product"),
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.applied is False
+    assert result.redirect_executable == committed
+    assert committed.is_file()
+    assert orphan.is_file()
+
+
 def test_partial_newer_directory_never_becomes_authoritative(tmp_path: Path):
     paths = _paths(tmp_path)
     current = _installed_executable(paths, "0.3.8")
@@ -260,6 +283,18 @@ def test_stale_guard_is_self_cleaned_and_does_not_brick_startup(tmp_path: Path):
     value = json.loads(guard.read_text(encoding="utf-8"))
     value["created_at"] = time.time() - 7200
     guard.write_text(json.dumps(value), encoding="utf-8")
+
+    result = reconcile_packaged_installation(paths, "0.3.8", target, scan=lambda: [], sleep=lambda _s: None)
+
+    assert result.applied is True
+    assert not guard.exists()
+
+
+def test_recent_guard_is_self_cleaned_when_msi_transaction_is_gone(tmp_path: Path, monkeypatch):
+    paths = _paths(tmp_path)
+    target = _installed_executable(paths, "0.3.8")
+    guard = _write_guard(paths, "major_upgrade", "0.3.8")
+    monkeypatch.setattr(sav, "_guard_transaction_active", lambda: False)
 
     result = reconcile_packaged_installation(paths, "0.3.8", target, scan=lambda: [], sleep=lambda _s: None)
 
