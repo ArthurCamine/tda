@@ -1,3 +1,4 @@
+import { selectLatestCompanionRcRelease } from "@/features/edit/processing/companion-rc-release";
 import { selectLatestCompanionStableRelease } from "@/features/edit/processing/companion-stable-release";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,26 @@ const NO_STORE_HEADERS = {
 	"X-Content-Type-Options": "nosniff",
 };
 
-export async function GET() {
+type CompanionManifestChannel = "stable" | "rc";
+
+function requestedChannel(request: Request): CompanionManifestChannel | null {
+	const url = new URL(request.url);
+	const channels = url.searchParams.getAll("channel");
+	const unexpected = Array.from(url.searchParams.keys()).some((key) => key !== "channel");
+	if (unexpected || channels.length > 1) return null;
+	const channel = channels[0] ?? "stable";
+	return channel === "stable" || channel === "rc" ? channel : null;
+}
+
+export async function GET(request: Request) {
+	const channel = requestedChannel(request);
+	if (!channel) {
+		return Response.json(
+			{ error: "COMPANION_RELEASE_REQUEST_INVALID" },
+			{ status: 400, headers: NO_STORE_HEADERS },
+		);
+	}
+
 	try {
 		const releasesResponse = await fetch(RELEASES_URL, {
 			headers: GITHUB_HEADERS,
@@ -27,7 +47,11 @@ export async function GET() {
 			);
 		}
 
-		const asset = selectLatestCompanionStableRelease(await releasesResponse.json());
+		const releases = await releasesResponse.json();
+		const asset =
+			channel === "rc"
+				? selectLatestCompanionRcRelease(releases)
+				: selectLatestCompanionStableRelease(releases);
 		if (!asset) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_NOT_FOUND" },
@@ -37,7 +61,7 @@ export async function GET() {
 
 		return Response.json(
 			{
-				channel: "stable",
+				channel,
 				version: asset.version,
 				tag: asset.tag,
 				minimum_api: "1",
