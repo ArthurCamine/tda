@@ -6,6 +6,7 @@ from tda_companion.installed_acceptance import REQUIRED_OBSERVATIONS
 from tda_companion.pairing import TOKEN_PATTERN, ensure_pairing_token
 from tda_companion.windows_app import (
     PRODUCTION_ORIGIN,
+    _write_diagnostic,
     default_roots,
     parse_args,
     validate_origin,
@@ -35,6 +36,15 @@ def test_invalid_existing_pairing_token_fails_closed(tmp_path: Path):
     path.write_text("curto\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="INVALID_EXISTING_PAIRING_TOKEN"):
         ensure_pairing_token(path)
+
+
+def test_bootstrap_diagnostic_is_best_effort(tmp_path: Path):
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_text("occupied", encoding="utf-8")
+
+    # A diagnostic/cache write failure must never become the reason the product
+    # itself refuses to bootstrap.
+    _write_diagnostic(blocked_parent / "bootstrap.txt", "FAILED", "SOME_DETAIL")
 
 
 @pytest.mark.parametrize(
