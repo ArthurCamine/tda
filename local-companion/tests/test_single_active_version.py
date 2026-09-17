@@ -42,6 +42,29 @@ def test_missing_old_executable_is_still_recognized_as_installed_process(tmp_pat
     assert missing.exists() is False
 
 
+def test_process_scan_uses_win32_image_fallback_when_psutil_cannot_resolve_exe(tmp_path: Path):
+    paths = _paths(tmp_path)
+    missing = paths.companion_root / "versions" / "0.3.4" / "TDACompanion.exe"
+
+    class Process:
+        pid = 9320
+        info = {"pid": 9320, "name": "TDACompanion.exe", "exe": None}
+
+        @staticmethod
+        def exe():
+            raise OSError("image unavailable through psutil")
+
+    observed = scan_installed_companion_processes(
+        paths,
+        process_iter=lambda: [Process()],
+        windows_image_lookup=lambda pid: missing if pid == 9320 else None,
+    )
+
+    assert observed == [
+        InstalledCompanionProcess(pid=9320, image_path=missing, version="0.3.4")
+    ]
+
+
 def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_path: Path):
     paths = _paths(tmp_path)
     target = _installed_executable(paths, "0.3.8")
