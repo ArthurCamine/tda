@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tda_companion.maintenance_recovery import recover_interrupted_maintenance
 from tda_companion.paths import CompanionPaths
 
@@ -60,6 +62,38 @@ def test_stale_running_update_is_completed_when_target_installation_survived(tmp
     assert json.loads(last.read_text(encoding="utf-8"))["status"] == "completed"
     operation = paths.cache_root / "maintenance" / "operations" / f"{operation_id}.json"
     assert json.loads(operation.read_text(encoding="utf-8"))["recovery"] == "target_installation_survived"
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["accepted", "waiting_for_ui_exit", "verifying_asset", "running_msi"],
+)
+def test_same_version_target_never_proves_early_interrupted_update_succeeded(
+    tmp_path: Path,
+    stage: str,
+):
+    paths = _paths(tmp_path)
+    executable = _installed(paths, "0.3.8")
+    _journal(
+        paths,
+        {
+            "schema_version": 1,
+            "operation_id": "e" * 32,
+            "action": "update",
+            "status": "running",
+            "stage": stage,
+            "target_version": "0.3.8",
+            "updated_at": 100.0,
+        },
+    )
+
+    recovered = recover_interrupted_maintenance(paths, "0.3.8", executable, now=500.0)
+
+    assert recovered is not None
+    assert recovered["status"] == "failed"
+    assert recovered["failure_stage"] == stage
+    assert recovered["error_code"] == "UPDATE_INTERRUPTED_UNVERIFIED"
+    assert recovered["recovery"] == "target_present_but_completion_unproven"
 
 
 def test_stale_update_is_marked_rolled_back_when_previous_version_survived(tmp_path: Path):
