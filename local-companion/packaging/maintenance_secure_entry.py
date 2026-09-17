@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import maintenance_entry as legacy
+import psutil
 
 _INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
 _INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
@@ -107,7 +108,6 @@ def _clear_guard(root: Path) -> None:
 
 
 def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
-    """Return installed Companion PIDs and same-name PIDs whose image is unreadable."""
     if os.name != "nt":
         return legacy._installed_companion_pids(root), []
 
@@ -197,7 +197,6 @@ def _stop_installed_processes(
     port: int | None = None,
     require_port_free: bool = False,
 ) -> None:
-    """Stop every installed TDA process and prove the postconditions."""
     for attempt in range(4):
         remaining = _other_installed_pids(root)
         if not remaining:
@@ -215,7 +214,6 @@ def _stop_installed_processes(
 
 
 def prepare_major_upgrade(root: Path, port: int = 8765, target_version: str | None = None) -> None:
-    """Guard and quiesce the installation before any install/repair transaction."""
     _begin_guard(root, "major_upgrade", target_version)
     try:
         _stop_installed_processes(root, port=port, require_port_free=True)
@@ -224,8 +222,17 @@ def prepare_major_upgrade(root: Path, port: int = 8765, target_version: str | No
         raise
 
 
+def prepare_explicit_uninstall(root: Path) -> None:
+    """Guard direct MSI/Control Panel uninstall before its transaction begins."""
+    _begin_guard(root, "uninstall", None)
+    try:
+        _stop_installed_processes(root)
+    except BaseException:
+        _clear_guard(root)
+        raise
+
+
 def prepare_uninstall(root: Path, port: int = 8765) -> None:
-    """Stop installed Companion processes before an explicit uninstall."""
     del port
     _stop_installed_processes(root)
 
@@ -260,6 +267,29 @@ def _target_health(port: int) -> dict[str, object] | None:
         return None
 
 
+def _listener_owned_by(port: int, pid: int) -> bool:
+    """Bind health identity to the actual IPv4 loopback LISTEN owner."""
+    try:
+        owners: set[int] = set()
+        for connection in psutil.net_connections(kind="tcp"):
+            status = str(getattr(connection, "status", "") or "").upper()
+            address = getattr(connection, "laddr", None)
+            owner = getattr(connection, "pid", None)
+            if status != "LISTEN" or address is None:
+                continue
+            if hasattr(address, "ip") and hasattr(address, "port"):
+                host, local_port = str(address.ip), int(address.port)
+            elif len(address) >= 2:
+                host, local_port = str(address[0]), int(address[1])
+            else:
+                continue
+            if host == "127.0.0.1" and local_port == port and isinstance(owner, int) and owner > 0:
+                owners.add(owner)
+        return owners == {pid}
+    except BaseException:
+        return False
+
+
 def _health_matches_target(
     executable: Path,
     expected_version: str,
@@ -271,7 +301,9 @@ def _health_matches_target(
     if health is None:
         return False
     pid = health.get("pid")
-    image = legacy._process_image(int(pid)) if isinstance(pid, int) and pid > 0 else None
+    if not isinstance(pid, int) or pid <= 0 or not _listener_owned_by(port, pid):
+        return False
+    image = legacy._process_image(pid)
     if image is None:
         return False
     try:
@@ -313,23 +345,33 @@ def _wait_for_target_agent(
 
 
 def _spawn_target_agent(executable: Path, expected_version: str, port: int):
-    process = legacy.subprocess.Popen(
-        [str(executable), "--agent", "--startup"],
-        stdin=legacy.subprocess.DEVNULL,
-        stdout=legacy.subprocess.DEVNULL,
-        stderr=legacy.subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=(
-            getattr(legacy.subprocess, "CREATE_NO_WINDOW", 0)
-            | getattr(legacy.subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        ),
+    base_flags = (
+        getattr(legacy.subprocess, "CREATE_NO_WINDOW", 0)
+        | getattr(legacy.subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     )
+    breakaway = getattr(legacy.subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    command = [str(executable), "--agent", "--startup"]
+    kwargs = {
+        "stdin": legacy.subprocess.DEVNULL,
+        "stdout": legacy.subprocess.DEVNULL,
+        "stderr": legacy.subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    try:
+        process = legacy.subprocess.Popen(
+            command,
+            creationflags=base_flags | breakaway,
+            **kwargs,
+        )
+    except OSError:
+        if not breakaway:
+            raise
+        process = legacy.subprocess.Popen(command, creationflags=base_flags, **kwargs)
     _wait_for_target_agent(executable, expected_version, port, process)
     return process
 
 
 def verify_installed_target(root: Path, expected_version: str, port: int = 8765) -> None:
-    """Start and verify the candidate before MSI is allowed to commit."""
     if _VERSION.fullmatch(expected_version) is None:
         raise legacy.MaintenanceError("UPDATE_VERSION_INVALID")
     executable = root / "Companion" / "versions" / expected_version / "TDACompanion.exe"
@@ -343,7 +385,6 @@ def verify_installed_target(root: Path, expected_version: str, port: int = 8765)
 
 
 def _restart_surviving_install(root: Path, port: int) -> None:
-    """After MSI rollback, bring the surviving version back without user action."""
     marker = root / "Companion" / "current-version.txt"
     try:
         version = marker.read_text(encoding="utf-8").strip()
@@ -373,7 +414,6 @@ def install_update(
     port: int,
     operation_id: str | None = None,
 ) -> None:
-    """Install one target version; MSI itself proves Agent health before commit."""
     with _maintenance_lock():
         operation_id = legacy._normalize_operation_id(operation_id)
         journal = legacy.MaintenanceJournal(
@@ -394,9 +434,6 @@ def install_update(
             if not msi.is_file() or legacy._sha256(msi).casefold() != expected_sha256.casefold():
                 raise legacy.MaintenanceError("UPDATE_HASH_MISMATCH")
 
-            # Do not kill the old Agent here. The new MSI's embedded pre-transaction
-            # helper owns quiescence + guard creation, so there is no unguarded gap
-            # between stopping the old version and starting Windows Installer.
             journal.stage("running_msi")
             msi_exit_code = legacy._run_msiexec(["/i", str(msi), "/passive"], log_path)
             journal.stage("verifying_install", msi_exit_code=msi_exit_code)
@@ -471,6 +508,7 @@ legacy.uninstall = uninstall
 def _secure_msi_action_main(argv: list[str]) -> int | None:
     secure_flags = {
         "--prepare-major-upgrade",
+        "--prepare-explicit-uninstall",
         "--finish-major-upgrade",
         "--rollback-major-upgrade",
         "--verify-installed-target",
@@ -481,6 +519,7 @@ def _secure_msi_action_main(argv: list[str]) -> int | None:
     parser = argparse.ArgumentParser(add_help=False)
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--prepare-major-upgrade", action="store_true")
+    actions.add_argument("--prepare-explicit-uninstall", action="store_true")
     actions.add_argument("--finish-major-upgrade", action="store_true")
     actions.add_argument("--rollback-major-upgrade", action="store_true")
     actions.add_argument("--verify-installed-target", action="store_true")
@@ -492,6 +531,8 @@ def _secure_msi_action_main(argv: list[str]) -> int | None:
         root = (args.root or legacy.local_root()).resolve()
         if args.prepare_major_upgrade:
             prepare_major_upgrade(root, args.port, args.target_version)
+        elif args.prepare_explicit_uninstall:
+            prepare_explicit_uninstall(root)
         elif args.finish_major_upgrade:
             finish_major_upgrade(root)
         elif args.rollback_major_upgrade:
