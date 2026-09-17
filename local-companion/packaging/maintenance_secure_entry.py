@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -9,52 +10,126 @@ from pathlib import Path
 import maintenance_entry as legacy
 
 
+def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
+    """Return installed Companion PIDs and same-name PIDs whose image is unreadable.
+
+    A process named TDACompanion.exe with an image path below Companion/versions
+    is safe for maintenance to terminate. A same-name process whose image cannot
+    be queried is deliberately *not* killed, but it is also not ignored: update
+    and uninstall fail closed instead of deleting files while ownership is
+    ambiguous.
+    """
+    if os.name != "nt":
+        return legacy._installed_companion_pids(root), []
+
+    kernel32 = legacy.ctypes.windll.kernel32
+    snapshot = kernel32.CreateToolhelp32Snapshot(legacy.TH32CS_SNAPPROCESS, 0)
+    if snapshot == legacy.INVALID_HANDLE_VALUE:
+        raise legacy.MaintenanceError("TDA_PROCESS_SCAN_FAILED")
+
+    versions = (root / "Companion" / "versions").resolve()
+    prefix = (os.path.normcase(str(versions)).rstrip("\\/") + os.sep).casefold()
+    installed: list[int] = []
+    unresolved: list[int] = []
+    entry = legacy.PROCESSENTRY32W()
+    entry.dwSize = legacy.ctypes.sizeof(legacy.PROCESSENTRY32W)
+    try:
+        ok = kernel32.Process32FirstW(snapshot, legacy.ctypes.byref(entry))
+        if not ok:
+            raise legacy.MaintenanceError("TDA_PROCESS_SCAN_FAILED")
+        while ok:
+            if entry.szExeFile.casefold() == "tdacompanion.exe":
+                pid = int(entry.th32ProcessID)
+                if pid != os.getpid():
+                    image = legacy._process_image(pid)
+                    if image is None:
+                        unresolved.append(pid)
+                    else:
+                        normalized = os.path.normcase(str(image)).casefold()
+                        if normalized.startswith(prefix):
+                            installed.append(pid)
+            ok = kernel32.Process32NextW(snapshot, legacy.ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return sorted(set(installed)), sorted(set(unresolved))
+
+
 def _other_installed_pids(root: Path) -> list[int]:
-    current = os.getpid()
-    return [pid for pid in legacy._installed_companion_pids(root) if pid != current]
+    installed, unresolved = _scan_tda_processes(root)
+    if unresolved:
+        raise legacy.MaintenanceError("TDA_PROCESS_IDENTITY_UNVERIFIED")
+    return [pid for pid in installed if pid != os.getpid()]
 
 
-def _stop_installed_processes(root: Path, *, remove_startup: bool) -> None:
-    """Stop every installed TDA Companion process and prove it is gone."""
-    if remove_startup:
-        legacy._remove_startup_value()
+def _port_is_free(port: int) -> bool:
+    if not 1024 <= int(port) <= 65535:
+        raise legacy.MaintenanceError("AGENT_PORT_INVALID")
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
 
+
+def _wait_port_free(port: int, timeout: float = 4.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _port_is_free(port):
+            return
+        time.sleep(0.1)
+    if _port_is_free(port):
+        return
+    raise legacy.MaintenanceError("AGENT_PORT_STILL_OCCUPIED")
+
+
+def _stop_installed_processes(
+    root: Path,
+    *,
+    port: int | None = None,
+    require_port_free: bool = False,
+) -> None:
+    """Stop every installed TDA Companion process and prove postconditions."""
     for attempt in range(4):
         remaining = _other_installed_pids(root)
         if not remaining:
-            return
+            break
         for pid in remaining:
             legacy._terminate_pid(pid)
         time.sleep(0.2 * (attempt + 1))
 
     if _other_installed_pids(root):
         raise legacy.MaintenanceError("TDA_PROCESS_STILL_RUNNING")
+    if require_port_free:
+        if port is None:
+            raise legacy.MaintenanceError("AGENT_PORT_REQUIRED")
+        _wait_port_free(port)
 
 
 def prepare_major_upgrade(root: Path, port: int = 8765) -> None:
     """Prepare an MSI MajorUpgrade without mutating MSI-owned registration.
 
     The helper embedded in the *new* MSI exists specifically to stop processes
-    from an older installed Companion before RemoveExistingProducts. It must not
-    delete Startup/registry values itself: those values are MSI-owned and need to
-    remain inside Windows Installer's rollback transaction. Process state is the
-    only external state changed here.
+    from an older installed Companion before RemoveExistingProducts. Registry,
+    Startup and shortcuts remain exclusively MSI-owned so rollback can restore
+    them transactionally. The Agent port must also be free before installation
+    is allowed to continue; a foreign listener therefore aborts the upgrade.
     """
-    del port
-    _stop_installed_processes(root, remove_startup=False)
+    _stop_installed_processes(root, port=port, require_port_free=True)
 
 
 def prepare_uninstall(root: Path, port: int = 8765) -> None:
-    """Stop every installed TDA Companion process before explicit uninstall.
+    """Stop installed Companion processes before an explicit uninstall.
 
-    Maintenance deliberately does not read or transmit the pairing token. The
-    helper identifies the product by executable image path under
-    Companion/versions, including a still-running image whose file has already
-    disappeared from disk. A failed termination is a hard stop: update/uninstall
-    must never remove another version while one of its processes is still alive.
+    Maintenance deliberately does not read or transmit the pairing token and it
+    does not mutate MSI-owned Startup/Registry state. An unrelated listener on
+    the Agent port does not prevent explicit uninstall, but ambiguous same-name
+    process ownership does fail closed.
     """
-    del port  # Process ownership, not loopback authentication, is authoritative here.
-    _stop_installed_processes(root, remove_startup=True)
+    del port
+    _stop_installed_processes(root)
 
 
 def _target_health(port: int) -> dict[str, object] | None:
@@ -143,7 +218,9 @@ def install_update(
             raise legacy.MaintenanceError("UPDATE_HASH_MISMATCH")
 
         journal.stage("stopping_agent")
-        prepare_uninstall(root, port)
+        # Keep Registry/Startup MSI-owned. The new MSI will mutate them inside its
+        # transaction; if installation fails the previous registration survives.
+        _stop_installed_processes(root, port=port, require_port_free=True)
 
         journal.stage("running_msi")
         msi_exit_code = legacy._run_msiexec(["/i", str(msi), "/passive"], log_path)
@@ -209,10 +286,11 @@ def _prepare_major_upgrade_main(argv: list[str]) -> int | None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--prepare-major-upgrade", action="store_true")
     parser.add_argument("--root", type=Path)
+    parser.add_argument("--port", type=int, default=8765)
     try:
         args = parser.parse_args(argv)
         root = (args.root or legacy.local_root()).resolve()
-        prepare_major_upgrade(root)
+        prepare_major_upgrade(root, args.port)
         return 0
     except BaseException:
         return 1
