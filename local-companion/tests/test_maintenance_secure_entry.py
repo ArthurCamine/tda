@@ -79,6 +79,7 @@ def test_secure_maintenance_fails_closed_when_old_process_survives(tmp_path: Pat
         secure.prepare_uninstall(tmp_path, 8765)
 
 
-def test_secure_entry_replaces_legacy_dispatch_symbol():
+def test_secure_entry_replaces_legacy_dispatch_symbols():
     secure = _load_secure_module()
     assert secure.legacy.prepare_uninstall is secure.prepare_uninstall
+    assert secure.legacy.install_update is secure.install_update
