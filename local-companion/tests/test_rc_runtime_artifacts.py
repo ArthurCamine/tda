@@ -95,6 +95,7 @@ def test_install_whisper_actions_artifact_and_reuse(tmp_path: Path) -> None:
     assert first["status"] == "ready"
     assert first["version"] == RC_WHISPER_VERSION
     assert first["reused"] is False
+    assert first["repaired"] is False
     assert (tmp_path / "Runtime" / "whisper" / RC_WHISPER_VERSION / "TDAWhisperWorker.exe").is_file()
 
     second = _install("whisper", artifact, tmp_path)
@@ -104,6 +105,19 @@ def test_install_whisper_actions_artifact_and_reuse(tmp_path: Path) -> None:
         "status": "ready",
         "reused": True,
     }
+
+
+def test_whisper_rc_setup_repairs_orphaned_target_directory(tmp_path: Path) -> None:
+    artifact = _whisper_actions_artifact(tmp_path)
+    orphan = tmp_path / "Runtime" / "whisper" / RC_WHISPER_VERSION
+    orphan.mkdir(parents=True)
+    (orphan / "TDAWhisperWorker.exe").write_bytes(b"stale")
+
+    result = _install("whisper", artifact, tmp_path)
+
+    assert result["status"] == "ready"
+    assert result["repaired"] is True
+    assert (orphan / ".tda-runtime.json").is_file()
 
 
 def test_rejects_unpinned_whisper_runtime(tmp_path: Path) -> None:
@@ -119,6 +133,7 @@ def test_install_qwen_actions_artifact_and_reuse(tmp_path: Path) -> None:
     assert first["version"] == RC_QWEN_VERSION
     assert first["part_count"] == 1
     assert first["reused"] is False
+    assert first["repaired"] is False
     assert (tmp_path / "Runtime" / "qwen" / RC_QWEN_VERSION / "TDAQwenWorker.exe").is_file()
 
     second = _install("qwen", artifact, tmp_path)
@@ -128,6 +143,19 @@ def test_install_qwen_actions_artifact_and_reuse(tmp_path: Path) -> None:
         "status": "ready",
         "reused": True,
     }
+
+
+def test_qwen_rc_setup_repairs_orphaned_target_directory(tmp_path: Path) -> None:
+    artifact = _qwen_actions_artifact(tmp_path)
+    orphan = tmp_path / "Runtime" / "qwen" / RC_QWEN_VERSION
+    orphan.mkdir(parents=True)
+    (orphan / "TDAQwenWorker.exe").write_bytes(b"stale")
+
+    result = _install("qwen", artifact, tmp_path)
+
+    assert result["status"] == "ready"
+    assert result["repaired"] is True
+    assert (orphan / ".tda-runtime.json").is_file()
 
 
 def test_rejects_unpinned_qwen_runtime(tmp_path: Path) -> None:
