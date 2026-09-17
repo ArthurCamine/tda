@@ -56,10 +56,15 @@ def validate_origin(origin: str) -> str:
 def _write_diagnostic(path: Path | None, status: str, detail: str | None = None) -> None:
     if path is None:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
     safe_detail = "" if detail is None else re.sub(r"[^A-Za-z0-9_.:-]", "_", detail)[:160]
     line = status if not safe_detail else f"{status}:{safe_detail}"
-    path.write_text(line + "\n", encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(line + "\n", encoding="utf-8")
+    except (OSError, UnicodeError):
+        # Diagnostics explain failures; they must never *become* a bootstrap
+        # failure because a cache path is locked, unavailable or out of space.
+        return
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -228,7 +233,10 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
             close_fds=True,
             creationflags=creationflags,
         )
-        deadline = time.monotonic() + 10
+        # Frozen Python applications can start noticeably slower while Defender
+        # scans a freshly installed image. Keep polling the child instead of
+        # misclassifying a healthy cold start as a lifecycle failure.
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
