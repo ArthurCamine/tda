@@ -63,10 +63,11 @@ def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
 def _atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{uuid4().hex}.partial")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        encoding="utf-8",
-    )
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 
@@ -76,8 +77,9 @@ def install_whisper_runtime_archive(
     *,
     version: str,
     expected_sha256: str,
+    replace_corrupt: bool = False,
 ) -> dict[str, str]:
-    """Install a prebuilt TDA Whisper worker without touching machine Python/CUDA/PATH."""
+    """Install or atomically repair a prebuilt Whisper worker without global machine changes."""
     archive = archive_path.resolve()
     if not archive.is_file():
         raise AsrRuntimeError("ASR_RUNTIME_ARCHIVE_NOT_FOUND")
@@ -90,12 +92,20 @@ def install_whisper_runtime_archive(
         raise AsrRuntimeError("ASR_RUNTIME_HASH_MISMATCH")
 
     target = whisper_version_root(runtime_root, version)
-    if target.exists():
-        raise AsrRuntimeError("ASR_RUNTIME_VERSION_EXISTS")
+    replacing = target.exists()
+    if replacing:
+        if not replace_corrupt:
+            raise AsrRuntimeError("ASR_RUNTIME_VERSION_EXISTS")
+        current = inspect_whisper_runtime(runtime_root, verify_worker=True)
+        if current.get("status") != "corrupt" or current.get("version") != version:
+            raise AsrRuntimeError("ASR_RUNTIME_REPAIR_NOT_ALLOWED")
+
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
     staging = parent / f".{version}-{uuid4().hex}.partial"
     staging.mkdir(parents=False, exist_ok=False)
+    backup: Path | None = None
+    promoted = False
 
     try:
         try:
@@ -149,15 +159,29 @@ def install_whisper_runtime_archive(
             "archive_sha256": actual_archive_sha,
         }
         _atomic_json(staging / ".tda-runtime.json", marker)
-        os.replace(staging, target)
-        _atomic_json(
-            parent / "current.json",
-            {
-                "schema": RUNTIME_SCHEMA,
-                "runtime_id": WHISPER_RUNTIME_ID,
-                "version": version,
-            },
-        )
+
+        if replacing:
+            backup = parent / f".{version}-{uuid4().hex}.backup"
+            os.replace(target, backup)
+        try:
+            os.replace(staging, target)
+            promoted = True
+            _atomic_json(
+                parent / "current.json",
+                {
+                    "schema": RUNTIME_SCHEMA,
+                    "runtime_id": WHISPER_RUNTIME_ID,
+                    "version": version,
+                },
+            )
+        except BaseException:
+            if promoted:
+                shutil.rmtree(target, ignore_errors=True)
+            if backup is not None and backup.exists():
+                os.replace(backup, target)
+            raise
+        if backup is not None:
+            shutil.rmtree(backup, ignore_errors=True)
         return marker
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
