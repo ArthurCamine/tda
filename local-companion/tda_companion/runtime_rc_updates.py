@@ -16,7 +16,7 @@ from .rc_runtime_artifacts import (
     install_runtime_candidate,
 )
 from .release_download import ReleaseRedirectError, open_verified_release
-from .runtime_release_evidence import RuntimeReleaseEvidenceError, parse_candidate_manifest, verify_candidate_assets
+from .runtime_release_evidence import RuntimeReleaseEvidenceError, _parse_candidate, verify_candidate_assets
 
 _GITHUB_RELEASES_API = "https://api.github.com/repos/Faysk/tda/releases"
 _CANDIDATE_ASSET = "TDARuntime-candidate.json"
@@ -196,7 +196,7 @@ def _read_candidate_manifest(
         _raise("RUNTIME_RC_CANDIDATE_HASH_MISMATCH")
     try:
         parsed = json.loads(raw.decode("utf-8"))
-        candidate = parse_candidate_manifest(parsed)
+        candidate = _parse_candidate(parsed)
     except (UnicodeError, json.JSONDecodeError, RuntimeReleaseEvidenceError) as exc:
         raise RuntimeRcUpdateError("RUNTIME_RC_CANDIDATE_INVALID") from exc
     return candidate, raw
