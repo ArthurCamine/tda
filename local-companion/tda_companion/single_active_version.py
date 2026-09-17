@@ -20,6 +20,7 @@ _WAIT_ABANDONED = 0x00000080
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
 _INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
+_INSTALL_GUARD_GRACE_SECONDS = 30.0
 _PRODUCT_KEY = r"Software\Faysk\TDA Companion"
 _REQUIRED_VERSION_FILES = (
     "TDACompanion.exe",
@@ -113,7 +114,13 @@ def _guard_transaction_active() -> bool:
 
 
 def _active_installation_guard(paths: CompanionPaths) -> tuple[str, str | None] | None:
-    """Return a live MSI guard and self-clean abandoned transaction leftovers."""
+    """Return a live MSI guard and self-clean abandoned transaction leftovers.
+
+    A newly-created guard gets a short unconditional grace period. This closes a
+    real scheduling race where the embedded helper has written the guard but a
+    process snapshot has not yet observed msiexec. Older guards require evidence
+    of a live Windows Installer transaction and are otherwise self-cleaned.
+    """
     path = _installation_guard_path(paths)
     try:
         if not path.is_file():
@@ -136,7 +143,10 @@ def _active_installation_guard(paths: CompanionPaths) -> tuple[str, str | None] 
         if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
             raise ValueError("created_at")
         age = time.time() - float(created_at)
-        if age < -300 or age > _INSTALL_GUARD_MAX_AGE_SECONDS or not _guard_transaction_active():
+        if age < -300 or age > _INSTALL_GUARD_MAX_AGE_SECONDS:
+            path.unlink(missing_ok=True)
+            return None
+        if age > _INSTALL_GUARD_GRACE_SECONDS and not _guard_transaction_active():
             path.unlink(missing_ok=True)
             return None
         return str(action), target_version
