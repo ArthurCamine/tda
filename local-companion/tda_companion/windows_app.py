@@ -20,6 +20,7 @@ from .installed_acceptance import (
     finalize_installed_acceptance,
     write_receipt,
 )
+from .maintenance_recovery import recover_interrupted_maintenance
 from .pairing import TOKEN_PATTERN, ensure_pairing_token
 from .paths import CompanionPaths, default_paths, migrate_v02_layout
 from .settings import SettingsStore
@@ -99,6 +100,16 @@ def _agent_arguments(args: argparse.Namespace) -> list[str]:
     return values
 
 
+def _ui_arguments(args: argparse.Namespace) -> list[str]:
+    values = [
+        "--ui", "--state-root", str(args.state_root), "--data-root", str(args.data_root),
+        "--logs-root", str(args.logs_root), "--port", str(args.port),
+    ]
+    for origin in sorted(args.origins):
+        values.extend(["--origin", origin])
+    return values
+
+
 def _paths_for_args(args: argparse.Namespace) -> CompanionPaths:
     defaults = default_paths()
     if (
@@ -130,19 +141,47 @@ def _reconcile_installation(paths: CompanionPaths) -> ReconcileResult:
         )
 
 
+def _redirect_to_active_version(args: argparse.Namespace, result: ReconcileResult) -> bool:
+    executable = result.redirect_executable
+    if executable is None:
+        return False
+    if not executable.is_file():
+        raise RuntimeError("ACTIVE_VERSION_EXECUTABLE_MISSING")
+
+    if args.agent:
+        forwarded = _agent_arguments(args)
+        if args.startup:
+            forwarded.append("--startup")
+    else:
+        forwarded = _ui_arguments(args)
+
+    creationflags = 0
+    if os.name == "nt" and args.agent:
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [str(executable), *forwarded],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL if args.agent else None,
+        stderr=subprocess.DEVNULL if args.agent else None,
+        close_fds=True,
+        creationflags=creationflags,
+    )
+    return True
+
+
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
     # Installation repair and Agent bootstrap use distinct mutexes. The parent UI
     # may hold the bootstrap lock while the child Agent acquires the installation
     # lock during its own startup, avoiding both duplicate spawn and deadlock.
-    _reconcile_installation(_paths_for_args(args))
+    reconciliation = _reconcile_installation(_paths_for_args(args))
+    if reconciliation.redirect_executable is not None:
+        raise RuntimeError("ACTIVE_VERSION_REDIRECT_REQUIRED")
 
     with agent_bootstrap_lock():
         existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
         if existing.state == "exact":
             return None
         if existing.state == "compatible":
-            # A different Companion version is never an operational fallback. If it
-            # survived reconciliation, fail closed instead of silently using it.
             raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
         if existing.state in {"foreign", "incompatible"}:
             return None
@@ -308,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         system_log = SystemLog(paths.logs_root)
 
         reconciliation = _reconcile_installation(paths)
+        if _redirect_to_active_version(args, reconciliation):
+            _write_diagnostic(diagnostic_file, "REDIRECTED", "NEWER_INSTALLED_VERSION")
+            return 0
         if reconciliation.applied and (reconciliation.terminated_pids or reconciliation.removed_entries):
             system_log.write(
                 "info",
@@ -318,6 +360,24 @@ def main(argv: list[str] | None = None) -> int:
                     "version": VERSION,
                     "terminated_process_count": len(reconciliation.terminated_pids),
                     "removed_version_count": len(reconciliation.removed_entries),
+                },
+            )
+
+        recovered_maintenance = recover_interrupted_maintenance(
+            paths,
+            VERSION,
+            Path(sys.executable),
+        )
+        if recovered_maintenance is not None:
+            system_log.write(
+                "warning" if recovered_maintenance.get("status") == "failed" else "info",
+                "maintenance",
+                "MAINTENANCE_JOURNAL_RECOVERED",
+                "TDA Companion reconciled an interrupted maintenance operation",
+                {
+                    "action": recovered_maintenance.get("action"),
+                    "status": recovered_maintenance.get("status"),
+                    "error_code": recovered_maintenance.get("error_code"),
                 },
             )
 
