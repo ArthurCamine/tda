@@ -62,10 +62,41 @@ def test_candidate_first_use_falls_back_to_exact_published_runtime_rc(
         base_method,
         lambda self: {"accepted": False, "available": False, "status": "missing", "version": "old"},
     )
+    observed = []
+
+    def install_rc(selected, *, runtime_root, cache_root):
+        observed.append((selected, runtime_root, cache_root))
+        return {"runtime": selected, "version": "candidate", "status": "ready", "channel": "rc"}
+
+    monkeypatch.setattr(session_module, "install_published_runtime_rc", install_rc)
+
+    result = getattr(bridge, method)()
+
+    assert result["accepted"] is True
+    assert result["available"] is True
+    assert result["status"] == "ready"
+    assert result["channel"] == "rc"
+    assert observed == [(family, bridge.paths.runtime_root, bridge.paths.cache_root)]
+
+
+@pytest.mark.parametrize(
+    ("family", "method"),
+    [
+        ("whisper", "install_whisper_runtime"),
+        ("qwen", "install_qwen_runtime"),
+    ],
+)
+def test_stable_companion_self_heals_from_verified_runtime_rc_when_stable_runtime_lags(
+    monkeypatch,
+    tmp_path: Path,
+    family: str,
+    method: str,
+):
+    bridge = _bridge(tmp_path)
     monkeypatch.setattr(
-        session_module,
-        "fetch_companion_manifest",
-        lambda: SimpleNamespace(version="0.3.2"),
+        DesktopBridge,
+        method,
+        lambda self: {"accepted": False, "available": False, "status": "missing", "version": "old"},
     )
     observed = []
 
@@ -84,42 +115,12 @@ def test_candidate_first_use_falls_back_to_exact_published_runtime_rc(
     assert observed == [(family, bridge.paths.runtime_root, bridge.paths.cache_root)]
 
 
-@pytest.mark.parametrize("method", ["install_whisper_runtime", "install_qwen_runtime"])
-def test_stable_companion_never_consumes_runtime_rc(monkeypatch, tmp_path: Path, method: str):
-    bridge = _bridge(tmp_path)
-    monkeypatch.setattr(
-        DesktopBridge,
-        method,
-        lambda self: {"accepted": False, "available": False, "status": "missing", "version": "old"},
-    )
-    monkeypatch.setattr(
-        session_module,
-        "fetch_companion_manifest",
-        lambda: SimpleNamespace(version="0.3.8"),
-    )
-    monkeypatch.setattr(
-        session_module,
-        "install_published_runtime_rc",
-        lambda *_args, **_kwargs: pytest.fail("stable Companion must never consume runtime RC"),
-    )
-
-    with pytest.raises(RuntimeError) as exc:
-        getattr(bridge, method)()
-
-    assert "RUNTIME_COMPATIBLE_RELEASE_UNAVAILABLE" in str(exc.value)
-
-
 def test_rc_publication_failure_is_translated_to_actionable_user_message(monkeypatch, tmp_path: Path):
     bridge = _bridge(tmp_path)
     monkeypatch.setattr(
         DesktopBridge,
         "install_qwen_runtime",
         lambda self: {"accepted": False, "available": False, "status": "missing", "version": "1.0.1"},
-    )
-    monkeypatch.setattr(
-        session_module,
-        "fetch_companion_manifest",
-        lambda: SimpleNamespace(version="0.3.2"),
     )
 
     def unavailable(*_args, **_kwargs):
