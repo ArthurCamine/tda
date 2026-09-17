@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -135,7 +136,20 @@ class SessionDesktopBridge(DesktopBridge):
             self.paths.cache_root / "maintenance" / "last-operation.json"
         )
 
-    def _wait_maintenance_handoff(self, operation_id: str, timeout: float = 3.0) -> None:
+    def _wait_maintenance_handoff(
+        self,
+        operation_id: str,
+        *,
+        process: subprocess.Popen | None = None,
+        timeout: float = 15.0,
+    ) -> None:
+        """Wait until the helper durably owns the operation journal.
+
+        The old three-second blind timeout could report a failed handoff while
+        Windows Defender was still cold-starting the one-file maintenance helper.
+        Track the child process as well: an early exit is immediately actionable,
+        while a live helper gets enough time to create its journal.
+        """
         path = (
             self.paths.cache_root
             / "maintenance"
@@ -143,6 +157,7 @@ class SessionDesktopBridge(DesktopBridge):
             / f"{operation_id}.json"
         )
         deadline = time.monotonic() + timeout
+        delay = 0.05
         while time.monotonic() < deadline:
             value = self._read_maintenance_summary(
                 path,
@@ -150,9 +165,21 @@ class SessionDesktopBridge(DesktopBridge):
             )
             if value is not None:
                 if value.get("status") == "failed":
-                    raise RuntimeError("MAINTENANCE_HANDOFF_FAILED")
+                    code = value.get("error_code")
+                    suffix = f":{code}" if isinstance(code, str) and code else ""
+                    raise RuntimeError(f"MAINTENANCE_HANDOFF_FAILED{suffix}")
                 return
-            time.sleep(0.05)
+            if process is not None:
+                returncode = process.poll()
+                if returncode is not None:
+                    raise RuntimeError(f"MAINTENANCE_EXITED_BEFORE_HANDOFF:{returncode}")
+            time.sleep(delay)
+            delay = min(0.25, delay * 1.5)
+        # Do not kill a still-running helper here. It may have crossed into MSI
+        # work while the journal volume was temporarily delayed; killing it would
+        # manufacture the exact interrupted-maintenance state recovery is meant
+        # to avoid. The UI reports the handoff failure and startup recovery/journal
+        # reconciliation remains authoritative on the next launch.
         raise RuntimeError("MAINTENANCE_HANDOFF_TIMEOUT")
 
     def _offline_snapshot(self, code: str) -> dict[str, object]:
@@ -165,8 +192,6 @@ class SessionDesktopBridge(DesktopBridge):
         try:
             system = SystemTelemetry().snapshot()
         except Exception:
-            # Agent availability must not determine whether the local UI can
-            # render. Telemetry is best-effort and independently degradable.
             system = {}
         whisper_runtime = inspect_whisper_runtime(self.paths.runtime_root, verify_worker=False)
         qwen_runtime = inspect_qwen_runtime(self.paths.runtime_root, verify_worker=False)
@@ -217,10 +242,6 @@ class SessionDesktopBridge(DesktopBridge):
         try:
             return super().logs(level=level, component=component, limit=limit)
         except AgentConnectionError as exc:
-            # Logs already live in the local per-user filesystem. They are most
-            # useful precisely when the Agent is unavailable or its loopback
-            # owner fails verification, so the trusted Desktop reads the same
-            # sanitized log files directly instead of blanking the diagnostics UI.
             rows = SystemLog(self.paths.logs_root).tail(
                 level=level,
                 component=component,
@@ -302,25 +323,41 @@ class SessionDesktopBridge(DesktopBridge):
     def _launch_maintenance(self, arguments: list[str]) -> bool:
         operation_id = uuid4().hex
         self._last_maintenance_operation_id = operation_id
+        helper: Path | None = None
         try:
-            launched = super()._launch_maintenance(
+            helper = self._maintenance_helper()
+            process = subprocess.Popen(
                 [
+                    str(helper),
                     *arguments,
                     "--cleanup-self",
                     "--operation-id",
                     operation_id,
-                ]
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=self._maintenance_creationflags(),
             )
+            self._wait_maintenance_handoff(operation_id, process=process)
+            return True
         except BaseException:
-            shutil.rmtree(
-                Path(tempfile.gettempdir()) / "TDACompanionMaintenance" / operation_id,
-                ignore_errors=True,
+            # Clean staging only if the helper never got a durable journal and is
+            # no longer running. A running helper owns its temporary executable
+            # and will self-clean; deleting beneath it creates a torn handoff.
+            operation = (
+                self.paths.cache_root
+                / "maintenance"
+                / "operations"
+                / f"{operation_id}.json"
             )
+            if not operation.exists() and helper is not None:
+                try:
+                    shutil.rmtree(helper.parent, ignore_errors=True)
+                except OSError:
+                    pass
             raise
-        if not launched:
-            raise RuntimeError("MAINTENANCE_LAUNCH_FAILED")
-        self._wait_maintenance_handoff(operation_id)
-        return True
 
     def install_update(self) -> dict[str, object]:
         self._last_maintenance_operation_id = None
