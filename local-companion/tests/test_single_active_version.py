@@ -23,9 +23,14 @@ def _paths(tmp_path: Path) -> CompanionPaths:
 
 
 def _installed_executable(paths: CompanionPaths, version: str) -> Path:
-    executable = paths.companion_root / "versions" / version / "TDACompanion.exe"
-    executable.parent.mkdir(parents=True, exist_ok=True)
+    root = paths.companion_root / "versions" / version
+    executable = root / "TDACompanion.exe"
+    maintenance = root / "TDACompanionMaintenance.exe"
+    base_library = root / "_internal" / "base_library.zip"
+    base_library.parent.mkdir(parents=True, exist_ok=True)
     executable.write_bytes(b"companion")
+    maintenance.write_bytes(b"maintenance")
+    base_library.write_bytes(b"base-library")
     return executable
 
 
@@ -184,6 +189,50 @@ def test_older_binary_redirects_forward_instead_of_deleting_newer_install(tmp_pa
     assert old.is_file()
     assert newer.is_file()
     assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.9"
+
+
+def test_partial_newer_directory_never_becomes_authoritative(tmp_path: Path):
+    paths = _paths(tmp_path)
+    current = _installed_executable(paths, "0.3.8")
+    partial_newer = paths.companion_root / "versions" / "0.3.9" / "TDACompanion.exe"
+    partial_newer.parent.mkdir(parents=True, exist_ok=True)
+    partial_newer.write_bytes(b"partial")
+    (paths.companion_root / "current-version.txt").write_text("0.3.9\n", encoding="utf-8")
+
+    result = reconcile_packaged_installation(
+        paths,
+        "0.3.8",
+        current,
+        current_pid=5000,
+        scan=lambda: [],
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.applied is True
+    assert result.redirect_executable is None
+    assert not partial_newer.parent.exists()
+    assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.8"
+
+
+def test_current_target_must_be_materially_complete_before_cleanup(tmp_path: Path):
+    paths = _paths(tmp_path)
+    target = paths.companion_root / "versions" / "0.3.8" / "TDACompanion.exe"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"companion")
+    old = _installed_executable(paths, "0.3.7")
+
+    with pytest.raises(SingleActiveVersionError, match="NO_VALID_INSTALLED_VERSION"):
+        reconcile_packaged_installation(
+            paths,
+            "0.3.8",
+            target,
+            current_pid=5000,
+            scan=lambda: [],
+            sleep=lambda _seconds: None,
+        )
+
+    assert old.is_file()
+    assert target.is_file()
 
 
 def test_transaction_guard_allows_only_candidate_without_mutating_version_tree(tmp_path: Path):
