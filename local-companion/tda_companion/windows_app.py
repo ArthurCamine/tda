@@ -22,6 +22,7 @@ from .installed_acceptance import (
 from .pairing import TOKEN_PATTERN, ensure_pairing_token
 from .paths import CompanionPaths, default_paths, migrate_v02_layout
 from .settings import SettingsStore
+from .single_active_version import ReconcileResult, reconcile_packaged_installation
 from .startup import set_start_with_windows
 from .system_log import SystemLog
 
@@ -97,30 +98,6 @@ def _agent_arguments(args: argparse.Namespace) -> list[str]:
     return values
 
 
-def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
-    existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
-    if existing.state in {"exact", "compatible", "foreign", "incompatible"}:
-        return None
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-    process = subprocess.Popen(
-        _entry_command() + _agent_arguments(args),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=creationflags,
-    )
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
-        if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
-            return process
-    raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
-
-
 def _paths_for_args(args: argparse.Namespace) -> CompanionPaths:
     defaults = default_paths()
     if (
@@ -140,6 +117,50 @@ def _paths_for_args(args: argparse.Namespace) -> CompanionPaths:
         models_root=root / "Models",
         runtime_root=root / "Runtime",
     )
+
+
+def _reconcile_installation(paths: CompanionPaths) -> ReconcileResult:
+    return reconcile_packaged_installation(
+        paths,
+        VERSION,
+        Path(sys.executable),
+        current_pid=os.getpid(),
+    )
+
+
+def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
+    # Recovery is application-owned. Before deciding what is on the Agent port,
+    # converge the installed tree to the version that is currently executing.
+    _reconcile_installation(_paths_for_args(args))
+
+    existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
+    if existing.state == "exact":
+        return None
+    if existing.state == "compatible":
+        # A different Companion version is never an operational fallback. If it
+        # survived reconciliation, fail closed instead of silently using it.
+        raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
+    if existing.state in {"foreign", "incompatible"}:
+        return None
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    process = subprocess.Popen(
+        _entry_command() + _agent_arguments(args),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=creationflags,
+    )
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
+        if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
+            return process
+    raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -255,7 +276,7 @@ def _show_desktop_error(exc: BaseException) -> None:
             "TDA Companion",
             "Não foi possível abrir a interface do TDA Companion.\n\n"
             f"Código: {_safe_error_detail(exc)}\n\n"
-            "O Agent local pode continuar funcionando em segundo plano. Use o diagnóstico ou reinicie o aplicativo.",
+            "O TDA tentou reparar o serviço local automaticamente. O diagnóstico registra os detalhes da falha.",
         )
         root.destroy()
     except Exception:
@@ -280,9 +301,24 @@ def main(argv: list[str] | None = None) -> int:
         if paths.root == defaults.root:
             migrate_v02_layout(defaults)
         paths.ensure_runtime_dirs()
+        system_log = SystemLog(paths.logs_root)
+
+        reconciliation = _reconcile_installation(paths)
+        if reconciliation.applied and (reconciliation.terminated_pids or reconciliation.removed_entries):
+            system_log.write(
+                "info",
+                "bootstrap",
+                "INSTALLATION_RECONCILED",
+                "TDA Companion removed stale installed versions",
+                {
+                    "version": VERSION,
+                    "terminated_process_count": len(reconciliation.terminated_pids),
+                    "removed_version_count": len(reconciliation.removed_entries),
+                },
+            )
+
         token = ensure_pairing_token(paths.state_root / "pairing-token.txt")
         _write_diagnostic(diagnostic_file, "TOKEN_READY")
-        system_log = SystemLog(paths.logs_root)
 
         if args.agent:
             system_log.write("info", "bootstrap", "AGENT_BOOTSTRAP", "TDA Companion Agent starting", {"version": VERSION})
