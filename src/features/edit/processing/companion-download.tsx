@@ -8,12 +8,18 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const STABLE_TAG_PATTERN = /^companion-v(\d+\.\d+\.\d+)$/;
 const RC_TAG_PATTERN = /^companion-rc-v(\d+\.\d+\.\d+)-[a-f0-9]{12}$/;
 
+export type CompanionDownloadChannel = "stable" | "rc";
+
 export type CompanionDownloadInfo = {
 	version: string;
-	channel: "stable" | "rc";
+	channel: CompanionDownloadChannel;
 	tag: string;
 	url: string;
 };
+
+export function companionManifestUrl(channel: CompanionDownloadChannel): string {
+	return channel === "rc" ? `${MANIFEST_URL}?channel=rc` : MANIFEST_URL;
+}
 
 export function parseCompanionDownloadManifest(value: unknown): CompanionDownloadInfo | null {
 	if (!value || typeof value !== "object") return null;
@@ -47,22 +53,37 @@ export function parseCompanionDownloadManifest(value: unknown): CompanionDownloa
 	};
 }
 
-export function CompanionDownload({ className }: { className?: string }) {
+export function CompanionDownload({
+	className,
+	channel = "stable",
+}: {
+	className?: string;
+	channel?: CompanionDownloadChannel;
+}) {
 	const [download, setDownload] = useState<CompanionDownloadInfo | null>(null);
 
 	useEffect(() => {
 		const controller = new AbortController();
-		void fetch(MANIFEST_URL, { cache: "no-store", signal: controller.signal })
+		setDownload(null);
+		void fetch(companionManifestUrl(channel), {
+			cache: "no-store",
+			signal: controller.signal,
+		})
 			.then(async (response) => {
 				if (!response.ok) return null;
-				return parseCompanionDownloadManifest(await response.json());
+				const value = parseCompanionDownloadManifest(await response.json());
+				return value?.channel === channel ? value : null;
 			})
 			.then((value) => {
 				if (value) setDownload(value);
 			})
 			.catch(() => undefined);
 		return () => controller.abort();
-	}, []);
+	}, [channel]);
+
+	// RC is never a fallback/default download. It only appears after the explicit
+	// RC manifest resolves to a pinned prerelease tag.
+	if (channel === "rc" && !download) return null;
 
 	const channelLabel = download?.channel === "rc" ? "RC" : "Stable";
 	const subtitle = download
@@ -70,11 +91,16 @@ export function CompanionDownload({ className }: { className?: string }) {
 		: "Windows x64 · .msi";
 	const title = download
 		? `TDA Companion v${download.version} ${channelLabel} · Windows x64`
-		: "Windows x64 · versão mais recente disponível";
+		: "Windows x64 · versão stable mais recente disponível";
+	const label = channel === "rc" ? "Testar TDA Companion RC" : "Baixar TDA Companion";
 
 	return (
-		<a className={className} href={download?.url ?? DEFAULT_URL} title={title}>
-			<span>Baixar TDA Companion</span>
+		<a
+			className={className}
+			href={download?.url ?? DEFAULT_URL}
+			title={title}
+		>
+			<span>{label}</span>
 			<small>{subtitle}</small>
 		</a>
 	);
