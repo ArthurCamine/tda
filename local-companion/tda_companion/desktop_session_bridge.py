@@ -18,9 +18,11 @@ from .network import NetworkError
 from .paths import CompanionPaths
 from .qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig
 from .qwen_runtime import inspect_qwen_runtime
+from .runtime_rc_updates import install_published_runtime_rc
 from .settings import SettingsStore
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
+from .updates import fetch_manifest as fetch_companion_manifest, version_tuple
 
 _NETWORK_MESSAGES = {
     "OFFLINE": "Este computador parece estar sem acesso à Internet.",
@@ -31,6 +33,16 @@ _NETWORK_MESSAGES = {
     "HTTP_ERROR": "O servidor do TDA respondeu com erro.",
     "MANIFEST_INVALID": "O canal de atualização respondeu com dados inválidos.",
     "HASH_MISMATCH": "O arquivo baixado falhou na verificação de integridade.",
+    "RUNTIME_COMPATIBLE_RELEASE_UNAVAILABLE": (
+        "Não há um runtime de transcrição compatível publicado para esta versão do Companion."
+    ),
+    "RUNTIME_RC_RELEASE_NOT_PUBLISHED": (
+        "O runtime compatível desta versão de teste ainda não terminou de ser publicado. "
+        "Tente novamente quando a publicação concluir."
+    ),
+    "RUNTIME_RC_RELEASE_INCOMPLETE": (
+        "O pacote de runtime publicado está incompleto e foi rejeitado pelo Companion."
+    ),
     "DOWNLOAD_CONTINUES_IN_BACKGROUND": (
         "O download continua em segundo plano pelo Windows. Aguarde alguns instantes e tente "
         "novamente; o Companion retomará o mesmo download."
@@ -84,6 +96,11 @@ class SessionDesktopBridge(DesktopBridge):
             )
         elif exc.code.endswith("_SIZE_EXCEEDED") or exc.code.endswith("_SIZE_MISMATCH"):
             message = "O arquivo baixado não corresponde ao tamanho publicado e foi descartado."
+        elif exc.code.startswith("RUNTIME_RC_"):
+            message = _NETWORK_MESSAGES.get(
+                exc.code,
+                "O pacote de transcrição desta versão falhou na validação e não foi instalado.",
+            )
         else:
             message = _NETWORK_MESSAGES.get(
                 exc.code,
@@ -278,9 +295,37 @@ class SessionDesktopBridge(DesktopBridge):
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
+    @staticmethod
+    def _runtime_rc_fallback_allowed() -> bool:
+        stable = fetch_companion_manifest()
+        return version_tuple(VERSION) > version_tuple(stable.version)
+
+    def _install_runtime_rc_fallback(
+        self,
+        family: str,
+        stable_result: dict[str, object],
+    ) -> dict[str, object]:
+        if stable_result.get("status") == "ready":
+            return stable_result
+        if not self._runtime_rc_fallback_allowed():
+            raise NetworkError("RUNTIME_COMPATIBLE_RELEASE_UNAVAILABLE")
+        result = install_published_runtime_rc(
+            family,
+            runtime_root=self.paths.runtime_root,
+            cache_root=self.paths.cache_root,
+        )
+        return {
+            "accepted": True,
+            "available": True,
+            **result,
+        }
+
     def install_whisper_runtime(self) -> dict[str, object]:
         try:
-            return super().install_whisper_runtime()
+            result = super().install_whisper_runtime()
+            if result.get("accepted") is True or result.get("status") == "ready":
+                return result
+            return self._install_runtime_rc_fallback("whisper", result)
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
@@ -292,7 +337,10 @@ class SessionDesktopBridge(DesktopBridge):
 
     def install_qwen_runtime(self) -> dict[str, object]:
         try:
-            return super().install_qwen_runtime()
+            result = super().install_qwen_runtime()
+            if result.get("accepted") is True or result.get("status") == "ready":
+                return result
+            return self._install_runtime_rc_fallback("qwen", result)
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
