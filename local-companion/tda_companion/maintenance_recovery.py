@@ -80,6 +80,11 @@ def recover_interrupted_maintenance(
     as successful if a post-msiexec stage was reached *and* the surviving target
     is materially complete. A lone executable or torn version directory is never
     promoted to a success receipt.
+
+    The packaged bootstrap runs during transactional candidate verification too.
+    In that state the installation guard is authoritative: a long-running MSI may
+    legitimately leave the updater journal at ``running_msi`` for more than the
+    stale threshold, so recovery must not second-guess it until the guard is gone.
     """
     belongs, running_version = installed_image_identity(
         executable,
@@ -89,6 +94,9 @@ def recover_interrupted_maintenance(
         return None
 
     maintenance_root = paths.cache_root / "maintenance"
+    if (maintenance_root / "installation-guard.json").is_file():
+        return None
+
     last_path = maintenance_root / "last-operation.json"
     value = _read(last_path)
     if not value or value.get("status") != "running":
