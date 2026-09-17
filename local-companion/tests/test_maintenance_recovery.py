@@ -14,9 +14,14 @@ def _paths(tmp_path: Path) -> CompanionPaths:
 
 
 def _installed(paths: CompanionPaths, version: str) -> Path:
-    executable = paths.companion_root / "versions" / version / "TDACompanion.exe"
-    executable.parent.mkdir(parents=True, exist_ok=True)
+    root = paths.companion_root / "versions" / version
+    executable = root / "TDACompanion.exe"
+    maintenance = root / "TDACompanionMaintenance.exe"
+    base_library = root / "_internal" / "base_library.zip"
+    base_library.parent.mkdir(parents=True, exist_ok=True)
     executable.write_bytes(b"app")
+    maintenance.write_bytes(b"maintenance")
+    base_library.write_bytes(b"base-library")
     (paths.companion_root / "current-version.txt").write_text(version + "\n", encoding="utf-8")
     return executable
 
@@ -62,6 +67,31 @@ def test_stale_running_update_is_completed_when_target_installation_survived(tmp
     assert json.loads(last.read_text(encoding="utf-8"))["status"] == "completed"
     operation = paths.cache_root / "maintenance" / "operations" / f"{operation_id}.json"
     assert json.loads(operation.read_text(encoding="utf-8"))["recovery"] == "target_installation_survived"
+
+
+def test_partial_target_is_never_recovered_as_success_even_after_post_msi_stage(tmp_path: Path):
+    paths = _paths(tmp_path)
+    executable = _installed(paths, "0.3.8")
+    (paths.companion_root / "versions" / "0.3.8" / "TDACompanionMaintenance.exe").unlink()
+    _journal(
+        paths,
+        {
+            "schema_version": 1,
+            "operation_id": "f" * 32,
+            "action": "update",
+            "status": "running",
+            "stage": "restarting_ui",
+            "target_version": "0.3.8",
+            "updated_at": 100.0,
+        },
+    )
+
+    recovered = recover_interrupted_maintenance(paths, "0.3.8", executable, now=500.0)
+
+    assert recovered is not None
+    assert recovered["status"] == "failed"
+    assert recovered["error_code"] == "UPDATE_INTERRUPTED_ROLLED_BACK"
+    assert recovered["recovery"] == "running_version_survived_or_target_incomplete"
 
 
 @pytest.mark.parametrize(
