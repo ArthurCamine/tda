@@ -16,10 +16,11 @@ import psutil
 _INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
 _INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
 _MAINTENANCE_MUTEX = r"Local\Faysk.TDA.Companion.MaintenanceTransaction"
-# This deliberately matches single_active_version._RECONCILE_MUTEX. Maintenance
-# and packaged bootstrap must never mutate/inspect the installed version tree in
-# parallel while an MSI is taking ownership of it.
-_RECONCILE_MUTEX = r"Local\TDACompanion.SingleActiveVersion"
+# This deliberately matches installation_lock._INSTALLATION_MUTEX. The outer
+# packaged bootstrap lock must be shared with maintenance so no UI/Startup
+# process can enter reconciliation between creation of the MSI guard and process
+# quiescence.
+_RECONCILE_MUTEX = r"Local\Faysk.TDA.Companion.InstallationReconcile"
 _WAIT_OBJECT_0 = 0x00000000
 _WAIT_ABANDONED = 0x00000080
 _WAIT_TIMEOUT = 0x00000102
@@ -505,19 +506,25 @@ def install_update(
             legacy.subprocess.Popen([str(executable), "--ui"], close_fds=True)
 
             journal.complete(msi_exit_code=msi_exit_code, installed_version=expected_version)
-            legacy._write_receipt(
-                root,
-                "last-update.json",
-                {
-                    "operation_id": operation_id,
-                    "version": expected_version,
-                    "sha256": expected_sha256.casefold(),
-                    "status": "installed",
-                    "msi_exit_code": msi_exit_code,
-                    "msi_log": str(Path("Cache") / "maintenance" / "logs" / f"{operation_id}.msi.log"),
-                    "at": time.time(),
-                },
-            )
+            try:
+                legacy._write_receipt(
+                    root,
+                    "last-update.json",
+                    {
+                        "operation_id": operation_id,
+                        "version": expected_version,
+                        "sha256": expected_sha256.casefold(),
+                        "status": "installed",
+                        "msi_exit_code": msi_exit_code,
+                        "msi_log": str(Path("Cache") / "maintenance" / "logs" / f"{operation_id}.msi.log"),
+                        "at": time.time(),
+                    },
+                )
+            except OSError:
+                # The operation journal is authoritative. A supplemental receipt
+                # failing after a verified install must not retroactively turn a
+                # successful update into a failed/rollback-looking operation.
+                pass
         except BaseException as exc:
             journal.fail(exc)
             _restart_surviving_install(root, port)
