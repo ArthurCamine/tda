@@ -131,5 +131,43 @@ def test_unavailable_agent_spawns_once_inside_bootstrap_lock(monkeypatch, tmp_pa
     assert observed["lock_entered"] == 1
     assert observed["lock_exited"] == 1
     assert "--agent" in observed["command"]
+    diagnostic_index = observed["command"].index("--diagnostic-file")
+    assert observed["command"][diagnostic_index + 1].endswith("last-agent-bootstrap.txt")
     assert observed["port"] == 8765
     assert observed["expected_version"] == windows_app.VERSION
+
+
+def test_child_agent_exit_surfaces_sanitized_child_diagnostic(monkeypatch, tmp_path):
+    args = _args(tmp_path)
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: _no_redirect())
+    monkeypatch.setattr(
+        windows_app,
+        "probe_agent",
+        lambda *_args, **_kwargs: AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED"),
+    )
+
+    @contextmanager
+    def fake_bootstrap_lock():
+        yield
+
+    monkeypatch.setattr(windows_app, "agent_bootstrap_lock", fake_bootstrap_lock)
+
+    def fake_popen(command, **_kwargs):
+        diagnostic_index = command.index("--diagnostic-file")
+        diagnostic = windows_app.Path(command[diagnostic_index + 1])
+        diagnostic.parent.mkdir(parents=True, exist_ok=True)
+        diagnostic.write_text("FAILED:RuntimeError.DATA_ROOT_IN_USE\n", encoding="utf-8")
+        observed["diagnostic"] = diagnostic
+        return SimpleNamespace(poll=lambda: 1, returncode=1)
+
+    monkeypatch.setattr(windows_app.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"LOCAL_AGENT_EXITED:1:FAILED:RuntimeError\.DATA_ROOT_IN_USE",
+    ):
+        windows_app.ensure_agent_running(args)
+
+    assert observed["diagnostic"] == tmp_path / "Cache" / "diagnostics" / "last-agent-bootstrap.txt"
