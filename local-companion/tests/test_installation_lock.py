@@ -50,7 +50,27 @@ def test_windows_reconcile_lock_releases_and_closes_handle(monkeypatch):
         pass
 
     assert kernel.CreateMutexW.calls
+    assert kernel.CreateMutexW.calls[0][2] == installation_lock._INSTALLATION_MUTEX
     assert kernel.WaitForSingleObject.calls == [(123, 250)]
+    assert kernel.ReleaseMutex.calls == [(123,)]
+    assert kernel.CloseHandle.calls == [(123,)]
+
+
+def test_windows_agent_bootstrap_uses_separate_mutex(monkeypatch):
+    kernel = _kernel(installation_lock._WAIT_OBJECT_0)
+    monkeypatch.setattr(installation_lock.os, "name", "nt")
+    monkeypatch.setattr(
+        installation_lock.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: kernel,
+        raising=False,
+    )
+
+    with installation_lock.agent_bootstrap_lock(timeout_seconds=0.5):
+        pass
+
+    assert kernel.CreateMutexW.calls[0][2] == installation_lock._AGENT_BOOTSTRAP_MUTEX
+    assert kernel.WaitForSingleObject.calls == [(123, 500)]
     assert kernel.ReleaseMutex.calls == [(123,)]
     assert kernel.CloseHandle.calls == [(123,)]
 
