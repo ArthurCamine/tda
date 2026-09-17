@@ -16,6 +16,10 @@ import psutil
 _INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
 _INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
 _MAINTENANCE_MUTEX = r"Local\Faysk.TDA.Companion.MaintenanceTransaction"
+# This deliberately matches single_active_version._RECONCILE_MUTEX. Maintenance
+# and packaged bootstrap must never mutate/inspect the installed version tree in
+# parallel while an MSI is taking ownership of it.
+_RECONCILE_MUTEX = r"Local\TDACompanion.SingleActiveVersion"
 _WAIT_OBJECT_0 = 0x00000000
 _WAIT_ABANDONED = 0x00000080
 _WAIT_TIMEOUT = 0x00000102
@@ -23,14 +27,14 @@ _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 @contextmanager
-def _maintenance_lock(timeout_seconds: float = 30.0):
+def _named_lock(name: str, timeout_seconds: float, error_prefix: str):
     if os.name != "nt":
         yield
         return
     kernel32 = legacy.ctypes.windll.kernel32
-    handle = kernel32.CreateMutexW(None, False, _MAINTENANCE_MUTEX)
+    handle = kernel32.CreateMutexW(None, False, name)
     if not handle:
-        raise legacy.MaintenanceError("MAINTENANCE_LOCK_CREATE_FAILED")
+        raise legacy.MaintenanceError(f"{error_prefix}_CREATE_FAILED")
     acquired = False
     try:
         result = int(kernel32.WaitForSingleObject(handle, max(1, int(timeout_seconds * 1000))))
@@ -39,12 +43,24 @@ def _maintenance_lock(timeout_seconds: float = 30.0):
             yield
             return
         if result == _WAIT_TIMEOUT:
-            raise legacy.MaintenanceError("MAINTENANCE_LOCK_TIMEOUT")
-        raise legacy.MaintenanceError("MAINTENANCE_LOCK_WAIT_FAILED")
+            raise legacy.MaintenanceError(f"{error_prefix}_TIMEOUT")
+        raise legacy.MaintenanceError(f"{error_prefix}_WAIT_FAILED")
     finally:
         if acquired:
             kernel32.ReleaseMutex(handle)
         kernel32.CloseHandle(handle)
+
+
+@contextmanager
+def _maintenance_lock(timeout_seconds: float = 30.0):
+    with _named_lock(_MAINTENANCE_MUTEX, timeout_seconds, "MAINTENANCE_LOCK"):
+        yield
+
+
+@contextmanager
+def _installation_reconcile_lock(timeout_seconds: float = 30.0):
+    with _named_lock(_RECONCILE_MUTEX, timeout_seconds, "INSTALLATION_LOCK"):
+        yield
 
 
 def _guard_path(root: Path) -> Path:
@@ -214,38 +230,50 @@ def _stop_installed_processes(
 
 
 def prepare_major_upgrade(root: Path, port: int = 8765, target_version: str | None = None) -> None:
-    _begin_guard(root, "major_upgrade", target_version)
-    try:
-        _stop_installed_processes(root, port=port, require_port_free=True)
-    except BaseException:
-        _clear_guard(root)
-        raise
+    # Serialize with application startup/reconciliation. The guard is created
+    # while the mutex is held so an old UI cannot observe the Agent gap and race
+    # the MSI by respawning itself between quiescence checks.
+    with _installation_reconcile_lock():
+        _begin_guard(root, "major_upgrade", target_version)
+        try:
+            _stop_installed_processes(root, port=port, require_port_free=True)
+        except BaseException:
+            _clear_guard(root)
+            raise
 
 
 def prepare_explicit_uninstall(root: Path) -> None:
     """Guard direct MSI/Control Panel uninstall before its transaction begins."""
-    _begin_guard(root, "uninstall", None)
-    try:
-        _stop_installed_processes(root)
-    except BaseException:
-        _clear_guard(root)
-        raise
+    with _installation_reconcile_lock():
+        _begin_guard(root, "uninstall", None)
+        try:
+            _stop_installed_processes(root)
+        except BaseException:
+            _clear_guard(root)
+            raise
 
 
 def prepare_uninstall(root: Path, port: int = 8765) -> None:
     del port
-    _stop_installed_processes(root)
+    with _installation_reconcile_lock():
+        _stop_installed_processes(root)
 
 
 def finish_major_upgrade(root: Path) -> None:
     _clear_guard(root)
 
 
-def rollback_major_upgrade(root: Path) -> None:
+def rollback_major_upgrade(root: Path, port: int = 8765) -> None:
+    # Candidate processes must be gone before the rollback is considered done.
+    # Once Windows Installer has restored the previous product, clear the guard
+    # and revive its Agent so a failed direct MSI upgrade does not leave a valid
+    # installation mysteriously offline until the next login/relaunch.
     try:
-        _stop_installed_processes(root)
+        with _installation_reconcile_lock():
+            _stop_installed_processes(root)
     finally:
         _clear_guard(root)
+    _restart_surviving_agent(root, port)
 
 
 def _target_health(port: int) -> dict[str, object] | None:
@@ -384,22 +412,40 @@ def verify_installed_target(root: Path, expected_version: str, port: int = 8765)
     _spawn_target_agent(executable, expected_version, port)
 
 
-def _restart_surviving_install(root: Path, port: int) -> None:
+def _surviving_install(root: Path) -> tuple[str, Path] | None:
     marker = root / "Companion" / "current-version.txt"
     try:
         version = marker.read_text(encoding="utf-8").strip()
     except OSError:
-        return
+        return None
     if _VERSION.fullmatch(version) is None:
-        return
+        return None
     executable = root / "Companion" / "versions" / version / "TDACompanion.exe"
     if not executable.is_file():
-        return
+        return None
+    return version, executable
+
+
+def _restart_surviving_agent(root: Path, port: int) -> Path | None:
+    surviving = _surviving_install(root)
+    if surviving is None:
+        return None
+    version, executable = surviving
     try:
         if not _health_matches_target(executable, version, port):
             if not _port_is_free(port):
-                return
+                return None
             _spawn_target_agent(executable, version, port)
+        return executable
+    except BaseException:
+        return None
+
+
+def _restart_surviving_install(root: Path, port: int) -> None:
+    executable = _restart_surviving_agent(root, port)
+    if executable is None:
+        return
+    try:
         legacy.subprocess.Popen([str(executable), "--ui"], close_fds=True)
     except BaseException:
         return
@@ -434,6 +480,9 @@ def install_update(
             if not msi.is_file() or legacy._sha256(msi).casefold() != expected_sha256.casefold():
                 raise legacy.MaintenanceError("UPDATE_HASH_MISMATCH")
 
+            # MSI owns the guarded process shutdown. Avoid a pre-MSI gap where
+            # another Startup/UI instance could respawn the old Agent before the
+            # installation transaction establishes its guard.
             journal.stage("running_msi")
             msi_exit_code = legacy._run_msiexec(["/i", str(msi), "/passive"], log_path)
             journal.stage("verifying_install", msi_exit_code=msi_exit_code)
@@ -536,7 +585,7 @@ def _secure_msi_action_main(argv: list[str]) -> int | None:
         elif args.finish_major_upgrade:
             finish_major_upgrade(root)
         elif args.rollback_major_upgrade:
-            rollback_major_upgrade(root)
+            rollback_major_upgrade(root, args.port)
         else:
             if not args.target_version:
                 raise legacy.MaintenanceError("UPDATE_VERSION_REQUIRED")
