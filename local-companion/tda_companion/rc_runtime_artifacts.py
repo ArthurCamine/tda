@@ -142,14 +142,15 @@ def _install_whisper(root: Path, runtime_root: Path) -> dict[str, object]:
     state = inspect_whisper_runtime(runtime_root, verify_worker=True)
     if state.get("status") == "ready" and state.get("version") == version:
         return {"runtime": "whisper", "version": version, "status": "ready", "reused": True}
-    if state.get("status") == "corrupt" and state.get("version") == version:
-        raise RcRuntimeArtifactError("RC_WHISPER_REPAIR_REQUIRED")
+    target = runtime_root / "whisper" / version
+    repairing = target.exists() or target.is_symlink()
     try:
         marker = install_whisper_runtime_archive(
             archive,
             runtime_root,
             version=version,
             expected_sha256=digest,
+            replace_corrupt=repairing,
         )
     except RuntimeError as exc:
         raise RcRuntimeArtifactError(str(exc) or "RC_WHISPER_INSTALL_FAILED") from exc
@@ -161,6 +162,7 @@ def _install_whisper(root: Path, runtime_root: Path) -> dict[str, object]:
         "version": version,
         "status": "ready",
         "reused": False,
+        "repaired": repairing,
         "worker_sha256": marker["worker_sha256"],
         "archive_sha256": marker["archive_sha256"],
     }
@@ -189,15 +191,16 @@ def _install_qwen(root: Path, runtime_root: Path, cache_root: Path) -> dict[str,
     assembly = cache_root.resolve() / "physical-setup" / "qwen" / version
     shutil.rmtree(assembly, ignore_errors=True)
     assembly.mkdir(parents=True, exist_ok=False)
+    target = runtime_root / "qwen" / version
+    repairing = target.exists() or target.is_symlink()
     try:
         archive = assemble_qwen_runtime_bundle(manifest, manifest_path.parent, assembly)
-        replacing_corrupt = state.get("status") == "corrupt" and state.get("version") == version
         marker = install_qwen_runtime_archive(
             archive,
             runtime_root,
             version=version,
             expected_sha256=manifest.archive_sha256,
-            replace_corrupt=replacing_corrupt,
+            replace_corrupt=repairing,
         )
     except RuntimeError as exc:
         raise RcRuntimeArtifactError(str(exc) or "RC_QWEN_INSTALL_FAILED") from exc
@@ -211,6 +214,7 @@ def _install_qwen(root: Path, runtime_root: Path, cache_root: Path) -> dict[str,
         "version": version,
         "status": "ready",
         "reused": False,
+        "repaired": repairing,
         "worker_sha256": marker["worker_sha256"],
         "archive_sha256": marker["archive_sha256"],
         "part_count": len(manifest.parts),

@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import VERSION
-from .agent import AgentController, wait_until_ready
-from .agent_connection import probe_agent
+from .agent import AgentController
+from .agent_connection import AgentConnection, AgentProbe
 from .installation_lock import agent_bootstrap_lock, installation_reconcile_lock
 from .installed_acceptance import (
     REQUIRED_OBSERVATIONS,
@@ -20,6 +20,7 @@ from .installed_acceptance import (
     finalize_installed_acceptance,
     write_receipt,
 )
+from .maintenance_recovery import recover_interrupted_maintenance
 from .pairing import TOKEN_PATTERN, ensure_pairing_token
 from .paths import CompanionPaths, default_paths, migrate_v02_layout
 from .settings import SettingsStore
@@ -55,10 +56,13 @@ def validate_origin(origin: str) -> str:
 def _write_diagnostic(path: Path | None, status: str, detail: str | None = None) -> None:
     if path is None:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
     safe_detail = "" if detail is None else re.sub(r"[^A-Za-z0-9_.:-]", "_", detail)[:160]
     line = status if not safe_detail else f"{status}:{safe_detail}"
-    path.write_text(line + "\n", encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(line + "\n", encoding="utf-8")
+    except (OSError, UnicodeError):
+        return
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -99,6 +103,16 @@ def _agent_arguments(args: argparse.Namespace) -> list[str]:
     return values
 
 
+def _ui_arguments(args: argparse.Namespace) -> list[str]:
+    values = [
+        "--ui", "--state-root", str(args.state_root), "--data-root", str(args.data_root),
+        "--logs-root", str(args.logs_root), "--port", str(args.port),
+    ]
+    for origin in sorted(args.origins):
+        values.extend(["--origin", origin])
+    return values
+
+
 def _paths_for_args(args: argparse.Namespace) -> CompanionPaths:
     defaults = default_paths()
     if (
@@ -130,40 +144,130 @@ def _reconcile_installation(paths: CompanionPaths) -> ReconcileResult:
         )
 
 
+def _redirect_to_active_version(args: argparse.Namespace, result: ReconcileResult) -> bool:
+    executable = result.redirect_executable
+    if executable is None:
+        return False
+    if not executable.is_file():
+        raise RuntimeError("ACTIVE_VERSION_EXECUTABLE_MISSING")
+
+    if args.agent:
+        forwarded = _agent_arguments(args)
+        if args.startup:
+            forwarded.append("--startup")
+    else:
+        forwarded = _ui_arguments(args)
+
+    creationflags = 0
+    if os.name == "nt" and args.agent:
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [str(executable), *forwarded],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL if args.agent else None,
+        stderr=subprocess.DEVNULL if args.agent else None,
+        close_fds=True,
+        creationflags=creationflags,
+    )
+    return True
+
+
+def _agent_bootstrap_diagnostic(paths: CompanionPaths) -> Path:
+    return paths.cache_root / "diagnostics" / "last-agent-bootstrap.txt"
+
+
+def _read_agent_bootstrap_diagnostic(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        if not path.is_file() or path.stat().st_size > 4096:
+            return None
+        line = path.read_text(encoding="utf-8").splitlines()[0].strip()
+    except (OSError, UnicodeError, IndexError):
+        return None
+    safe = re.sub(r"[^A-Za-z0-9_.:-]", "_", line)[:180]
+    return safe or None
+
+
+def _verified_agent_probe(port: int, timeout: float = 0.5) -> AgentProbe:
+    """Probe without a token but with the same owner proof used before auth."""
+    connection = AgentConnection(
+        "",
+        port,
+        lambda: None,
+        expected_version=VERSION,
+    )
+    return connection.probe(timeout=timeout)
+
+
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
-    # Installation repair and Agent bootstrap use distinct mutexes. The parent UI
-    # may hold the bootstrap lock while the child Agent acquires the installation
-    # lock during its own startup, avoiding both duplicate spawn and deadlock.
-    _reconcile_installation(_paths_for_args(args))
+    paths = _paths_for_args(args)
+    reconciliation = _reconcile_installation(paths)
+    if reconciliation.redirect_executable is not None:
+        raise RuntimeError("ACTIVE_VERSION_REDIRECT_REQUIRED")
 
     with agent_bootstrap_lock():
-        existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
+        existing = _verified_agent_probe(args.port, timeout=0.5)
         if existing.state == "exact":
             return None
         if existing.state == "compatible":
-            # A different Companion version is never an operational fallback. If it
-            # survived reconciliation, fail closed instead of silently using it.
             raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
         if existing.state in {"foreign", "incompatible"}:
+            # Do not spawn into a port whose owner/identity cannot be proven.
             return None
+
+        agent_diagnostic: Path | None = _agent_bootstrap_diagnostic(paths)
+        try:
+            agent_diagnostic.parent.mkdir(parents=True, exist_ok=True)
+            agent_diagnostic.unlink(missing_ok=True)
+        except OSError:
+            agent_diagnostic = None
+
+        command = _entry_command() + _agent_arguments(args)
+        if agent_diagnostic is not None:
+            command.extend(["--diagnostic-file", str(agent_diagnostic)])
 
         creationflags = 0
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
-            _entry_command() + _agent_arguments(args),
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
             creationflags=creationflags,
         )
-        deadline = time.monotonic() + 10
+
+        deadline = time.monotonic() + 15
+        last_probe = AgentProbe("unavailable", code="AGENT_CONNECTION_TIMEOUT")
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
-            if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
-                return process
+                detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
+                suffix = f":{detail}" if detail else ""
+                raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}{suffix}")
+
+            last_probe = _verified_agent_probe(args.port, timeout=0.3)
+            if last_probe.state == "exact":
+                observed_pid = (last_probe.payload or {}).get("pid")
+                if observed_pid == getattr(process, "pid", None):
+                    return process
+                # Another exact current Agent won the race. Keep the verified
+                # service and stop only the child we just created.
+                try:
+                    process.terminate()
+                except (AttributeError, OSError):
+                    pass
+                return None
+            if last_probe.state == "compatible":
+                raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
+            time.sleep(0.1)
+
+        detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
+        if detail:
+            raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT:{detail}")
+        if last_probe.code:
+            raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT:{last_probe.code}")
         raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
 
 
@@ -308,6 +412,9 @@ def main(argv: list[str] | None = None) -> int:
         system_log = SystemLog(paths.logs_root)
 
         reconciliation = _reconcile_installation(paths)
+        if _redirect_to_active_version(args, reconciliation):
+            _write_diagnostic(diagnostic_file, "REDIRECTED", "ACTIVE_INSTALLED_VERSION")
+            return 0
         if reconciliation.applied and (reconciliation.terminated_pids or reconciliation.removed_entries):
             system_log.write(
                 "info",
@@ -318,6 +425,24 @@ def main(argv: list[str] | None = None) -> int:
                     "version": VERSION,
                     "terminated_process_count": len(reconciliation.terminated_pids),
                     "removed_version_count": len(reconciliation.removed_entries),
+                },
+            )
+
+        recovered_maintenance = recover_interrupted_maintenance(
+            paths,
+            VERSION,
+            Path(sys.executable),
+        )
+        if recovered_maintenance is not None:
+            system_log.write(
+                "warning" if recovered_maintenance.get("status") == "failed" else "info",
+                "maintenance",
+                "MAINTENANCE_JOURNAL_RECOVERED",
+                "TDA Companion reconciled an interrupted maintenance operation",
+                {
+                    "action": recovered_maintenance.get("action"),
+                    "status": recovered_maintenance.get("status"),
+                    "error_code": recovered_maintenance.get("error_code"),
                 },
             )
 

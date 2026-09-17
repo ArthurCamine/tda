@@ -47,6 +47,82 @@ def test_verified_runtime_installs_versioned_and_switches_current_atomically(tmp
     assert selector["version"] == version
 
 
+def test_corrupt_current_version_can_be_repaired_transactionally(tmp_path: Path):
+    original = tmp_path / "runtime-original.zip"
+    original_digest = _runtime_zip(original, payload=b"original")
+    replacement = tmp_path / "runtime-replacement.zip"
+    replacement_digest = _runtime_zip(replacement, payload=b"replacement")
+    runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+
+    install_whisper_runtime_archive(
+        original,
+        runtime_root,
+        version=version,
+        expected_sha256=original_digest,
+    )
+    worker = runtime_root / "whisper" / version / "TDAWhisperWorker.exe"
+    worker.write_bytes(b"tampered")
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "corrupt"
+
+    marker = install_whisper_runtime_archive(
+        replacement,
+        runtime_root,
+        version=version,
+        expected_sha256=replacement_digest,
+        replace_corrupt=True,
+    )
+
+    assert marker["archive_sha256"] == replacement_digest
+    assert worker.read_bytes() == b"replacement"
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "ready"
+    assert not list((runtime_root / "whisper").glob(".*.backup"))
+
+
+def test_orphaned_target_without_selector_can_be_repaired(tmp_path: Path):
+    runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+    orphan = runtime_root / "whisper" / version
+    orphan.mkdir(parents=True)
+    (orphan / "TDAWhisperWorker.exe").write_bytes(b"partial-old")
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "missing"
+
+    replacement = tmp_path / "runtime-replacement.zip"
+    digest = _runtime_zip(replacement, payload=b"recovered")
+    install_whisper_runtime_archive(
+        replacement,
+        runtime_root,
+        version=version,
+        expected_sha256=digest,
+        replace_corrupt=True,
+    )
+
+    assert (orphan / "TDAWhisperWorker.exe").read_bytes() == b"recovered"
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "ready"
+
+
+def test_repair_never_replaces_a_healthy_runtime(tmp_path: Path):
+    archive = tmp_path / "runtime.zip"
+    digest = _runtime_zip(archive)
+    runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+    install_whisper_runtime_archive(
+        archive,
+        runtime_root,
+        version=version,
+        expected_sha256=digest,
+    )
+
+    with pytest.raises(AsrRuntimeError, match="ASR_RUNTIME_REPAIR_NOT_ALLOWED"):
+        install_whisper_runtime_archive(
+            archive,
+            runtime_root,
+            version=version,
+            expected_sha256=digest,
+            replace_corrupt=True,
+        )
+
+
 def test_pre_runs_whisper_runtime_is_valid_but_incompatible(tmp_path: Path):
     archive = tmp_path / "runtime-old.zip"
     digest = _runtime_zip(archive)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -17,9 +18,11 @@ from .network import NetworkError
 from .paths import CompanionPaths
 from .qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig
 from .qwen_runtime import inspect_qwen_runtime
+from .runtime_rc_updates import install_published_runtime_rc
 from .settings import SettingsStore
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
+from .updates import fetch_manifest as fetch_companion_manifest, version_tuple
 
 _NETWORK_MESSAGES = {
     "OFFLINE": "Este computador parece estar sem acesso à Internet.",
@@ -30,6 +33,16 @@ _NETWORK_MESSAGES = {
     "HTTP_ERROR": "O servidor do TDA respondeu com erro.",
     "MANIFEST_INVALID": "O canal de atualização respondeu com dados inválidos.",
     "HASH_MISMATCH": "O arquivo baixado falhou na verificação de integridade.",
+    "RUNTIME_COMPATIBLE_RELEASE_UNAVAILABLE": (
+        "Não há um runtime de transcrição compatível publicado para esta versão do Companion."
+    ),
+    "RUNTIME_RC_RELEASE_NOT_PUBLISHED": (
+        "O runtime compatível desta versão de teste ainda não terminou de ser publicado. "
+        "Tente novamente quando a publicação concluir."
+    ),
+    "RUNTIME_RC_RELEASE_INCOMPLETE": (
+        "O pacote de runtime publicado está incompleto e foi rejeitado pelo Companion."
+    ),
     "DOWNLOAD_CONTINUES_IN_BACKGROUND": (
         "O download continua em segundo plano pelo Windows. Aguarde alguns instantes e tente "
         "novamente; o Companion retomará o mesmo download."
@@ -72,6 +85,7 @@ class SessionDesktopBridge(DesktopBridge):
             expected_version=VERSION,
         )
         self._last_maintenance_operation_id: str | None = None
+        self._maintenance_handoff_process: subprocess.Popen | None = None
 
     @staticmethod
     def _friendly_network_error(exc: NetworkError) -> RuntimeError:
@@ -82,6 +96,11 @@ class SessionDesktopBridge(DesktopBridge):
             )
         elif exc.code.endswith("_SIZE_EXCEEDED") or exc.code.endswith("_SIZE_MISMATCH"):
             message = "O arquivo baixado não corresponde ao tamanho publicado e foi descartado."
+        elif exc.code.startswith("RUNTIME_RC_"):
+            message = _NETWORK_MESSAGES.get(
+                exc.code,
+                "O pacote de transcrição desta versão falhou na validação e não foi instalado.",
+            )
         else:
             message = _NETWORK_MESSAGES.get(
                 exc.code,
@@ -135,7 +154,14 @@ class SessionDesktopBridge(DesktopBridge):
             self.paths.cache_root / "maintenance" / "last-operation.json"
         )
 
-    def _wait_maintenance_handoff(self, operation_id: str, timeout: float = 3.0) -> None:
+    def _wait_maintenance_handoff(self, operation_id: str, timeout: float = 15.0) -> None:
+        """Wait until the helper durably owns the operation journal.
+
+        The old three-second blind timeout could report a failed handoff while
+        Windows Defender was still cold-starting the one-file maintenance helper.
+        Track the child process as well: an early exit is immediately actionable,
+        while a live helper gets enough time to create its journal.
+        """
         path = (
             self.paths.cache_root
             / "maintenance"
@@ -143,6 +169,7 @@ class SessionDesktopBridge(DesktopBridge):
             / f"{operation_id}.json"
         )
         deadline = time.monotonic() + timeout
+        delay = 0.05
         while time.monotonic() < deadline:
             value = self._read_maintenance_summary(
                 path,
@@ -150,9 +177,17 @@ class SessionDesktopBridge(DesktopBridge):
             )
             if value is not None:
                 if value.get("status") == "failed":
-                    raise RuntimeError("MAINTENANCE_HANDOFF_FAILED")
+                    code = value.get("error_code")
+                    suffix = f":{code}" if isinstance(code, str) and code else ""
+                    raise RuntimeError(f"MAINTENANCE_HANDOFF_FAILED{suffix}")
                 return
-            time.sleep(0.05)
+            process = self._maintenance_handoff_process
+            if process is not None:
+                returncode = process.poll()
+                if returncode is not None:
+                    raise RuntimeError(f"MAINTENANCE_EXITED_BEFORE_HANDOFF:{returncode}")
+            time.sleep(delay)
+            delay = min(0.25, delay * 1.5)
         raise RuntimeError("MAINTENANCE_HANDOFF_TIMEOUT")
 
     def _offline_snapshot(self, code: str) -> dict[str, object]:
@@ -165,8 +200,6 @@ class SessionDesktopBridge(DesktopBridge):
         try:
             system = SystemTelemetry().snapshot()
         except Exception:
-            # Agent availability must not determine whether the local UI can
-            # render. Telemetry is best-effort and independently degradable.
             system = {}
         whisper_runtime = inspect_whisper_runtime(self.paths.runtime_root, verify_worker=False)
         qwen_runtime = inspect_qwen_runtime(self.paths.runtime_root, verify_worker=False)
@@ -217,10 +250,6 @@ class SessionDesktopBridge(DesktopBridge):
         try:
             return super().logs(level=level, component=component, limit=limit)
         except AgentConnectionError as exc:
-            # Logs already live in the local per-user filesystem. They are most
-            # useful precisely when the Agent is unavailable or its loopback
-            # owner fails verification, so the trusted Desktop reads the same
-            # sanitized log files directly instead of blanking the diagnostics UI.
             rows = SystemLog(self.paths.logs_root).tail(
                 level=level,
                 component=component,
@@ -266,9 +295,37 @@ class SessionDesktopBridge(DesktopBridge):
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
+    @staticmethod
+    def _runtime_rc_fallback_allowed() -> bool:
+        stable = fetch_companion_manifest()
+        return version_tuple(VERSION) > version_tuple(stable.version)
+
+    def _install_runtime_rc_fallback(
+        self,
+        family: str,
+        stable_result: dict[str, object],
+    ) -> dict[str, object]:
+        if stable_result.get("status") == "ready":
+            return stable_result
+        if not self._runtime_rc_fallback_allowed():
+            raise NetworkError("RUNTIME_COMPATIBLE_RELEASE_UNAVAILABLE")
+        result = install_published_runtime_rc(
+            family,
+            runtime_root=self.paths.runtime_root,
+            cache_root=self.paths.cache_root,
+        )
+        return {
+            "accepted": True,
+            "available": True,
+            **result,
+        }
+
     def install_whisper_runtime(self) -> dict[str, object]:
         try:
-            return super().install_whisper_runtime()
+            result = super().install_whisper_runtime()
+            if result.get("accepted") is True or result.get("status") == "ready":
+                return result
+            return self._install_runtime_rc_fallback("whisper", result)
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
@@ -280,7 +337,10 @@ class SessionDesktopBridge(DesktopBridge):
 
     def install_qwen_runtime(self) -> dict[str, object]:
         try:
-            return super().install_qwen_runtime()
+            result = super().install_qwen_runtime()
+            if result.get("accepted") is True or result.get("status") == "ready":
+                return result
+            return self._install_runtime_rc_fallback("qwen", result)
         except NetworkError as exc:
             raise self._friendly_network_error(exc) from None
 
@@ -302,25 +362,43 @@ class SessionDesktopBridge(DesktopBridge):
     def _launch_maintenance(self, arguments: list[str]) -> bool:
         operation_id = uuid4().hex
         self._last_maintenance_operation_id = operation_id
+        helper: Path | None = None
+        process: subprocess.Popen | None = None
         try:
-            launched = super()._launch_maintenance(
+            helper = self._maintenance_helper()
+            process = subprocess.Popen(
                 [
+                    str(helper),
                     *arguments,
                     "--cleanup-self",
                     "--operation-id",
                     operation_id,
-                ]
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=self._maintenance_creationflags(),
             )
+            self._maintenance_handoff_process = process
+            self._wait_maintenance_handoff(operation_id)
+            return True
         except BaseException:
-            shutil.rmtree(
-                Path(tempfile.gettempdir()) / "TDACompanionMaintenance" / operation_id,
-                ignore_errors=True,
+            operation = (
+                self.paths.cache_root
+                / "maintenance"
+                / "operations"
+                / f"{operation_id}.json"
             )
+            process_exited = process is None or process.poll() is not None
+            if not operation.exists() and helper is not None and process_exited:
+                try:
+                    shutil.rmtree(helper.parent, ignore_errors=True)
+                except OSError:
+                    pass
             raise
-        if not launched:
-            raise RuntimeError("MAINTENANCE_LAUNCH_FAILED")
-        self._wait_maintenance_handoff(operation_id)
-        return True
+        finally:
+            self._maintenance_handoff_process = None
 
     def install_update(self) -> dict[str, object]:
         self._last_maintenance_operation_id = None

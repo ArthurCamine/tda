@@ -27,25 +27,13 @@
     </StandardDirectory>
 
     <Component Id="MainExecutable" Directory="INSTALLFOLDER">
-      <File
-        Id="TDACompanionExe"
-        Source="!(bindpath.App)\TDACompanion.exe"
-        KeyPath="yes" />
+      <File Id="TDACompanionExe" Source="!(bindpath.App)\TDACompanion.exe" KeyPath="yes" />
     </Component>
 
     <Component Id="MaintenanceExecutable" Directory="INSTALLFOLDER">
-      <File
-        Id="TDACompanionMaintenanceExe"
-        Source="!(bindpath.App)\TDACompanionMaintenance.exe"
-        KeyPath="yes" />
+      <File Id="TDACompanionMaintenanceExe" Source="!(bindpath.App)\TDACompanionMaintenance.exe" KeyPath="yes" />
     </Component>
 
-    <!-- A second copy of the maintenance helper lives in the MSI Binary table.
-         It runs before InstallInitialize so process cleanup cannot disturb the
-         rollbackable afterInstallInitialize RemoveExistingProducts window. This
-         is essential when the cached MSI for the installed version did not know
-         how to stop a stale Agent. The command only stops Companion processes;
-         MSI-owned Registry/Startup state remains transactional. -->
     <Binary
       Id="TDACompanionMaintenanceUpgradeBinary"
       SourceFile="!(bindpath.App)\TDACompanionMaintenance.exe" />
@@ -98,18 +86,63 @@
         KeyPath="yes" />
     </Component>
 
-    <!-- Run out-of-script before the transaction begins. If process cleanup
-         fails, installation aborts with the old product still intact. -->
+    <!-- $(Version) is a WiX build-time define, deliberately used instead of an
+         MSI property so the deferred verification action receives an immutable
+         literal target without depending on deferred CustomActionData access. -->
     <CustomAction
-      Id="PrepareMajorUpgrade"
+      Id="PrepareInstall"
       BinaryRef="TDACompanionMaintenanceUpgradeBinary"
-      ExeCommand="--prepare-major-upgrade"
+      ExeCommand="--prepare-major-upgrade --target-version $(Version)"
       Execute="immediate"
       Return="check" />
 
-    <!-- Installed helper for an explicit uninstall. MajorUpgrade is handled by
-         the new package's embedded helper above; do not let the cached old MSI
-         mutate state outside the new package's transaction. -->
+    <CustomAction
+      Id="PrepareExplicitUninstall"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--prepare-explicit-uninstall"
+      Execute="immediate"
+      Return="check" />
+
+    <CustomAction
+      Id="VerifyInstalledTarget"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--verify-installed-target --target-version $(Version)"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="check" />
+
+    <CustomAction
+      Id="RollbackInstallationGuard"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--rollback-major-upgrade"
+      Execute="rollback"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <CustomAction
+      Id="CommitInstallationGuard"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--finish-major-upgrade"
+      Execute="commit"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <CustomAction
+      Id="RollbackUninstallGuard"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--rollback-major-upgrade"
+      Execute="rollback"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <CustomAction
+      Id="CommitUninstallGuard"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--finish-major-upgrade"
+      Execute="commit"
+      Impersonate="yes"
+      Return="ignore" />
+
     <CustomAction
       Id="PrepareUninstall"
       FileRef="TDACompanionMaintenanceExe"
@@ -119,21 +152,27 @@
       Return="check" />
 
     <?if $(RollbackProbe) = "1" ?>
-    <!-- Test-only Type 19 failure. It is compiled only into the rollback-probe
-         MSI and runs after the old product has been removed. Because
-         RemoveExistingProducts is inside the transaction, this failure must
-         restore the previous product. Production builds pass RollbackProbe=0. -->
     <CustomAction
       Id="RollbackProbeFailure"
       Error="TDA Companion rollback probe: forced upgrade failure." />
     <?endif ?>
 
     <InstallExecuteSequence>
-      <Custom Action="PrepareMajorUpgrade" Before="InstallInitialize" Condition="WIX_UPGRADE_DETECTED" />
-      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+      <Custom Action="PrepareInstall" Before="InstallInitialize" Condition='NOT (REMOVE="ALL")' />
+      <Custom Action="PrepareExplicitUninstall" Before="InstallInitialize" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+
+      <Custom Action="RollbackInstallationGuard" After="InstallInitialize" Condition='NOT (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+      <Custom Action="RollbackUninstallGuard" After="InstallInitialize" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+
       <?if $(RollbackProbe) = "1" ?>
       <Custom Action="RollbackProbeFailure" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
       <?endif ?>
+
+      <Custom Action="VerifyInstalledTarget" After="InstallFiles" Condition='NOT (REMOVE="ALL")' />
+      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+
+      <Custom Action="CommitInstallationGuard" Before="InstallFinalize" Condition='NOT (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+      <Custom Action="CommitUninstallGuard" Before="InstallFinalize" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
     </InstallExecuteSequence>
 
     <Feature Id="MainFeature" Title="TDA Companion" Level="1">

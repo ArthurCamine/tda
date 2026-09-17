@@ -64,11 +64,14 @@ def _atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{uuid4().hex}.partial")
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def inspect_qwen_runtime(runtime_root: Path, *, verify_worker: bool = False) -> dict[str, str | None]:
@@ -113,6 +116,17 @@ def inspect_qwen_runtime(runtime_root: Path, *, verify_worker: bool = False) -> 
     return {"status": "ready", "version": version, "worker": str(worker.resolve())}
 
 
+def _replacement_allowed(runtime_root: Path, version: str) -> bool:
+    state = inspect_qwen_runtime(runtime_root, verify_worker=True)
+    status = state.get("status")
+    active_version = state.get("version")
+    if status in {"missing", "corrupt"}:
+        return True
+    if active_version != version and status in {"ready", "incompatible"}:
+        return True
+    return False
+
+
 def install_qwen_runtime_archive(
     archive_path: Path,
     runtime_root: Path,
@@ -134,12 +148,11 @@ def install_qwen_runtime_archive(
         raise QwenRuntimeInstallError("QWEN_RUNTIME_HASH_MISMATCH")
 
     target = qwen_version_root(runtime_root, version)
-    replacing = target.exists()
+    replacing = target.exists() or target.is_symlink()
     if replacing:
         if not replace_corrupt:
             raise QwenRuntimeInstallError("QWEN_RUNTIME_VERSION_EXISTS")
-        current = inspect_qwen_runtime(runtime_root, verify_worker=True)
-        if current.get("status") != "corrupt" or current.get("version") != version:
+        if not _replacement_allowed(runtime_root, version):
             raise QwenRuntimeInstallError("QWEN_RUNTIME_REPAIR_NOT_ALLOWED")
 
     parent = target.parent
@@ -174,7 +187,7 @@ def install_qwen_runtime_archive(
                 destination = staging.joinpath(*relative.parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 written = 0
-                with package.open(info, "r") as source, destination.open("wb") as output:
+                with package.open(info, "r") as source, destination.open("xb") as output:
                     while True:
                         chunk = source.read(_COPY_CHUNK)
                         if not chunk:
@@ -219,11 +232,14 @@ def install_qwen_runtime_archive(
         except BaseException:
             if promoted:
                 shutil.rmtree(target, ignore_errors=True)
-            if backup is not None and backup.exists():
+            if backup is not None and (backup.exists() or backup.is_symlink()):
                 os.replace(backup, target)
             raise
         if backup is not None:
-            shutil.rmtree(backup, ignore_errors=True)
+            if backup.is_dir() and not backup.is_symlink():
+                shutil.rmtree(backup, ignore_errors=True)
+            else:
+                backup.unlink(missing_ok=True)
         return marker
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -231,8 +247,6 @@ def install_qwen_runtime_archive(
 
 
 def current_qwen_worker(runtime_root: Path) -> Path | None:
-    # Supervisor execution is an integrity and compatibility boundary: never
-    # return a worker until its bytes and minimum runtime version are accepted.
     state = inspect_qwen_runtime(runtime_root, verify_worker=True)
     worker = state.get("worker")
     return Path(worker) if state.get("status") == "ready" and isinstance(worker, str) else None

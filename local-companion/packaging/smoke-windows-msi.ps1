@@ -23,7 +23,6 @@ $stateRoot = Join-Path $tdaRoot "State"
 $tokenPath = Join-Path $stateRoot "pairing-token.txt"
 $dataRoot = Join-Path $tdaRoot "Data"
 $keepMarker = Join-Path $dataRoot "msi-preserve-marker.txt"
-$diagnostic = Join-Path $env:TEMP "tda-companion-msi-diagnostic.txt"
 $invalidRcArtifact = Join-Path $env:TEMP "tda-invalid-rc-runtime.zip"
 $invalidRcResult = Join-Path $env:TEMP "tda-invalid-rc-runtime-result.json"
 $startMenuShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TDA\TDA Companion.lnk"
@@ -34,14 +33,14 @@ $process = $null
 $installed = $false
 $uninstalled = $false
 
-Remove-Item $diagnostic, $invalidRcArtifact, $invalidRcResult, "$invalidRcResult.partial" -Force -ErrorAction SilentlyContinue
+Remove-Item $invalidRcArtifact, $invalidRcResult, "$invalidRcResult.partial" -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
 Set-Content -Path $keepMarker -Value "preserve-me" -Encoding ascii -NoNewline
 
 function Invoke-Msi([string[]]$Arguments, [string]$ExpectedLog) {
     $result = Start-Process -FilePath "msiexec.exe" -ArgumentList $Arguments -Wait -PassThru
     if ($result.ExitCode -notin @(0, 3010)) {
-        if (Test-Path $ExpectedLog) { Get-Content $ExpectedLog -Tail 120 | Write-Host }
+        if (Test-Path $ExpectedLog) { Get-Content $ExpectedLog -Tail 160 | Write-Host }
         throw "MSI_EXIT_CODE:$($result.ExitCode)"
     }
 }
@@ -53,6 +52,33 @@ function Test-HealthDown {
     } catch {
         return $true
     }
+}
+
+function Get-VerifiedInstalledAgent {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try {
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/health" -Method Get -TimeoutSec 1
+            if (
+                $health.product_id -eq "tda-companion" -and
+                $health.api_version -eq "1" -and
+                $health.service_version -eq $Version -and
+                [int]$health.port -eq $port -and
+                [int]$health.pid -gt 0
+            ) {
+                $candidate = Get-Process -Id ([int]$health.pid) -ErrorAction Stop
+                $candidate.Refresh()
+                if ($candidate.HasExited) { throw "AGENT_EXITED" }
+                if ([IO.Path]::GetFullPath($candidate.Path) -ne [IO.Path]::GetFullPath($installedExe)) {
+                    throw "MSI_INSTALLED_AGENT_PATH_MISMATCH:$($candidate.Path)"
+                }
+                return $candidate
+            }
+        } catch {
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    throw "MSI_DID_NOT_LEAVE_VERIFIED_AGENT_RUNNING"
 }
 
 try {
@@ -73,6 +99,10 @@ try {
     $startup = (Get-ItemProperty -Path $runKey -Name "TDA Companion Agent" -ErrorAction Stop)."TDA Companion Agent"
     if ($startup -notlike "*$Version*TDACompanion.exe*--agent*--startup*") { throw "MSI_STARTUP_REGISTRATION_INVALID" }
 
+    # Installation itself now proves the exact Agent before MSI commit. The smoke
+    # must observe that same surviving Agent rather than starting a duplicate.
+    $process = Get-VerifiedInstalledAgent
+
     Set-Content -Path $invalidRcArtifact -Value "not-a-zip" -Encoding ascii -NoNewline
     $invalidRcHash = (Get-FileHash -Algorithm SHA256 $invalidRcArtifact).Hash.ToLowerInvariant()
     $rcArguments = "--install-rc-runtime whisper --rc-artifact `"$invalidRcArtifact`" --rc-artifact-sha256 $invalidRcHash --rc-result-file `"$invalidRcResult`""
@@ -88,29 +118,8 @@ try {
         throw "MSI_RC_RUNTIME_RESULT_INVALID"
     }
 
-    $process = Start-Process -FilePath $installedExe -ArgumentList @(
-        "--agent",
-        "--diagnostic-file", $diagnostic
-    ) -PassThru
-
-    $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    $ready = $false
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($process.HasExited) { throw "MSI_INSTALLED_COMPANION_EXITED_EARLY:$($process.ExitCode)" }
-        if (Test-Path $diagnostic) {
-            $status = (Get-Content $diagnostic -Raw).Trim()
-            if ($status -eq "READY") {
-                $ready = $true
-                break
-            }
-            if ($status.StartsWith("FAILED")) { throw "MSI_INSTALLED_COMPANION_$status" }
-        }
-        Start-Sleep -Milliseconds 200
-    }
-    if (-not $ready) { throw "MSI_INSTALLED_COMPANION_NOT_READY" }
-
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/health" -Method Get -TimeoutSec 3
-    if ($health.api_version -ne "1" -or $health.service_version -ne $Version) {
+    if ($health.api_version -ne "1" -or $health.service_version -ne $Version -or [int]$health.pid -ne $process.Id) {
         throw "MSI_INSTALLED_HEALTH_MISMATCH"
     }
 
@@ -190,7 +199,7 @@ try {
     if (-not (Test-Path $keepMarker)) { throw "MSI_UNINSTALL_REMOVED_USER_DATA" }
     if ((Get-Content $keepMarker -Raw).Trim() -ne "preserve-me") { throw "MSI_USER_DATA_CHANGED" }
 
-    Write-Host "Installed TDA Companion MSI + subprocess worker + RC setup + acceptance harness + active-Agent uninstall smoke: PASS ($Version)"
+    Write-Host "Installed TDA Companion MSI + pre-commit Agent verification + subprocess worker + guarded uninstall smoke: PASS ($Version)"
 }
 finally {
     if ($process -and -not $process.HasExited) {
@@ -200,7 +209,7 @@ finally {
     if ($installed -and -not $uninstalled -and (Test-Path $installedExe)) {
         try { Invoke-Msi @("/x", "`"$msi`"", "/qn", "/norestart", "/L*v", "`"$uninstallLog`"") $uninstallLog } catch { }
     }
-    Remove-Item $keepMarker, $diagnostic, $invalidRcArtifact, $invalidRcResult, "$invalidRcResult.partial" -Force -ErrorAction SilentlyContinue
+    Remove-Item $keepMarker, $invalidRcArtifact, $invalidRcResult, "$invalidRcResult.partial" -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "TDA Companion MSI uninstall smoke: PASS"
