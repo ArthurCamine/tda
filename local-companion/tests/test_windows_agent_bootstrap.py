@@ -8,19 +8,21 @@ from tda_companion.agent_connection import AgentProbe
 from tda_companion import windows_app
 
 
-def _args():
+def _args(tmp_path):
     return SimpleNamespace(
         port=8765,
-        state_root=SimpleNamespace(__str__=lambda self: "state"),
-        data_root=SimpleNamespace(__str__=lambda self: "data"),
-        logs_root=SimpleNamespace(__str__=lambda self: "logs"),
+        state_root=tmp_path / "State",
+        data_root=tmp_path / "Data",
+        logs_root=tmp_path / "Logs",
         origins=frozenset({windows_app.PRODUCTION_ORIGIN}),
     )
 
 
-@pytest.mark.parametrize("state", ["exact", "compatible", "foreign", "incompatible"])
-def test_existing_listener_is_never_blindly_replaced(monkeypatch, state: str):
-    args = _args()
+@pytest.mark.parametrize("state", ["exact", "foreign", "incompatible"])
+def test_existing_exact_or_unowned_listener_is_never_blindly_replaced(monkeypatch, tmp_path, state: str):
+    args = _args(tmp_path)
+    reconciled: list[bool] = []
+    monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: reconciled.append(True))
     monkeypatch.setattr(
         windows_app,
         "probe_agent",
@@ -33,19 +35,32 @@ def test_existing_listener_is_never_blindly_replaced(monkeypatch, state: str):
     )
 
     assert windows_app.ensure_agent_running(args) is None
+    assert reconciled == [True]
+
+
+def test_old_compatible_agent_is_not_accepted_as_operational_fallback(monkeypatch, tmp_path):
+    args = _args(tmp_path)
+    monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: None)
+    monkeypatch.setattr(
+        windows_app,
+        "probe_agent",
+        lambda *_args, **_kwargs: AgentProbe(
+            "compatible",
+            {"service_version": "0.3.4", "pid": 9320, "port": 8765},
+            "AGENT_VERSION_MISMATCH",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="STALE_AGENT_VERSION_REMAINS"):
+        windows_app.ensure_agent_running(args)
 
 
 def test_unavailable_agent_spawns_and_waits_for_exact_version(monkeypatch, tmp_path):
-    args = SimpleNamespace(
-        port=8765,
-        state_root=tmp_path / "State",
-        data_root=tmp_path / "Data",
-        logs_root=tmp_path / "Logs",
-        origins=frozenset({windows_app.PRODUCTION_ORIGIN}),
-    )
+    args = _args(tmp_path)
     process = SimpleNamespace(poll=lambda: None)
     observed = {}
 
+    monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: None)
     monkeypatch.setattr(
         windows_app,
         "probe_agent",
