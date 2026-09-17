@@ -150,6 +150,28 @@ def test_qwen_runtime_can_atomically_repair_corrupt_current_version(tmp_path: Pa
     assert not list((runtime_root / "qwen").glob("*.partial"))
 
 
+def test_qwen_orphaned_target_without_selector_can_be_repaired(tmp_path: Path):
+    runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_QWEN_RUNTIME_VERSION
+    orphan = runtime_root / "qwen" / version
+    orphan.mkdir(parents=True)
+    (orphan / "TDAQwenWorker.exe").write_bytes(b"partial-old")
+    assert inspect_qwen_runtime(runtime_root, verify_worker=True)["status"] == "missing"
+
+    replacement = tmp_path / "replacement.zip"
+    digest = _runtime_zip(replacement, payload=b"recovered")
+    install_qwen_runtime_archive(
+        replacement,
+        runtime_root,
+        version=version,
+        expected_sha256=digest,
+        replace_corrupt=True,
+    )
+
+    assert (orphan / "TDAQwenWorker.exe").read_bytes() == b"recovered"
+    assert inspect_qwen_runtime(runtime_root, verify_worker=True)["status"] == "ready"
+
+
 def test_qwen_runtime_refuses_repair_of_healthy_current_version(tmp_path: Path):
     runtime_root = tmp_path / "Runtime"
     archive = tmp_path / "runtime.zip"
