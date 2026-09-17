@@ -53,10 +53,26 @@ def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_pa
     paths.data_root.mkdir(parents=True)
     paths.models_root.mkdir(parents=True)
     paths.runtime_root.mkdir(parents=True)
+    paths.cache_root.mkdir(parents=True)
     (paths.state_root / "settings.json").write_text("keep", encoding="utf-8")
     (paths.data_root / "jobs.sqlite3").write_text("keep", encoding="utf-8")
     (paths.models_root / "model.keep").write_text("keep", encoding="utf-8")
     (paths.runtime_root / "runtime.keep").write_text("keep", encoding="utf-8")
+    maintenance = paths.cache_root / "maintenance"
+    maintenance.mkdir(parents=True)
+    (maintenance / "last-operation.json").write_text("keep", encoding="utf-8")
+
+    # Installed/older update payloads are disposable after 0.3.8 is healthy.
+    for version in ("0.3.1", "0.3.8", "0.3.9"):
+        update_dir = paths.cache_root / "updates" / version
+        update_dir.mkdir(parents=True)
+        (update_dir / "TDACompanion-x64.msi").write_bytes(b"msi")
+    unknown_cache = paths.cache_root / "updates" / "future-channel"
+    unknown_cache.mkdir(parents=True)
+    (unknown_cache / "keep.txt").write_text("keep", encoding="utf-8")
+
+    stale_marker = paths.companion_root / "current-version.txt.partial.1234"
+    stale_marker.write_text("0.3.4", encoding="utf-8")
 
     alive = {9320}
 
@@ -90,11 +106,20 @@ def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_pa
     assert result.applied is True
     assert result.terminated_pids == (9320,)
     assert set(result.removed_entries) == {"0.3.0", "0.3.4"}
+    assert set(result.removed_update_cache_entries) == {"0.3.1", "0.3.8"}
+    assert result.removed_metadata_entries == ("current-version.txt.partial.1234",)
     assert terminated == [9320]
     assert (paths.companion_root / "versions" / "0.3.8").is_dir()
     assert not (paths.companion_root / "versions" / "0.3.0").exists()
     assert not (paths.companion_root / "versions" / "0.3.4").exists()
     assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.8"
+    assert not stale_marker.exists()
+
+    assert not (paths.cache_root / "updates" / "0.3.1").exists()
+    assert not (paths.cache_root / "updates" / "0.3.8").exists()
+    assert (paths.cache_root / "updates" / "0.3.9" / "TDACompanion-x64.msi").is_file()
+    assert (unknown_cache / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert (maintenance / "last-operation.json").read_text(encoding="utf-8") == "keep"
 
     assert (paths.state_root / "settings.json").read_text(encoding="utf-8") == "keep"
     assert (paths.data_root / "jobs.sqlite3").read_text(encoding="utf-8") == "keep"
