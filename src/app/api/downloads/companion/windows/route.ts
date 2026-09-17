@@ -1,8 +1,8 @@
 import {
 	isCompanionInstallableTag,
 	selectCompanionInstallableAssetInfo,
-	selectLatestCompanionInstallableRelease,
 } from "@/features/edit/processing/companion-release";
+import { selectLatestCompanionStableRelease } from "@/features/edit/processing/companion-stable-release";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,13 +19,13 @@ const NO_STORE_HEADERS = {
 	Pragma: "no-cache",
 };
 
-async function latestInstallable() {
+async function latestStable() {
 	const response = await fetch(RELEASES_URL, {
 		headers: GITHUB_HEADERS,
 		cache: "no-store",
 	});
 	if (!response.ok) throw new Error("COMPANION_RELEASE_LOOKUP_FAILED");
-	return selectLatestCompanionInstallableRelease(await response.json());
+	return selectLatestCompanionStableRelease(await response.json());
 }
 
 export async function GET(request: Request) {
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 		}
 
 		if (!requestedVersion && !requestedTag) {
-			const latest = await latestInstallable();
+			const latest = await latestStable();
 			if (!latest) {
 				return Response.json(
 					{ error: "COMPANION_RELEASE_NOT_FOUND" },
