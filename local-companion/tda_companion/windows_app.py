@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from . import VERSION
 from .agent import AgentController, wait_until_ready
 from .agent_connection import probe_agent
+from .installation_lock import installation_reconcile_lock
 from .installed_acceptance import (
     REQUIRED_OBSERVATIONS,
     InstalledAcceptanceError,
@@ -120,12 +121,13 @@ def _paths_for_args(args: argparse.Namespace) -> CompanionPaths:
 
 
 def _reconcile_installation(paths: CompanionPaths) -> ReconcileResult:
-    return reconcile_packaged_installation(
-        paths,
-        VERSION,
-        Path(sys.executable),
-        current_pid=os.getpid(),
-    )
+    with installation_reconcile_lock():
+        return reconcile_packaged_installation(
+            paths,
+            VERSION,
+            Path(sys.executable),
+            current_pid=os.getpid(),
+        )
 
 
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
