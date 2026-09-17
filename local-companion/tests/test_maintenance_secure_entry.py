@@ -65,6 +65,47 @@ def test_secure_maintenance_never_reads_or_posts_pairing_token(tmp_path: Path, m
     assert alive == {111}
 
 
+def test_major_upgrade_stops_old_processes_without_deleting_msi_owned_startup(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    legacy = secure.legacy
+    alive = {222}
+    terminated: list[int] = []
+
+    monkeypatch.setattr(
+        legacy,
+        "_remove_startup_value",
+        lambda: pytest.fail("MajorUpgrade must leave MSI-owned Startup state to MSI rollback"),
+    )
+    monkeypatch.setattr(legacy, "_installed_companion_pids", lambda _root: sorted(alive))
+    monkeypatch.setattr(secure.os, "getpid", lambda: 111)
+
+    def terminate(pid: int):
+        terminated.append(pid)
+        alive.discard(pid)
+
+    monkeypatch.setattr(legacy, "_terminate_pid", terminate)
+    monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
+
+    secure.prepare_major_upgrade(tmp_path, 8765)
+
+    assert terminated == [222]
+    assert alive == set()
+
+
+def test_major_upgrade_cli_is_owned_by_secure_wrapper(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    observed: list[Path] = []
+    monkeypatch.setattr(secure, "prepare_major_upgrade", lambda root: observed.append(root))
+    monkeypatch.setattr(
+        secure.legacy,
+        "main",
+        lambda _argv: pytest.fail("legacy parser must not receive --prepare-major-upgrade"),
+    )
+
+    assert secure.main(["--prepare-major-upgrade", "--root", str(tmp_path)]) == 0
+    assert observed == [tmp_path.resolve()]
+
+
 def test_secure_maintenance_fails_closed_when_old_process_survives(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
     legacy = secure.legacy
