@@ -399,7 +399,11 @@ class DesktopBridge:
                 "version": manifest.version,
             }
         target = self.paths.runtime_root / "whisper" / manifest.version
-        repairing = target.exists() or target.is_symlink()
+        repairing = bool(
+            (state.get("status") == "corrupt" and state.get("version") == manifest.version)
+            or target.exists()
+            or target.is_symlink()
+        )
         archive = download_whisper_runtime(manifest, self.paths.cache_root)
         installed = install_whisper_runtime_archive(
             archive,
@@ -455,7 +459,11 @@ class DesktopBridge:
                 "version": manifest.version,
             }
         target = self.paths.runtime_root / "qwen" / manifest.version
-        repairing = target.exists() or target.is_symlink()
+        repairing = bool(
+            (state.get("status") == "corrupt" and state.get("version") == manifest.version)
+            or target.exists()
+            or target.is_symlink()
+        )
         archive = download_qwen_runtime(manifest, self.paths.cache_root)
         installed = install_qwen_runtime_archive(
             archive,
