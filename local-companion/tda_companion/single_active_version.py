@@ -168,12 +168,14 @@ def _valid_installed_versions(paths: CompanionPaths) -> dict[str, Path]:
 def authoritative_installed_version(paths: CompanionPaths, running_version: str) -> tuple[str, Path]:
     """Never let an older executable downgrade a valid newer installation."""
     _version_tuple(running_version)
-    installed = _valid_installed_versions(paths)
     running_root = paths.companion_root / "versions" / running_version
-    if running_version not in installed and _complete_installed_version(running_root):
-        installed[running_version] = running_root / "TDACompanion.exe"
-    if not installed:
-        raise SingleActiveVersionError("NO_VALID_INSTALLED_VERSION")
+    # Do not kill another working version or delete anything if the executable
+    # that is currently trying to reconcile came from a torn/partial directory.
+    # Recovery of the target installation must happen before destructive cleanup.
+    if not _complete_installed_version(running_root):
+        raise SingleActiveVersionError("TARGET_INSTALLATION_INCOMPLETE")
+    installed = _valid_installed_versions(paths)
+    installed[running_version] = running_root / "TDACompanion.exe"
     active = max(installed, key=_version_tuple)
     return active, installed[active]
 
@@ -343,8 +345,6 @@ def terminate_non_target_processes(
     scan = scan or (lambda: scan_installed_companion_processes(paths))
     terminated: list[int] = []
 
-    # Re-scan after every round. This both proves the post-condition and catches
-    # an old Startup entry racing the new process during recovery.
     for attempt in range(3):
         stale = [
             process
@@ -496,14 +496,7 @@ def reconcile_packaged_installation(
     remove_entry: Callable[[Path], None] = _remove_entry,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ReconcileResult:
-    """Converge an installed Companion to one active version without downgrading.
-
-    Development/module execution is ignored. During a transactional upgrade only
-    the candidate named by the installation guard may start, and it must not
-    mutate MSI-owned version state before commit. Outside maintenance, the newest
-    valid installed version is authoritative: launching an older binary redirects
-    forward instead of deleting the newer installation.
-    """
+    """Converge an installed Companion to one active version without downgrading."""
 
     belongs, running_version = installed_image_identity(
         executable,
