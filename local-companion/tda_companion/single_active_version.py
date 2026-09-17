@@ -4,14 +4,18 @@ import os
 import re
 import shutil
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 from .paths import CompanionPaths
 
 _VERSION_DIR = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _COMPANION_EXE = "tdacompanion.exe"
+_RECONCILE_MUTEX = r"Local\TDACompanion.SingleActiveVersion"
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_ABANDONED = 0x00000080
 
 
 class SingleActiveVersionError(RuntimeError):
@@ -33,6 +37,31 @@ class ReconcileResult:
     target_version: str
     terminated_pids: tuple[int, ...] = ()
     removed_entries: tuple[str, ...] = ()
+
+
+@contextmanager
+def _reconcile_lock(timeout_seconds: float = 15.0) -> Iterator[None]:
+    """Serialize packaged repair between Startup, Agent and UI processes."""
+    if os.name != "nt":
+        yield
+        return
+
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateMutexW(None, False, _RECONCILE_MUTEX)
+    if not handle:
+        raise SingleActiveVersionError("RECONCILE_LOCK_CREATE_FAILED")
+    try:
+        result = int(kernel32.WaitForSingleObject(handle, max(1, int(timeout_seconds * 1000))))
+        if result not in {_WAIT_OBJECT_0, _WAIT_ABANDONED}:
+            raise SingleActiveVersionError("RECONCILE_LOCK_TIMEOUT")
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _normalized_absolute(path: str | Path) -> str:
@@ -212,9 +241,12 @@ def cleanup_non_target_versions(
 def _write_current_version(paths: CompanionPaths, target_version: str) -> None:
     marker = paths.companion_root / "current-version.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
-    temporary = marker.with_name(marker.name + ".partial")
-    temporary.write_text(target_version + "\n", encoding="utf-8")
-    os.replace(temporary, marker)
+    temporary = marker.with_name(f"{marker.name}.partial.{os.getpid()}")
+    try:
+        temporary.write_text(target_version + "\n", encoding="utf-8")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def reconcile_packaged_installation(
@@ -243,24 +275,25 @@ def reconcile_packaged_installation(
     if not belongs or running_version != target_version:
         return ReconcileResult(applied=False, target_version=target_version)
 
-    terminated = terminate_non_target_processes(
-        paths,
-        target_version,
-        current_pid=current_pid,
-        scan=scan,
-        terminate_pid=terminate_pid,
-        sleep=sleep,
-    )
-    removed = cleanup_non_target_versions(
-        paths,
-        target_version,
-        remove_entry=remove_entry,
-        sleep=sleep,
-    )
-    _write_current_version(paths, target_version)
-    return ReconcileResult(
-        applied=True,
-        target_version=target_version,
-        terminated_pids=terminated,
-        removed_entries=removed,
-    )
+    with _reconcile_lock():
+        terminated = terminate_non_target_processes(
+            paths,
+            target_version,
+            current_pid=current_pid,
+            scan=scan,
+            terminate_pid=terminate_pid,
+            sleep=sleep,
+        )
+        removed = cleanup_non_target_versions(
+            paths,
+            target_version,
+            remove_entry=remove_entry,
+            sleep=sleep,
+        )
+        _write_current_version(paths, target_version)
+        return ReconcileResult(
+            applied=True,
+            target_version=target_version,
+            terminated_pids=terminated,
+            removed_entries=removed,
+        )
