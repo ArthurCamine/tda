@@ -290,10 +290,25 @@ def test_stale_guard_is_self_cleaned_and_does_not_brick_startup(tmp_path: Path):
     assert not guard.exists()
 
 
-def test_recent_guard_is_self_cleaned_when_msi_transaction_is_gone(tmp_path: Path, monkeypatch):
+def test_fresh_guard_is_kept_during_msi_visibility_grace(tmp_path: Path, monkeypatch):
     paths = _paths(tmp_path)
     target = _installed_executable(paths, "0.3.8")
     guard = _write_guard(paths, "major_upgrade", "0.3.8")
+    monkeypatch.setattr(sav, "_guard_transaction_active", lambda: False)
+
+    result = reconcile_packaged_installation(paths, "0.3.8", target, scan=lambda: [], sleep=lambda _s: None)
+
+    assert result.applied is False
+    assert guard.exists()
+
+
+def test_guard_is_self_cleaned_after_grace_when_msi_transaction_is_gone(tmp_path: Path, monkeypatch):
+    paths = _paths(tmp_path)
+    target = _installed_executable(paths, "0.3.8")
+    guard = _write_guard(paths, "major_upgrade", "0.3.8")
+    value = json.loads(guard.read_text(encoding="utf-8"))
+    value["created_at"] = time.time() - sav._INSTALL_GUARD_GRACE_SECONDS - 1.0
+    guard.write_text(json.dumps(value), encoding="utf-8")
     monkeypatch.setattr(sav, "_guard_transaction_active", lambda: False)
 
     result = reconcile_packaged_installation(paths, "0.3.8", target, scan=lambda: [], sleep=lambda _s: None)
