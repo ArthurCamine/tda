@@ -91,7 +91,7 @@ function Assert-RegistryValueSnapshot(
     if ([bool]$actual.Exists -ne [bool]$Expected.Exists) {
         throw "$Code`:EXISTENCE_CHANGED"
     }
-    if ($actual.Exists -and ([string]$actual.Value -cne [string]$Expected.Value)) {
+    if ($actual.Exists -and ([string]$actual.Value -cne [string]$Expected.Value) {
         throw "$Code`:VALUE_CHANGED"
     }
 }
@@ -114,25 +114,45 @@ function Current-MaintenanceExe {
     return Join-Path $tdaRoot "Companion\versions\$CurrentVersion\TDACompanionMaintenance.exe"
 }
 
-function Start-PreviousAgent([string]$Executable) {
-    # Match the field failure: old installed Agent launched as the Startup service.
-    $process = Start-Process -FilePath $Executable -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
+function Get-VerifiedAgent([string]$ExpectedVersion, [string]$ExpectedExecutable, [string]$Code) {
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     while ([DateTime]::UtcNow -lt $deadline) {
-        $process.Refresh()
-        if ($process.HasExited) {
-            throw "PREVIOUS_AGENT_EXITED_EARLY:$($process.ExitCode)"
-        }
         try {
-            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/v1/health" -UseBasicParsing -TimeoutSec 1
-            if ($response.StatusCode -eq 200) {
-                return $process
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/health" -Method Get -TimeoutSec 1
+            if (
+                $health.product_id -eq "tda-companion" -and
+                [string]$health.api_version -eq "1" -and
+                $health.service_version -eq $ExpectedVersion -and
+                [int]$health.port -eq 8765 -and
+                [int]$health.pid -gt 0
+            ) {
+                $candidate = Get-Process -Id ([int]$health.pid) -ErrorAction Stop
+                $candidate.Refresh()
+                if ($candidate.HasExited) { throw "AGENT_EXITED" }
+                if ([IO.Path]::GetFullPath($candidate.Path) -ne [IO.Path]::GetFullPath($ExpectedExecutable)) {
+                    throw "$Code`:PATH_MISMATCH:$($candidate.Path)"
+                }
+                return $candidate
             }
         } catch {}
         Start-Sleep -Milliseconds 150
     }
-    try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
-    throw "PREVIOUS_AGENT_START_TIMEOUT"
+    throw $Code
+}
+
+function Start-PreviousAgent([string]$Executable) {
+    # Match the field failure: old installed Agent launched as the Startup service.
+    $process = Start-Process -FilePath $Executable -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
+    try {
+        $verified = Get-VerifiedAgent $previousVersion $Executable "PREVIOUS_AGENT_START_TIMEOUT"
+        if ($verified.Id -ne $process.Id) {
+            throw "PREVIOUS_AGENT_PID_MISMATCH:$($verified.Id):$($process.Id)"
+        }
+        return $process
+    } catch {
+        try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+        throw
+    }
 }
 
 function Assert-ProcessExited($Process, [string]$Code) {
@@ -205,8 +225,11 @@ try {
     Assert-RegistryValueSnapshot $runKey "TDA Companion Agent" $baselineStartup "ROLLBACK_STARTUP"
     if (-not (Test-Path $shortcut)) { throw "ROLLBACK_SHORTCUT_NOT_RESTORED" }
 
-    # Repeat with a live old Agent for the successful MajorUpgrade path.
-    $upgradeAgent = Start-PreviousAgent $previousExe
+    # A failed direct MSI must return the surviving product to an operational
+    # background state; requiring the user to relaunch/reboot is not rollback.
+    $upgradeAgent = Get-VerifiedAgent $previousVersion $previousExe "ROLLBACK_PREVIOUS_AGENT_NOT_RESTARTED"
+
+    # Reuse the rollback-restored Agent for the successful MajorUpgrade path.
     Invoke-Msi @("/i", "`"$msi`"", "/qn") "03-upgrade-to-$CurrentVersion.log"
     Assert-ProcessExited $upgradeAgent "UPGRADE_OLD_AGENT_SURVIVED_PREPARE_MAJOR_UPGRADE"
 
@@ -256,7 +279,7 @@ try {
     if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
     if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
-    Write-Host "TDA Companion rollback, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
+    Write-Host "TDA Companion rollback, Agent recovery, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {
     try {
