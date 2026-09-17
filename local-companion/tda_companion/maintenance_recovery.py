@@ -13,6 +13,16 @@ from .single_active_version import installed_image_identity
 _OPERATION_ID = re.compile(r"^[0-9a-f]{32}$")
 _STALE_SECONDS = 120.0
 _MAX_BYTES = 64 * 1024
+# Only these running stages prove that msiexec already returned successfully.
+# Earlier stages can describe a same-version repair that never actually ran, so
+# filesystem equality alone must never turn them into a false success receipt.
+_UPDATE_COMMIT_PROVABLE_STAGES = frozenset(
+    {
+        "verifying_install",
+        "verifying_agent",
+        "restarting_ui",
+    }
+)
 
 
 def _read(path: Path) -> dict[str, Any] | None:
@@ -52,6 +62,11 @@ def recover_interrupted_maintenance(
     is present and close the journal as recovered. If the previous version is the
     one that survived, the journal is closed as failed/rolled back. Fresh journals
     are left untouched so a concurrently running helper is never second-guessed.
+
+    A same-version installation is not proof by itself: repair/reinstall attempts
+    may have had the target files before msiexec was ever launched. Therefore a
+    stale update is only recovered as completed from a stage reached *after*
+    msiexec returned successfully.
     """
     belongs, running_version = installed_image_identity(
         executable,
@@ -96,16 +111,27 @@ def recover_interrupted_maintenance(
         except OSError:
             installed_marker = ""
         target_executable = paths.companion_root / "versions" / current_version / "TDACompanion.exe"
-        if (
+        target_survived = bool(
             target_version == current_version
             and installed_marker == current_version
             and target_executable.is_file()
             and target_executable.resolve() == executable.resolve()
-        ):
+        )
+
+        if target_survived and stage in _UPDATE_COMMIT_PROVABLE_STAGES:
             recovered["status"] = "completed"
             recovered["stage"] = "recovered_after_interruption"
             recovered["error_code"] = None
             recovered["recovery"] = "target_installation_survived"
+        elif target_survived:
+            # The target already being present is ambiguous for a same-version
+            # repair. Preserve that truth instead of claiming either success or
+            # MSI rollback without evidence.
+            recovered["status"] = "failed"
+            recovered["stage"] = "failed"
+            recovered["failure_stage"] = stage
+            recovered["error_code"] = "UPDATE_INTERRUPTED_UNVERIFIED"
+            recovered["recovery"] = "target_present_but_completion_unproven"
         else:
             recovered["status"] = "failed"
             recovered["stage"] = "failed"
