@@ -16,6 +16,7 @@ _COMPANION_EXE = "tdacompanion.exe"
 _RECONCILE_MUTEX = r"Local\TDACompanion.SingleActiveVersion"
 _WAIT_OBJECT_0 = 0x00000000
 _WAIT_ABANDONED = 0x00000080
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 class SingleActiveVersionError(RuntimeError):
@@ -76,6 +77,31 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
 
 
+def _windows_process_image(pid: int) -> Path | None:
+    """Query the OS image path without requiring the executable to exist on disk."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return None
+        try:
+            length = wintypes.DWORD(32768)
+            buffer = ctypes.create_unicode_buffer(length.value)
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(length)):
+                return None
+            value = buffer.value.strip()
+            return Path(value) if value else None
+        finally:
+            kernel32.CloseHandle(handle)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 def installed_image_identity(
     image_path: str | Path,
     versions_root: Path,
@@ -109,6 +135,7 @@ def scan_installed_companion_processes(
     paths: CompanionPaths,
     *,
     process_iter: Callable[[], Iterable[Any]] | None = None,
+    windows_image_lookup: Callable[[int], Path | None] = _windows_process_image,
 ) -> list[InstalledCompanionProcess]:
     if process_iter is None:
         try:
@@ -127,20 +154,28 @@ def scan_installed_companion_processes(
         try:
             info = getattr(process, "info", {}) or {}
             pid = int(info.get("pid") or getattr(process, "pid"))
-            image = info.get("exe")
-            if not image:
-                image = process.exe()
-            if not image:
-                continue
-            belongs, version = installed_image_identity(image, paths.companion_root / "versions")
-            if belongs:
-                result.append(InstalledCompanionProcess(pid=pid, image_path=Path(image), version=version))
         except (AttributeError, OSError, TypeError, ValueError):
             continue
-        except BaseException:
-            # Process tables are inherently racy. A process disappearing while
-            # being inspected is not an installation failure.
+
+        image = info.get("exe")
+        if not image:
+            try:
+                image = process.exe()
+            except (AttributeError, OSError, TypeError, ValueError):
+                image = None
+            except BaseException:
+                image = None
+        if not image:
+            image = windows_image_lookup(pid)
+        if not image:
             continue
+
+        try:
+            belongs, version = installed_image_identity(image, paths.companion_root / "versions")
+        except (OSError, TypeError, ValueError):
+            continue
+        if belongs:
+            result.append(InstalledCompanionProcess(pid=pid, image_path=Path(image), version=version))
     return result
 
 
