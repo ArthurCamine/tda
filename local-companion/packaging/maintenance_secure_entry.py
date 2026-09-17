@@ -25,6 +25,11 @@ _WAIT_OBJECT_0 = 0x00000000
 _WAIT_ABANDONED = 0x00000080
 _WAIT_TIMEOUT = 0x00000102
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+_REQUIRED_VERSION_FILES = (
+    "TDACompanion.exe",
+    "TDACompanionMaintenance.exe",
+    "_internal/base_library.zip",
+)
 
 
 @contextmanager
@@ -124,6 +129,44 @@ def _clear_guard(root: Path) -> None:
         pass
 
 
+def _normalized(path: str | Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path))).casefold()
+
+
+def _installed_image_version(root: Path, image: str | Path) -> str | None:
+    """Accept only <root>/Companion/versions/<semver>/TDACompanion.exe."""
+    versions = _normalized(root / "Companion" / "versions").rstrip("\\/")
+    actual = _normalized(image)
+    prefix = versions + os.sep.casefold()
+    if not actual.startswith(prefix):
+        return None
+    relative = actual[len(prefix) :]
+    parts = tuple(part for part in re.split(r"[\\/]", relative) if part)
+    if (
+        len(parts) != 2
+        or _VERSION.fullmatch(parts[0]) is None
+        or parts[1].casefold() != "tdacompanion.exe"
+    ):
+        return None
+    return parts[0]
+
+
+def _complete_installed_version(root: Path, version: str) -> bool:
+    if _VERSION.fullmatch(version) is None:
+        return False
+    version_root = root / "Companion" / "versions" / version
+    try:
+        if not version_root.is_dir() or version_root.is_symlink():
+            return False
+        for relative in _REQUIRED_VERSION_FILES:
+            path = version_root.joinpath(*relative.split("/"))
+            if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
+                return False
+        return True
+    except OSError:
+        return False
+
+
 def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
     if os.name != "nt":
         return legacy._installed_companion_pids(root), []
@@ -133,8 +176,6 @@ def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
     if snapshot == legacy.INVALID_HANDLE_VALUE:
         raise legacy.MaintenanceError("TDA_PROCESS_SCAN_FAILED")
 
-    versions = (root / "Companion" / "versions").resolve()
-    prefix = (os.path.normcase(str(versions)).rstrip("\\/") + os.sep).casefold()
     installed: list[int] = []
     unresolved: list[int] = []
     entry = legacy.PROCESSENTRY32W()
@@ -150,10 +191,8 @@ def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
                     image = legacy._process_image(pid)
                     if image is None:
                         unresolved.append(pid)
-                    else:
-                        normalized = os.path.normcase(str(image)).casefold()
-                        if normalized.startswith(prefix):
-                            installed.append(pid)
+                    elif _installed_image_version(root, image) is not None:
+                        installed.append(pid)
             ok = kernel32.Process32NextW(snapshot, legacy.ctypes.byref(entry))
     finally:
         kernel32.CloseHandle(snapshot)
@@ -171,10 +210,7 @@ def _verified_process_image(root: Path, pid: int) -> Path:
     image = legacy._process_image(pid)
     if image is None:
         raise legacy.MaintenanceError("TDA_PROCESS_IDENTITY_UNVERIFIED")
-    versions = (root / "Companion" / "versions").resolve()
-    prefix = (os.path.normcase(str(versions)).rstrip("\\/") + os.sep).casefold()
-    normalized = os.path.normcase(str(image)).casefold()
-    if not normalized.startswith(prefix):
+    if _installed_image_version(root, image) is None:
         raise legacy.MaintenanceError("TDA_PROCESS_IDENTITY_CHANGED")
     return image
 
@@ -231,9 +267,6 @@ def _stop_installed_processes(
 
 
 def prepare_major_upgrade(root: Path, port: int = 8765, target_version: str | None = None) -> None:
-    # Serialize with application startup/reconciliation. The guard is created
-    # while the mutex is held so an old UI cannot observe the Agent gap and race
-    # the MSI by respawning itself between quiescence checks.
     with _installation_reconcile_lock():
         _begin_guard(root, "major_upgrade", target_version)
         try:
@@ -244,7 +277,6 @@ def prepare_major_upgrade(root: Path, port: int = 8765, target_version: str | No
 
 
 def prepare_explicit_uninstall(root: Path) -> None:
-    """Guard direct MSI/Control Panel uninstall before its transaction begins."""
     with _installation_reconcile_lock():
         _begin_guard(root, "uninstall", None)
         try:
@@ -265,10 +297,6 @@ def finish_major_upgrade(root: Path) -> None:
 
 
 def rollback_major_upgrade(root: Path, port: int = 8765) -> None:
-    # Candidate processes must be gone before the rollback is considered done.
-    # Once Windows Installer has restored the previous product, clear the guard
-    # and revive its Agent so a failed direct MSI upgrade does not leave a valid
-    # installation mysteriously offline until the next login/relaunch.
     try:
         with _installation_reconcile_lock():
             _stop_installed_processes(root)
@@ -297,7 +325,6 @@ def _target_health(port: int) -> dict[str, object] | None:
 
 
 def _listener_owned_by(port: int, pid: int) -> bool:
-    """Bind health identity to the actual IPv4 loopback LISTEN owner."""
     try:
         owners: set[int] = set()
         for connection in psutil.net_connections(kind="tcp"):
@@ -356,7 +383,7 @@ def _wait_for_target_agent(
     port: int,
     process,
     *,
-    timeout: float = 12.0,
+    timeout: float = 15.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -403,9 +430,9 @@ def _spawn_target_agent(executable: Path, expected_version: str, port: int):
 def verify_installed_target(root: Path, expected_version: str, port: int = 8765) -> None:
     if _VERSION.fullmatch(expected_version) is None:
         raise legacy.MaintenanceError("UPDATE_VERSION_INVALID")
+    if not _complete_installed_version(root, expected_version):
+        raise legacy.MaintenanceError("UPDATED_INSTALLATION_INCOMPLETE")
     executable = root / "Companion" / "versions" / expected_version / "TDACompanion.exe"
-    if not executable.is_file():
-        raise legacy.MaintenanceError("UPDATED_EXECUTABLE_MISSING")
     if _health_matches_target(executable, expected_version, port):
         return
     if not _port_is_free(port):
@@ -419,12 +446,9 @@ def _surviving_install(root: Path) -> tuple[str, Path] | None:
         version = marker.read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    if _VERSION.fullmatch(version) is None:
+    if not _complete_installed_version(root, version):
         return None
-    executable = root / "Companion" / "versions" / version / "TDACompanion.exe"
-    if not executable.is_file():
-        return None
-    return version, executable
+    return version, root / "Companion" / "versions" / version / "TDACompanion.exe"
 
 
 def _restart_surviving_agent(root: Path, port: int) -> Path | None:
@@ -481,9 +505,6 @@ def install_update(
             if not msi.is_file() or legacy._sha256(msi).casefold() != expected_sha256.casefold():
                 raise legacy.MaintenanceError("UPDATE_HASH_MISMATCH")
 
-            # MSI owns the guarded process shutdown. Avoid a pre-MSI gap where
-            # another Startup/UI instance could respawn the old Agent before the
-            # installation transaction establishes its guard.
             journal.stage("running_msi")
             msi_exit_code = legacy._run_msiexec(["/i", str(msi), "/passive"], log_path)
             journal.stage("verifying_install", msi_exit_code=msi_exit_code)
@@ -492,9 +513,9 @@ def install_update(
             installed = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
             if installed != expected_version:
                 raise legacy.MaintenanceError("UPDATE_VERSION_MISMATCH")
+            if not _complete_installed_version(root, expected_version):
+                raise legacy.MaintenanceError("UPDATED_INSTALLATION_INCOMPLETE")
             executable = root / "Companion" / "versions" / expected_version / "TDACompanion.exe"
-            if not executable.is_file():
-                raise legacy.MaintenanceError("UPDATED_EXECUTABLE_MISSING")
 
             journal.stage("verifying_agent")
             if not _health_matches_target(executable, expected_version, port):
@@ -521,9 +542,6 @@ def install_update(
                     },
                 )
             except OSError:
-                # The operation journal is authoritative. A supplemental receipt
-                # failing after a verified install must not retroactively turn a
-                # successful update into a failed/rollback-looking operation.
                 pass
         except BaseException as exc:
             journal.fail(exc)
