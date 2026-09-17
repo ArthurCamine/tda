@@ -67,3 +67,13 @@ def test_stable_promotion_is_manual_receipt_gated_content_equivalent_and_never_r
         line for line in value.splitlines() if "gh release upload" in line
     )
     assert "actions/checkout@v7" not in value
+
+
+def test_stable_promotion_requires_published_runtimes_meeting_companion_minimums():
+    value = _read("companion-promote.yml")
+    assert "Require compatible stable runtimes" in value
+    assert "MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION" in value
+    assert "MIN_COMPATIBLE_QWEN_RUNTIME_VERSION" in value
+    assert "companion-whisper-runtime-v" in value
+    assert "companion-qwen-runtime-v" in value
+    assert "COMPANION_STABLE_{family.upper()}_RUNTIME_INCOMPATIBLE" in value
