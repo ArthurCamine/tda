@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -12,17 +14,10 @@ def _other_installed_pids(root: Path) -> list[int]:
     return [pid for pid in legacy._installed_companion_pids(root) if pid != current]
 
 
-def prepare_uninstall(root: Path, port: int = 8765) -> None:
-    """Stop every installed TDA Companion process and prove it is gone.
-
-    Maintenance deliberately does not read or transmit the pairing token. The
-    helper identifies the product by the executable image path under
-    Companion/versions, including a still-running image whose file has already
-    disappeared from disk. A failed termination is a hard stop: update/uninstall
-    must never remove another version while one of its processes is still alive.
-    """
-    del port  # Process ownership, not loopback authentication, is authoritative here.
-    legacy._remove_startup_value()
+def _stop_installed_processes(root: Path, *, remove_startup: bool) -> None:
+    """Stop every installed TDA Companion process and prove it is gone."""
+    if remove_startup:
+        legacy._remove_startup_value()
 
     for attempt in range(4):
         remaining = _other_installed_pids(root)
@@ -34,6 +29,32 @@ def prepare_uninstall(root: Path, port: int = 8765) -> None:
 
     if _other_installed_pids(root):
         raise legacy.MaintenanceError("TDA_PROCESS_STILL_RUNNING")
+
+
+def prepare_major_upgrade(root: Path, port: int = 8765) -> None:
+    """Prepare an MSI MajorUpgrade without mutating MSI-owned registration.
+
+    The helper embedded in the *new* MSI exists specifically to stop processes
+    from an older installed Companion before RemoveExistingProducts. It must not
+    delete Startup/registry values itself: those values are MSI-owned and need to
+    remain inside Windows Installer's rollback transaction. Process state is the
+    only external state changed here.
+    """
+    del port
+    _stop_installed_processes(root, remove_startup=False)
+
+
+def prepare_uninstall(root: Path, port: int = 8765) -> None:
+    """Stop every installed TDA Companion process before explicit uninstall.
+
+    Maintenance deliberately does not read or transmit the pairing token. The
+    helper identifies the product by executable image path under
+    Companion/versions, including a still-running image whose file has already
+    disappeared from disk. A failed termination is a hard stop: update/uninstall
+    must never remove another version while one of its processes is still alive.
+    """
+    del port  # Process ownership, not loopback authentication, is authoritative here.
+    _stop_installed_processes(root, remove_startup=True)
 
 
 def _target_health(port: int) -> dict[str, object] | None:
@@ -101,13 +122,7 @@ def install_update(
     port: int,
     operation_id: str | None = None,
 ) -> None:
-    """Install one target version and prove that version is actually running.
-
-    The new Agent performs its own Single Active Version reconciliation during
-    bootstrap. Therefore reaching exact health here also proves that stale
-    installed processes/directories did not prevent the target from becoming the
-    operational version. The UI is opened only after this gate passes.
-    """
+    """Install one target version and prove that version is actually running."""
     operation_id = legacy._normalize_operation_id(operation_id)
     journal = legacy.MaintenanceJournal(
         root,
@@ -188,8 +203,27 @@ legacy.prepare_uninstall = prepare_uninstall
 legacy.install_update = install_update
 
 
+def _prepare_major_upgrade_main(argv: list[str]) -> int | None:
+    if "--prepare-major-upgrade" not in argv:
+        return None
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--prepare-major-upgrade", action="store_true")
+    parser.add_argument("--root", type=Path)
+    try:
+        args = parser.parse_args(argv)
+        root = (args.root or legacy.local_root()).resolve()
+        prepare_major_upgrade(root)
+        return 0
+    except BaseException:
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    return legacy.main(argv)
+    values = list(sys.argv[1:] if argv is None else argv)
+    major_upgrade = _prepare_major_upgrade_main(values)
+    if major_upgrade is not None:
+        return major_upgrade
+    return legacy.main(values)
 
 
 if __name__ == "__main__":
