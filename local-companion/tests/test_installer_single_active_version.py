@@ -23,14 +23,15 @@ def test_every_install_is_guarded_before_transaction_and_candidate_verified_befo
 
     prepare = _action(source, "PrepareInstall")
     assert 'BinaryRef="TDACompanionMaintenanceUpgradeBinary"' in prepare
-    assert 'ExeCommand="--prepare-major-upgrade --target-version [ProductVersion]"' in prepare
+    assert 'ExeCommand="--prepare-major-upgrade --target-version $(Version)"' in prepare
     assert 'Execute="immediate"' in prepare
     assert 'Return="check"' in prepare
     assert '<Custom Action="PrepareInstall" Before="InstallInitialize" Condition=\'NOT (REMOVE="ALL")\' />' in source
 
     verify = _action(source, "VerifyInstalledTarget")
     assert 'BinaryRef="TDACompanionMaintenanceUpgradeBinary"' in verify
-    assert 'ExeCommand="--verify-installed-target --target-version [ProductVersion]"' in verify
+    assert 'ExeCommand="--verify-installed-target --target-version $(Version)"' in verify
+    assert '[ProductVersion]' not in verify
     assert 'Execute="deferred"' in verify
     assert 'Return="check"' in verify
     assert '<Custom Action="VerifyInstalledTarget" After="InstallFiles" Condition=\'NOT (REMOVE="ALL")\' />' in source
