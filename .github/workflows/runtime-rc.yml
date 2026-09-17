@@ -28,7 +28,10 @@ jobs:
     name: publish immutable runtime RC
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Runtime archives are multi-GB. Fifteen minutes left a partial draft release
+    # in production before the GitHub upload could finish. Keep enough headroom
+    # for Actions artifact download + release upload on a slow GitHub edge.
+    timeout-minutes: 60
     env:
       FAMILY: ${{ github.event_name == 'workflow_dispatch' && inputs.family || (github.event.workflow_run.name == 'Whisper Runtime' && 'whisper' || 'qwen') }}
       SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.event.workflow_run.head_sha }}
@@ -260,7 +263,47 @@ jobs:
           RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
         run: |
           set -euo pipefail
-          if gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+
+          # gh release create stages a draft while uploading. A cancelled job can
+          # therefore leave an incomplete draft with the final tag name but no
+          # Git ref. It is safe to discard only that unpublished draft when its
+          # target is the exact source being retried; published releases remain
+          # immutable and are never rewritten.
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > rc-existing-releases.json
+          python - <<'PY' > rc-existing-state.txt
+          import json, os
+          rows = [
+              item for item in json.load(open('rc-existing-releases.json', encoding='utf-8'))
+              if item.get('tag_name') == os.environ['RC_TAG']
+          ]
+          if len(rows) > 1:
+              raise SystemExit('RC_RELEASE_DUPLICATE_STATE')
+          if not rows:
+              print('missing')
+          else:
+              row = rows[0]
+              release_id = row.get('id')
+              if not isinstance(release_id, int) or isinstance(release_id, bool):
+                  raise SystemExit('RC_RELEASE_ID_INVALID')
+              target = row.get('target_commitish')
+              if target != os.environ['SOURCE_SHA']:
+                  raise SystemExit('RC_RELEASE_TARGET_MISMATCH')
+              if row.get('draft') is True:
+                  print(f'draft:{release_id}')
+              elif row.get('draft') is False and row.get('prerelease') is True:
+                  print(f'published:{release_id}')
+              else:
+                  raise SystemExit('RC_RELEASE_STATE_INVALID')
+          PY
+          RC_STATE="$(cat rc-existing-state.txt)"
+          if [[ "$RC_STATE" == draft:* ]]; then
+            DRAFT_ID="${RC_STATE#draft:}"
+            echo "Removing incomplete retryable draft release $DRAFT_ID for $RC_TAG"
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID"
+            RC_STATE="missing"
+          fi
+
+          if [[ "$RC_STATE" == published:* ]]; then
             rm -rf rc-check && mkdir rc-check
             gh release view "$RC_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > rc-release.json
             python - <<'PY'
