@@ -4,7 +4,7 @@ import importlib.util
 import json
 import sys
 import types
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -95,6 +95,34 @@ def test_prepare_install_guards_stops_old_processes_and_proves_port_free(tmp_pat
     assert guard["target_version"] == "0.3.8"
 
 
+def test_prepare_holds_reconcile_lock_across_guard_and_process_shutdown(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    observed: list[tuple[str, bool]] = []
+    lock_held = False
+
+    @contextmanager
+    def lock():
+        nonlocal lock_held
+        lock_held = True
+        observed.append(("lock_enter", lock_held))
+        try:
+            yield
+        finally:
+            observed.append(("lock_exit", lock_held))
+            lock_held = False
+
+    def stop(root: Path, **_kwargs):
+        observed.append(("stop", lock_held))
+        assert (root / "Cache" / "maintenance" / "installation-guard.json").is_file()
+
+    monkeypatch.setattr(secure, "_installation_reconcile_lock", lock)
+    monkeypatch.setattr(secure, "_stop_installed_processes", stop)
+
+    secure.prepare_major_upgrade(tmp_path, 8765, "0.3.8")
+
+    assert observed == [("lock_enter", True), ("stop", True), ("lock_exit", True)]
+
+
 def test_direct_uninstall_guard_exists_before_process_shutdown(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
     observed: list[bool] = []
@@ -160,7 +188,11 @@ def test_secure_msi_action_cli_owns_prepare_uninstall_verify_commit_and_rollback
         lambda root, version, port=8765: observed.append(("verify", root, (port, version))),
     )
     monkeypatch.setattr(secure, "finish_major_upgrade", lambda root: observed.append(("finish", root, None)))
-    monkeypatch.setattr(secure, "rollback_major_upgrade", lambda root: observed.append(("rollback", root, None)))
+    monkeypatch.setattr(
+        secure,
+        "rollback_major_upgrade",
+        lambda root, port=8765: observed.append(("rollback", root, port)),
+    )
     monkeypatch.setattr(
         secure.legacy,
         "main",
@@ -177,8 +209,29 @@ def test_secure_msi_action_cli_owns_prepare_uninstall_verify_commit_and_rollback
         ("uninstall", tmp_path.resolve(), None),
         ("verify", tmp_path.resolve(), (8765, "0.3.8")),
         ("finish", tmp_path.resolve(), None),
-        ("rollback", tmp_path.resolve(), None),
+        ("rollback", tmp_path.resolve(), 8765),
     ]
+
+
+def test_rollback_clears_guard_and_restarts_restored_agent(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    guard = tmp_path / "Cache" / "maintenance" / "installation-guard.json"
+    guard.parent.mkdir(parents=True)
+    guard.write_text("{}", encoding="utf-8")
+    observed: list[object] = []
+
+    monkeypatch.setattr(secure, "_installation_reconcile_lock", lambda: nullcontext())
+    monkeypatch.setattr(secure, "_stop_installed_processes", lambda root: observed.append(("stop", root)))
+    monkeypatch.setattr(
+        secure,
+        "_restart_surviving_agent",
+        lambda root, port: observed.append(("restart", root, port)),
+    )
+
+    secure.rollback_major_upgrade(tmp_path, 9876)
+
+    assert not guard.exists()
+    assert observed == [("stop", tmp_path), ("restart", tmp_path, 9876)]
 
 
 def test_secure_maintenance_fails_closed_when_old_process_survives(tmp_path: Path, monkeypatch):
@@ -334,7 +387,7 @@ def test_install_update_does_not_create_unguarded_pre_msi_shutdown_gap(tmp_path:
     monkeypatch.setattr(
         secure,
         "_stop_installed_processes",
-        lambda *_args, **_kwargs: pytest.fail("in-app updater must let the MSI pre-transaction action own shutdown"),
+        lambda *_args, **_kwargs: pytest.fail("in-app updater must let the MSI action own shutdown"),
     )
     monkeypatch.setattr(legacy, "_run_msiexec", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(secure, "_health_matches_target", lambda *_args, **_kwargs: True)
