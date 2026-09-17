@@ -43,8 +43,9 @@
     <!-- A second copy of the maintenance helper lives in the MSI Binary table.
          It can run before RemoveExistingProducts, which is essential when the
          cached MSI for the currently installed version does not know how to stop
-         a stale Agent during MajorUpgrade. It is extracted to MSI temporary
-         storage and is never considered an installed Companion process. -->
+         a stale Agent during MajorUpgrade. The MajorUpgrade command only stops
+         Companion processes; it deliberately leaves MSI-owned Registry/Startup
+         state inside the Windows Installer transaction for correct rollback. -->
     <Binary
       Id="TDACompanionMaintenanceUpgradeBinary"
       SourceFile="!(bindpath.App)\TDACompanionMaintenance.exe" />
@@ -97,19 +98,19 @@
         KeyPath="yes" />
     </Component>
 
-    <!-- New-package upgrade preparation. This closes the 0.3.x -> new-version
-         gap even if the old cached MSI skipped PrepareUninstall during upgrade. -->
+    <!-- New-package upgrade preparation. This closes the old-version -> target
+         gap even if the old cached MSI skipped process shutdown. -->
     <CustomAction
       Id="PrepareMajorUpgrade"
       BinaryRef="TDACompanionMaintenanceUpgradeBinary"
-      ExeCommand="--prepare-uninstall"
+      ExeCommand="--prepare-major-upgrade"
       Execute="deferred"
       Impersonate="yes"
       Return="check" />
 
-    <!-- Installed helper used for normal uninstall and, for versions containing
-         this contract, also while that product is being removed by a future
-         MajorUpgrade. Failure is no longer ignored. -->
+    <!-- Installed helper for an explicit uninstall. MajorUpgrade is handled by
+         the new package's embedded helper above; do not let the cached old MSI
+         mutate state outside the new package's transaction. -->
     <CustomAction
       Id="PrepareUninstall"
       FileRef="TDACompanionMaintenanceExe"
@@ -130,7 +131,7 @@
 
     <InstallExecuteSequence>
       <Custom Action="PrepareMajorUpgrade" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
-      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='REMOVE="ALL"' />
+      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
       <?if $(RollbackProbe) = "1" ?>
       <Custom Action="RollbackProbeFailure" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
       <?endif ?>
