@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from . import VERSION
 from .agent import AgentController, wait_until_ready
 from .agent_connection import probe_agent
-from .installation_lock import installation_reconcile_lock
+from .installation_lock import agent_bootstrap_lock, installation_reconcile_lock
 from .installed_acceptance import (
     REQUIRED_OBSERVATIONS,
     InstalledAcceptanceError,
@@ -131,38 +131,40 @@ def _reconcile_installation(paths: CompanionPaths) -> ReconcileResult:
 
 
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
-    # Recovery is application-owned. Before deciding what is on the Agent port,
-    # converge the installed tree to the version that is currently executing.
+    # Installation repair and Agent bootstrap use distinct mutexes. The parent UI
+    # may hold the bootstrap lock while the child Agent acquires the installation
+    # lock during its own startup, avoiding both duplicate spawn and deadlock.
     _reconcile_installation(_paths_for_args(args))
 
-    existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
-    if existing.state == "exact":
-        return None
-    if existing.state == "compatible":
-        # A different Companion version is never an operational fallback. If it
-        # survived reconciliation, fail closed instead of silently using it.
-        raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
-    if existing.state in {"foreign", "incompatible"}:
-        return None
+    with agent_bootstrap_lock():
+        existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
+        if existing.state == "exact":
+            return None
+        if existing.state == "compatible":
+            # A different Companion version is never an operational fallback. If it
+            # survived reconciliation, fail closed instead of silently using it.
+            raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
+        if existing.state in {"foreign", "incompatible"}:
+            return None
 
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-    process = subprocess.Popen(
-        _entry_command() + _agent_arguments(args),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=creationflags,
-    )
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
-        if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
-            return process
-    raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        process = subprocess.Popen(
+            _entry_command() + _agent_arguments(args),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creationflags,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
+            if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
+                return process
+        raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
