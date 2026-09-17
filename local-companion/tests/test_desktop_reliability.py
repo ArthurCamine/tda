@@ -128,29 +128,33 @@ def test_installed_bridge_correlates_maintenance_operation_id(monkeypatch, tmp_p
     bridge = _bridge(tmp_path)
     seen: dict[str, list[str]] = {}
     handoffs: list[str] = []
-
-    def fake_launch(self, arguments):  # noqa: ANN001
-        seen["arguments"] = list(arguments)
-        return True
+    helper = tmp_path / "TDACompanionMaintenance.exe"
+    helper.write_bytes(b"helper")
+    process = SimpleNamespace(poll=lambda: None)
 
     def fake_install(self):  # noqa: ANN001
         self._launch_maintenance(["--install-update", "--version", "0.3.3"])
         return {"accepted": True, "available": True, "version": "0.3.3"}
 
-    monkeypatch.setattr(DesktopBridge, "_launch_maintenance", fake_launch)
+    def fake_popen(command, **_kwargs):
+        seen["command"] = list(command)
+        return process
+
     monkeypatch.setattr(DesktopBridge, "install_update", fake_install)
+    monkeypatch.setattr(SessionDesktopBridge, "_maintenance_helper", lambda self: helper)
+    monkeypatch.setattr(desktop_session_bridge.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(
         SessionDesktopBridge,
         "_wait_maintenance_handoff",
-        lambda self, operation_id, timeout=3.0: handoffs.append(operation_id),
+        lambda self, operation_id, timeout=15.0: handoffs.append(operation_id),
     )
 
     result = bridge.install_update()
 
     operation_id = result["operation_id"]
     assert isinstance(operation_id, str) and len(operation_id) == 32
-    assert seen["arguments"][-2:] == ["--operation-id", operation_id]
-    assert "--cleanup-self" in seen["arguments"]
+    assert seen["command"][-3:] == ["--cleanup-self", "--operation-id", operation_id]
+    assert seen["command"][1:4] == ["--install-update", "--version", "0.3.3"]
     assert handoffs == [operation_id]
 
 
