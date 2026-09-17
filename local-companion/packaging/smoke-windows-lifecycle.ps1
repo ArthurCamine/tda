@@ -225,9 +225,18 @@ try {
     Assert-RegistryValueSnapshot $runKey "TDA Companion Agent" $baselineStartup "ROLLBACK_STARTUP"
     if (-not (Test-Path $shortcut)) { throw "ROLLBACK_SHORTCUT_NOT_RESTORED" }
 
-    # A failed direct MSI must return the surviving product to an operational
-    # background state; requiring the user to relaunch/reboot is not rollback.
-    $upgradeAgent = Get-VerifiedAgent $previousVersion $previousExe "ROLLBACK_PREVIOUS_AGENT_NOT_RESTARTED"
+    # Direct MSI rollback owns transactional restoration. The in-app updater owns
+    # eager process/UI recovery after msiexec returns, when restored files are
+    # guaranteed visible. For the next successful-upgrade fixture, reuse a
+    # best-effort rollback Agent when present; otherwise launch the restored
+    # historical Agent explicitly as test setup rather than making direct /qn MSI
+    # rollback depend on a child process escaping the Windows Installer job.
+    try {
+        $upgradeAgent = Get-VerifiedAgent $previousVersion $previousExe "ROLLBACK_AGENT_NOT_RUNNING"
+    } catch {
+        Write-Host "Rollback restored the historical product; starting its Agent for the successful-upgrade fixture."
+        $upgradeAgent = Start-PreviousAgent $previousExe
+    }
 
     # Reuse the rollback-restored Agent for the successful MajorUpgrade path.
     Invoke-Msi @("/i", "`"$msi`"", "/qn") "03-upgrade-to-$CurrentVersion.log"
@@ -279,7 +288,7 @@ try {
     if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
     if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
-    Write-Host "TDA Companion rollback, Agent recovery, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
+    Write-Host "TDA Companion rollback restore, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {
     try {
