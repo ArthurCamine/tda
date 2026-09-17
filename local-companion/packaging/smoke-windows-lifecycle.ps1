@@ -155,7 +155,9 @@ try {
     Invoke-Msi @("/i", "`"$previousMsi`"", "/qn") "01-install-$previousVersion.log"
     $previousMarker = Join-Path $tdaRoot "Companion\current-version.txt"
     $previousExe = Join-Path $tdaRoot "Companion\versions\$previousVersion\TDACompanion.exe"
+    $previousVersionRoot = Split-Path $previousExe -Parent
     $candidateExe = Join-Path $tdaRoot "Companion\versions\$CurrentVersion\TDACompanion.exe"
+    $currentVersionRoot = Split-Path $candidateExe -Parent
     Assert-FileValue $previousMarker $previousVersion "PREVIOUS_VERSION_MARKER"
     if (-not (Test-Path $previousExe)) { throw "PREVIOUS_EXECUTABLE_MISSING" }
     if (-not (Test-Path $productKey)) { throw "PREVIOUS_PRODUCT_REGISTRY_MISSING" }
@@ -217,6 +219,9 @@ try {
     if (Test-Path $previousExe) {
         throw "PREVIOUS_EXECUTABLE_LEFT_AFTER_MAJOR_UPGRADE"
     }
+    if (Test-Path $previousVersionRoot) {
+        throw "PREVIOUS_VERSION_DIRECTORY_LEFT_AFTER_MAJOR_UPGRADE"
+    }
     $currentVersionRegistry = Get-RegistryValueSnapshot $productKey "Version"
     $currentProductCode = Get-RegistryValueSnapshot $productKey "ProductCode"
     if (-not $currentVersionRegistry.Exists -or [string]$currentVersionRegistry.Value -ne $CurrentVersion) {
@@ -227,12 +232,20 @@ try {
     }
     if (-not (Test-Path $shortcut)) { throw "CURRENT_SHORTCUT_MISSING" }
 
-    # Preserve uninstall keeps persistent roots but removes installed application metadata.
+    # Preserve uninstall keeps persistent roots but removes every application-owned
+    # executable/marker/registry/shortcut/startup artifact.
     $maintenanceExe = Current-MaintenanceExe
     if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_MISSING_AFTER_UPGRADE" }
     $uninstall = Start-Process -FilePath $maintenanceExe -ArgumentList @("--uninstall", "--parent-pid", "0") -Wait -PassThru
     if ($uninstall.ExitCode -ne 0) { throw "MAINTENANCE_PRESERVE_UNINSTALL_FAILED:$($uninstall.ExitCode)" }
     Assert-PersistentRoots "keep-across-upgrade"
+    if (Test-Path $candidateExe) { throw "PRESERVE_UNINSTALL_EXECUTABLE_LEFT_BEHIND" }
+    if (Test-Path $currentVersionRoot) { throw "PRESERVE_UNINSTALL_VERSION_DIRECTORY_LEFT_BEHIND" }
+    if (Test-Path $currentMarker) { throw "PRESERVE_UNINSTALL_VERSION_MARKER_LEFT_BEHIND" }
+    if (Test-Path $productKey) { throw "PRESERVE_UNINSTALL_PRODUCT_REGISTRY_LEFT_BEHIND" }
+    if (Test-Path $shortcut) { throw "PRESERVE_UNINSTALL_SHORTCUT_LEFT_BEHIND" }
+    $startupAfterUninstall = Get-RegistryValueSnapshot $runKey "TDA Companion Agent"
+    if ($startupAfterUninstall.Exists) { throw "PRESERVE_UNINSTALL_STARTUP_LEFT_BEHIND" }
 
     # Reinstall and verify explicit purge removes every TDA per-user root.
     Invoke-Msi @("/i", "`"$msi`"", "/qn") "04-reinstall-for-purge.log"
@@ -242,7 +255,7 @@ try {
     if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
     if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
-    Write-Host "TDA Companion rollback, live-Agent MajorUpgrade, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
+    Write-Host "TDA Companion rollback, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {
     try {
