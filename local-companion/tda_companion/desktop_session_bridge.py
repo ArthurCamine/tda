@@ -73,6 +73,7 @@ class SessionDesktopBridge(DesktopBridge):
             expected_version=VERSION,
         )
         self._last_maintenance_operation_id: str | None = None
+        self._maintenance_handoff_process: subprocess.Popen | None = None
 
     @staticmethod
     def _friendly_network_error(exc: NetworkError) -> RuntimeError:
@@ -136,13 +137,7 @@ class SessionDesktopBridge(DesktopBridge):
             self.paths.cache_root / "maintenance" / "last-operation.json"
         )
 
-    def _wait_maintenance_handoff(
-        self,
-        operation_id: str,
-        *,
-        process: subprocess.Popen | None = None,
-        timeout: float = 15.0,
-    ) -> None:
+    def _wait_maintenance_handoff(self, operation_id: str, timeout: float = 15.0) -> None:
         """Wait until the helper durably owns the operation journal.
 
         The old three-second blind timeout could report a failed handoff while
@@ -169,17 +164,13 @@ class SessionDesktopBridge(DesktopBridge):
                     suffix = f":{code}" if isinstance(code, str) and code else ""
                     raise RuntimeError(f"MAINTENANCE_HANDOFF_FAILED{suffix}")
                 return
+            process = self._maintenance_handoff_process
             if process is not None:
                 returncode = process.poll()
                 if returncode is not None:
                     raise RuntimeError(f"MAINTENANCE_EXITED_BEFORE_HANDOFF:{returncode}")
             time.sleep(delay)
             delay = min(0.25, delay * 1.5)
-        # Do not kill a still-running helper here. It may have crossed into MSI
-        # work while the journal volume was temporarily delayed; killing it would
-        # manufacture the exact interrupted-maintenance state recovery is meant
-        # to avoid. The UI reports the handoff failure and startup recovery/journal
-        # reconciliation remains authoritative on the next launch.
         raise RuntimeError("MAINTENANCE_HANDOFF_TIMEOUT")
 
     def _offline_snapshot(self, code: str) -> dict[str, object]:
@@ -324,6 +315,7 @@ class SessionDesktopBridge(DesktopBridge):
         operation_id = uuid4().hex
         self._last_maintenance_operation_id = operation_id
         helper: Path | None = None
+        process: subprocess.Popen | None = None
         try:
             helper = self._maintenance_helper()
             process = subprocess.Popen(
@@ -340,24 +332,25 @@ class SessionDesktopBridge(DesktopBridge):
                 close_fds=True,
                 creationflags=self._maintenance_creationflags(),
             )
-            self._wait_maintenance_handoff(operation_id, process=process)
+            self._maintenance_handoff_process = process
+            self._wait_maintenance_handoff(operation_id)
             return True
         except BaseException:
-            # Clean staging only if the helper never got a durable journal and is
-            # no longer running. A running helper owns its temporary executable
-            # and will self-clean; deleting beneath it creates a torn handoff.
             operation = (
                 self.paths.cache_root
                 / "maintenance"
                 / "operations"
                 / f"{operation_id}.json"
             )
-            if not operation.exists() and helper is not None:
+            process_exited = process is None or process.poll() is not None
+            if not operation.exists() and helper is not None and process_exited:
                 try:
                     shutil.rmtree(helper.parent, ignore_errors=True)
                 except OSError:
                     pass
             raise
+        finally:
+            self._maintenance_handoff_process = None
 
     def install_update(self) -> dict[str, object]:
         self._last_maintenance_operation_id = None
