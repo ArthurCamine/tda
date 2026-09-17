@@ -20,6 +20,11 @@ _WAIT_ABANDONED = 0x00000080
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
 _INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
+_REQUIRED_VERSION_FILES = (
+    "TDACompanion.exe",
+    "TDACompanionMaintenance.exe",
+    "_internal/base_library.zip",
+)
 
 
 class SingleActiveVersionError(RuntimeError):
@@ -127,6 +132,26 @@ def _active_installation_guard(paths: CompanionPaths) -> tuple[str, str | None] 
         return None
 
 
+def _complete_installed_version(version_root: Path) -> bool:
+    """Treat only a materially complete packaged directory as an installed version.
+
+    A stray/newer TDACompanion.exe must never gain authority over a known-good
+    installation. These files come from separate build products plus PyInstaller's
+    runtime payload, so requiring all three rejects the common partial-copy / torn
+    install shapes without trusting current-version.txt alone.
+    """
+    try:
+        if not version_root.is_dir() or version_root.is_symlink():
+            return False
+        for relative in _REQUIRED_VERSION_FILES:
+            path = version_root.joinpath(*relative.split("/"))
+            if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
+                return False
+        return True
+    except OSError:
+        return False
+
+
 def _valid_installed_versions(paths: CompanionPaths) -> dict[str, Path]:
     versions_root = paths.companion_root / "versions"
     result: dict[str, Path] = {}
@@ -135,9 +160,8 @@ def _valid_installed_versions(paths: CompanionPaths) -> dict[str, Path]:
     for entry in versions_root.iterdir():
         if not entry.is_dir() or _VERSION_DIR.fullmatch(entry.name) is None:
             continue
-        executable = entry / "TDACompanion.exe"
-        if executable.is_file():
-            result[entry.name] = executable
+        if _complete_installed_version(entry):
+            result[entry.name] = entry / "TDACompanion.exe"
     return result
 
 
@@ -145,9 +169,9 @@ def authoritative_installed_version(paths: CompanionPaths, running_version: str)
     """Never let an older executable downgrade a valid newer installation."""
     _version_tuple(running_version)
     installed = _valid_installed_versions(paths)
-    running_executable = paths.companion_root / "versions" / running_version / "TDACompanion.exe"
-    if running_version not in installed and running_executable.is_file():
-        installed[running_version] = running_executable
+    running_root = paths.companion_root / "versions" / running_version
+    if running_version not in installed and _complete_installed_version(running_root):
+        installed[running_version] = running_root / "TDACompanion.exe"
     if not installed:
         raise SingleActiveVersionError("NO_VALID_INSTALLED_VERSION")
     active = max(installed, key=_version_tuple)
@@ -384,9 +408,8 @@ def cleanup_non_target_versions(
 ) -> tuple[str, ...]:
     versions_root = paths.companion_root / "versions"
     target = versions_root / target_version
-    target_executable = target / "TDACompanion.exe"
-    if not target_executable.is_file():
-        raise SingleActiveVersionError("TARGET_EXECUTABLE_MISSING")
+    if not _complete_installed_version(target):
+        raise SingleActiveVersionError("TARGET_INSTALLATION_INCOMPLETE")
 
     removed: list[str] = []
     for entry in list(versions_root.iterdir()) if versions_root.is_dir() else []:
