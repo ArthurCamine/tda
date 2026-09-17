@@ -37,6 +37,8 @@ class ReconcileResult:
     target_version: str
     terminated_pids: tuple[int, ...] = ()
     removed_entries: tuple[str, ...] = ()
+    removed_update_cache_entries: tuple[str, ...] = ()
+    removed_metadata_entries: tuple[str, ...] = ()
 
 
 @contextmanager
@@ -66,6 +68,12 @@ def _reconcile_lock(timeout_seconds: float = 15.0) -> Iterator[None]:
 
 def _normalized_absolute(path: str | Path) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(path))).casefold()
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    if _VERSION_DIR.fullmatch(value) is None:
+        raise SingleActiveVersionError("TARGET_VERSION_INVALID")
+    return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
 
 
 def installed_image_identity(
@@ -166,8 +174,7 @@ def terminate_non_target_processes(
     terminate_pid: Callable[[int], None] = _terminate_pid,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[int, ...]:
-    if _VERSION_DIR.fullmatch(target_version) is None:
-        raise SingleActiveVersionError("TARGET_VERSION_INVALID")
+    _version_tuple(target_version)
 
     current_pid = os.getpid() if current_pid is None else int(current_pid)
     scan = scan or (lambda: scan_installed_companion_processes(paths))
@@ -205,6 +212,27 @@ def _remove_entry(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
+def _remove_with_retry(
+    path: Path,
+    *,
+    remove_entry: Callable[[Path], None],
+    sleep: Callable[[float], None],
+    error_code: str,
+) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    last_error: BaseException | None = None
+    for attempt in range(4):
+        try:
+            remove_entry(path)
+            if not path.exists() and not path.is_symlink():
+                return True
+        except (OSError, PermissionError) as exc:
+            last_error = exc
+        sleep(0.2 * (attempt + 1))
+    raise SingleActiveVersionError(error_code) from last_error
+
+
 def cleanup_non_target_versions(
     paths: CompanionPaths,
     target_version: str,
@@ -222,19 +250,70 @@ def cleanup_non_target_versions(
     for entry in list(versions_root.iterdir()) if versions_root.is_dir() else []:
         if entry.name == target_version:
             continue
-        last_error: BaseException | None = None
-        for attempt in range(4):
-            try:
-                remove_entry(entry)
-                if not entry.exists():
-                    removed.append(entry.name)
-                    last_error = None
-                    break
-            except (OSError, PermissionError) as exc:
-                last_error = exc
-            sleep(0.2 * (attempt + 1))
-        if last_error is not None or entry.exists():
-            raise SingleActiveVersionError("STALE_VERSION_CLEANUP_FAILED") from last_error
+        if _remove_with_retry(
+            entry,
+            remove_entry=remove_entry,
+            sleep=sleep,
+            error_code="STALE_VERSION_CLEANUP_FAILED",
+        ):
+            removed.append(entry.name)
+    return tuple(removed)
+
+
+def cleanup_installed_update_cache(
+    paths: CompanionPaths,
+    target_version: str,
+    *,
+    remove_entry: Callable[[Path], None] = _remove_entry,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str, ...]:
+    """Remove MSI/cache entries that cannot be useful after target is installed.
+
+    Future-version entries are intentionally preserved so a verified BITS
+    download can survive an app restart before the user accepts that update.
+    Entries for the installed target and every older semantic version are stale
+    once the target executable is running successfully.
+    """
+    target = _version_tuple(target_version)
+    updates_root = paths.cache_root / "updates"
+    if not updates_root.is_dir():
+        return ()
+
+    removed: list[str] = []
+    for entry in list(updates_root.iterdir()):
+        if _VERSION_DIR.fullmatch(entry.name) is None:
+            continue
+        if _version_tuple(entry.name) > target:
+            continue
+        if _remove_with_retry(
+            entry,
+            remove_entry=remove_entry,
+            sleep=sleep,
+            error_code="STALE_UPDATE_CACHE_CLEANUP_FAILED",
+        ):
+            removed.append(entry.name)
+    return tuple(removed)
+
+
+def cleanup_stale_version_metadata(
+    paths: CompanionPaths,
+    *,
+    remove_entry: Callable[[Path], None] = _remove_entry,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str, ...]:
+    """Remove only abandoned atomic marker temporaries from Companion root."""
+    root = paths.companion_root
+    if not root.is_dir():
+        return ()
+    removed: list[str] = []
+    for entry in list(root.glob("current-version.txt.partial.*")):
+        if _remove_with_retry(
+            entry,
+            remove_entry=remove_entry,
+            sleep=sleep,
+            error_code="STALE_VERSION_METADATA_CLEANUP_FAILED",
+        ):
+            removed.append(entry.name)
     return tuple(removed)
 
 
@@ -291,9 +370,22 @@ def reconcile_packaged_installation(
             sleep=sleep,
         )
         _write_current_version(paths, target_version)
+        removed_update_cache = cleanup_installed_update_cache(
+            paths,
+            target_version,
+            remove_entry=remove_entry,
+            sleep=sleep,
+        )
+        removed_metadata = cleanup_stale_version_metadata(
+            paths,
+            remove_entry=remove_entry,
+            sleep=sleep,
+        )
         return ReconcileResult(
             applied=True,
             target_version=target_version,
             terminated_pids=terminated,
             removed_entries=removed,
+            removed_update_cache_entries=removed_update_cache,
+            removed_metadata_entries=removed_metadata,
         )
