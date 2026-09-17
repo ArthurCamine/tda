@@ -30,6 +30,14 @@ _REQUIRED_VERSION_FILES = (
     "TDACompanionMaintenance.exe",
     "_internal/base_library.zip",
 )
+# Rollback may restore a historical Companion released before the standalone
+# maintenance helper existed. Such a product is valid enough to revive only
+# when its original executable plus PyInstaller runtime payload were restored.
+# New candidate verification remains intentionally stricter above.
+_RESTORABLE_VERSION_FILES = (
+    "TDACompanion.exe",
+    "_internal/base_library.zip",
+)
 
 
 @contextmanager
@@ -151,20 +159,34 @@ def _installed_image_version(root: Path, image: str | Path) -> str | None:
     return parts[0]
 
 
-def _complete_installed_version(root: Path, version: str) -> bool:
+def _version_has_files(root: Path, version: str, required: tuple[str, ...]) -> bool:
     if _VERSION.fullmatch(version) is None:
         return False
     version_root = root / "Companion" / "versions" / version
     try:
         if not version_root.is_dir() or version_root.is_symlink():
             return False
-        for relative in _REQUIRED_VERSION_FILES:
+        for relative in required:
             path = version_root.joinpath(*relative.split("/"))
             if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
                 return False
         return True
     except OSError:
         return False
+
+
+def _complete_installed_version(root: Path, version: str) -> bool:
+    return _version_has_files(root, version, _REQUIRED_VERSION_FILES)
+
+
+def _restorable_installed_version(root: Path, version: str) -> bool:
+    """Accept the minimum payload shared by historical packaged releases.
+
+    This predicate is only used after MSI rollback to revive the product Windows
+    Installer restored. It must never be used to validate a newly installed
+    target, whose maintenance helper is part of the current release contract.
+    """
+    return _version_has_files(root, version, _RESTORABLE_VERSION_FILES)
 
 
 def _scan_tda_processes(root: Path) -> tuple[list[int], list[int]]:
@@ -446,7 +468,7 @@ def _surviving_install(root: Path) -> tuple[str, Path] | None:
         version = marker.read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    if not _complete_installed_version(root, version):
+    if not _restorable_installed_version(root, version):
         return None
     return version, root / "Companion" / "versions" / version / "TDACompanion.exe"
 
