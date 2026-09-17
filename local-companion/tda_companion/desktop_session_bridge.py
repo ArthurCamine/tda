@@ -22,7 +22,6 @@ from .runtime_rc_updates import install_published_runtime_rc
 from .settings import SettingsStore
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
-from .updates import fetch_manifest as fetch_companion_manifest, version_tuple
 
 _NETWORK_MESSAGES = {
     "OFFLINE": "Este computador parece estar sem acesso à Internet.",
@@ -297,8 +296,14 @@ class SessionDesktopBridge(DesktopBridge):
 
     @staticmethod
     def _runtime_rc_fallback_allowed() -> bool:
-        stable = fetch_companion_manifest()
-        return version_tuple(VERSION) > version_tuple(stable.version)
+        # Stable runtime delivery is always attempted first. If no compatible
+        # Stable runtime is available yet, a published runtime RC is still a
+        # valid self-heal source: runtime_rc_updates verifies the immutable
+        # prerelease identity, exact version, asset set, GitHub digests, sizes
+        # and candidate manifest before installation. This keeps first-use
+        # preparation automatic during a staggered Companion/runtime rollout
+        # without weakening the Companion application's Stable update channel.
+        return True
 
     def _install_runtime_rc_fallback(
         self,
