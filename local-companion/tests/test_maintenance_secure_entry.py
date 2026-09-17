@@ -31,6 +31,18 @@ def _load_secure_module():
     return module
 
 
+def _complete_install(root: Path, version: str = "0.3.8") -> Path:
+    version_root = root / "Companion" / "versions" / version
+    executable = version_root / "TDACompanion.exe"
+    maintenance = version_root / "TDACompanionMaintenance.exe"
+    base_library = version_root / "_internal" / "base_library.zip"
+    base_library.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_bytes(b"app")
+    maintenance.write_bytes(b"maintenance")
+    base_library.write_bytes(b"base-library")
+    return executable
+
+
 def test_secure_uninstall_never_reads_token_or_mutates_msi_owned_startup(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
     legacy = secure.legacy
@@ -271,6 +283,22 @@ def test_verified_termination_rechecks_process_image_before_kill(tmp_path: Path,
         secure._terminate_verified_pid(tmp_path, 9320)
 
 
+def test_verified_termination_rejects_nested_or_non_semver_install_path(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    nested = tmp_path / "Companion" / "versions" / "0.3.4" / "nested" / "TDACompanion.exe"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"app")
+    monkeypatch.setattr(secure.legacy, "_process_image", lambda _pid: nested)
+    monkeypatch.setattr(
+        secure.legacy,
+        "_terminate_pid",
+        lambda _pid: pytest.fail("non-canonical install path must never be killed"),
+    )
+
+    with pytest.raises(secure.legacy.MaintenanceError, match="TDA_PROCESS_IDENTITY_CHANGED"):
+        secure._terminate_verified_pid(tmp_path, 9320)
+
+
 def test_prepare_install_fails_closed_when_agent_port_never_frees(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: ([], []))
@@ -329,9 +357,7 @@ def test_target_health_requires_real_listener_owner_and_exact_image(tmp_path: Pa
 
 def test_verify_installed_target_starts_candidate_and_requires_exact_health(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    executable = tmp_path / "Companion" / "versions" / "0.3.8" / "TDACompanion.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"app")
+    executable = _complete_install(tmp_path)
     observed: list[tuple[Path, str, int]] = []
 
     monkeypatch.setattr(secure, "_health_matches_target", lambda *_args, **_kwargs: False)
@@ -345,6 +371,21 @@ def test_verify_installed_target_starts_candidate_and_requires_exact_health(tmp_
     secure.verify_installed_target(tmp_path, "0.3.8", 8765)
 
     assert observed == [(executable, "0.3.8", 8765)]
+
+
+def test_verify_installed_target_rejects_partial_version_before_agent_start(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    executable = tmp_path / "Companion" / "versions" / "0.3.8" / "TDACompanion.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"app")
+    monkeypatch.setattr(
+        secure,
+        "_spawn_target_agent",
+        lambda *_args, **_kwargs: pytest.fail("partial target must not start"),
+    )
+
+    with pytest.raises(secure.legacy.MaintenanceError, match="UPDATED_INSTALLATION_INCOMPLETE"):
+        secure.verify_installed_target(tmp_path, "0.3.8", 8765)
 
 
 def test_spawn_candidate_retries_without_breakaway_when_installer_job_rejects_it(tmp_path: Path, monkeypatch):
@@ -377,9 +418,7 @@ def test_install_update_does_not_create_unguarded_pre_msi_shutdown_gap(tmp_path:
     msi = tmp_path / "candidate.msi"
     msi.write_bytes(b"candidate")
     expected_sha = legacy._sha256(msi)
-    executable = tmp_path / "Companion" / "versions" / "0.3.8" / "TDACompanion.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"app")
+    executable = _complete_install(tmp_path)
     (tmp_path / "Companion" / "current-version.txt").write_text("0.3.8", encoding="utf-8")
 
     monkeypatch.setattr(secure, "_maintenance_lock", lambda: nullcontext())
@@ -395,6 +434,7 @@ def test_install_update_does_not_create_unguarded_pre_msi_shutdown_gap(tmp_path:
 
     secure.install_update(tmp_path, msi, expected_sha, "0.3.8", None, 8765, operation_id)
 
+    assert executable.is_file()
     assert (tmp_path / "Cache" / "maintenance" / "last-update.json").is_file()
 
 
