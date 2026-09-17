@@ -173,7 +173,9 @@ def _agent_bootstrap_diagnostic(paths: CompanionPaths) -> Path:
     return paths.cache_root / "diagnostics" / "last-agent-bootstrap.txt"
 
 
-def _read_agent_bootstrap_diagnostic(path: Path) -> str | None:
+def _read_agent_bootstrap_diagnostic(path: Path | None) -> str | None:
+    if path is None:
+        return None
     try:
         if not path.is_file() or path.stat().st_size > 4096:
             return None
@@ -202,21 +204,24 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
         if existing.state in {"foreign", "incompatible"}:
             return None
 
-        agent_diagnostic = _agent_bootstrap_diagnostic(paths)
+        agent_diagnostic: Path | None = _agent_bootstrap_diagnostic(paths)
         try:
             agent_diagnostic.parent.mkdir(parents=True, exist_ok=True)
             agent_diagnostic.unlink(missing_ok=True)
         except OSError:
-            # Diagnostics must never become a new reason for Agent startup to fail.
-            agent_diagnostic = paths.cache_root / f"agent-bootstrap-{os.getpid()}.txt"
+            # Diagnostics are supplemental; inability to persist them must never
+            # become a new reason for the Agent itself to fail to start.
+            agent_diagnostic = None
+
+        command = _entry_command() + _agent_arguments(args)
+        if agent_diagnostic is not None:
+            command.extend(["--diagnostic-file", str(agent_diagnostic)])
 
         creationflags = 0
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
-            _entry_command()
-            + _agent_arguments(args)
-            + ["--diagnostic-file", str(agent_diagnostic)],
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
