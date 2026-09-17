@@ -40,7 +40,9 @@ class AgentProbe:
 
     @property
     def usable(self) -> bool:
-        return self.state in {"exact", "compatible"}
+        # Single Active Version: another Companion version is observable for
+        # recovery, but it is never allowed to receive authenticated requests.
+        return self.state == "exact"
 
 
 def health_url(port: int) -> str:
@@ -129,10 +131,10 @@ class AgentConnection:
     """Verified, recoverable connection to the per-user loopback Agent.
 
     Every authenticated request first proves the process listening on the port is
-    the TDA Agent. In the packaged desktop that proof also binds the reported PID
-    to the real IPv4 loopback listener and to this TDACompanion executable before
-    any Bearer token is sent. Recovery is serialized and bounded so concurrent UI
-    polling cannot create a spawn storm.
+    the exact TDA Agent version expected by this desktop. In packaged builds that
+    proof also binds the reported PID to the real IPv4 loopback listener and to a
+    trusted TDACompanion executable before any Bearer token is sent. Recovery is
+    serialized and bounded so concurrent UI polling cannot create a spawn storm.
     """
 
     def __init__(
@@ -191,7 +193,7 @@ class AgentConnection:
             self._compatibility = "exact"
             self._last_error = None
         elif probe.state == "compatible":
-            self._state = "ready"
+            self._state = "version_mismatch"
             self._compatibility = "compatible"
             self._last_error = probe.code
         elif probe.state == "incompatible":
@@ -244,11 +246,12 @@ class AgentConnection:
         self._record_probe(probe)
 
     def _wait_for_agent(self, timeout: float, *, require_exact: bool = False) -> AgentProbe:
+        del require_exact  # Single Active Version always requires exact health.
         deadline = self.clock() + timeout
         last = AgentProbe("unavailable", code="AGENT_CONNECTION_TIMEOUT")
         while self.clock() < deadline:
             last = self.probe(timeout=min(0.4, max(0.05, deadline - self.clock())))
-            if last.state == "exact" or (last.state == "compatible" and not require_exact):
+            if last.state == "exact":
                 return last
             if last.state in {"foreign", "incompatible"}:
                 return last
@@ -261,7 +264,7 @@ class AgentConnection:
             raise AgentConnectionError("AGENT_STOPPED_BY_USER")
         with self._recovery_lock:
             current = self.probe(timeout=0.25)
-            if current.usable:
+            if current.state == "exact":
                 self._mark_recovered(current)
                 return
             if current.state == "foreign":
@@ -275,15 +278,20 @@ class AgentConnection:
             self._state = "reconnecting"
             self._last_error = current.code
             try:
+                # The desktop callback owns Single Active Version reconciliation;
+                # it removes an old compatible Agent before spawning this version.
                 self.start_agent()
             except BaseException as exc:
                 self._register_recovery_failure("AGENT_START_FAILED")
                 raise AgentConnectionError("AGENT_START_FAILED") from exc
 
             ready = self._wait_for_agent(10.0)
-            if ready.usable:
+            if ready.state == "exact":
                 self._mark_recovered(ready)
                 return
+            if ready.state == "compatible":
+                self._record_probe(ready)
+                raise AgentConnectionError("AGENT_VERSION_MISMATCH")
             if ready.state == "foreign":
                 self._record_probe(ready)
                 raise AgentConnectionError("AGENT_PORT_CONFLICT")
@@ -294,25 +302,24 @@ class AgentConnection:
             raise AgentConnectionError("AGENT_RECOVERY_FAILED")
 
     def _ensure_verified(self, *, mutate: bool) -> None:
+        del mutate  # Exact version is mandatory for reads and writes alike.
         if self._manual_stop:
             self._state = "stopped_by_user"
             raise AgentConnectionError("AGENT_STOPPED_BY_USER")
         probe = self.probe(timeout=0.35)
         if probe.state == "exact":
             return
-        if probe.state == "compatible":
-            if mutate:
-                raise AgentConnectionError("AGENT_VERSION_MISMATCH")
-            return
         if probe.state == "foreign":
             raise AgentConnectionError("AGENT_PORT_CONFLICT")
         if probe.state == "incompatible":
             raise AgentConnectionError("AGENT_API_INCOMPATIBLE")
+
+        # unavailable and compatible both enter application-owned recovery. A
+        # compatible Agent must be replaced; it is never allowed to receive the
+        # Bearer token as a read-only fallback.
         self._recover()
         probe = self.probe(timeout=0.35)
-        if probe.state == "compatible" and mutate:
-            raise AgentConnectionError("AGENT_VERSION_MISMATCH")
-        if not probe.usable:
+        if probe.state != "exact":
             raise AgentConnectionError(probe.code or "AGENT_UNAVAILABLE")
 
     def _request_once(
@@ -409,6 +416,8 @@ class AgentConnection:
         if probe.state == "unavailable":
             self.mark_stopped_by_user()
             return {"accepted": False, "already_stopped": True}
+        if probe.state == "compatible":
+            raise AgentConnectionError("AGENT_VERSION_MISMATCH")
         if probe.state == "foreign":
             raise AgentConnectionError("AGENT_PORT_CONFLICT")
         if probe.state == "incompatible":
@@ -432,7 +441,7 @@ class AgentConnection:
                 raise AgentConnectionError("AGENT_PORT_CONFLICT")
             if probe.state == "incompatible":
                 raise AgentConnectionError("AGENT_API_INCOMPATIBLE")
-            if probe.usable:
+            if probe.state == "exact":
                 try:
                     self._request_once(
                         "POST",
@@ -449,6 +458,9 @@ class AgentConnection:
                 else:
                     raise AgentConnectionError("AGENT_SHUTDOWN_TIMEOUT")
 
+            # If the observed Agent is merely compatible, do not authenticate to
+            # it. start_agent() will reconcile and remove it before spawning the
+            # exact target version.
             self._state = "starting"
             self._last_error = None
             try:
