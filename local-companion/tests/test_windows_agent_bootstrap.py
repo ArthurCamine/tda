@@ -37,7 +37,7 @@ def test_existing_exact_or_unowned_listener_is_never_blindly_replaced(monkeypatc
     )
     monkeypatch.setattr(
         windows_app,
-        "probe_agent",
+        "_verified_agent_probe",
         lambda *_args, **_kwargs: AgentProbe(state, code="observed"),
     )
     monkeypatch.setattr(
@@ -55,7 +55,7 @@ def test_old_compatible_agent_is_not_accepted_as_operational_fallback(monkeypatc
     monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: _no_redirect())
     monkeypatch.setattr(
         windows_app,
-        "probe_agent",
+        "_verified_agent_probe",
         lambda *_args, **_kwargs: AgentProbe(
             "compatible",
             {"service_version": "0.3.4", "pid": 9320, "port": 8765},
@@ -89,17 +89,23 @@ def test_bootstrap_refuses_to_spawn_when_this_binary_must_redirect_forward(monke
         windows_app.ensure_agent_running(args)
 
 
-def test_unavailable_agent_spawns_once_inside_bootstrap_lock(monkeypatch, tmp_path):
+def test_unavailable_agent_spawns_once_and_requires_verified_child_pid(monkeypatch, tmp_path):
     args = _args(tmp_path)
-    process = SimpleNamespace(poll=lambda: None)
-    observed = {"lock_entered": 0, "lock_exited": 0}
+    process = SimpleNamespace(pid=4242, poll=lambda: None)
+    observed = {"lock_entered": 0, "lock_exited": 0, "probes": 0}
 
     monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: _no_redirect())
-    monkeypatch.setattr(
-        windows_app,
-        "probe_agent",
-        lambda *_args, **_kwargs: AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED"),
-    )
+
+    def probe(*_args, **_kwargs):
+        observed["probes"] += 1
+        if observed["probes"] == 1:
+            return AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED")
+        return AgentProbe(
+            "exact",
+            {"service_version": windows_app.VERSION, "pid": 4242, "port": 8765},
+        )
+
+    monkeypatch.setattr(windows_app, "_verified_agent_probe", probe)
 
     @contextmanager
     def fake_bootstrap_lock():
@@ -119,22 +125,48 @@ def test_unavailable_agent_spawns_once_inside_bootstrap_lock(monkeypatch, tmp_pa
         return process
 
     monkeypatch.setattr(windows_app.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(
-        windows_app,
-        "wait_until_ready",
-        lambda port, timeout, expected_version=None: (
-            observed.update(port=port, timeout=timeout, expected_version=expected_version) or True
-        ),
-    )
 
     assert windows_app.ensure_agent_running(args) is process
     assert observed["lock_entered"] == 1
     assert observed["lock_exited"] == 1
+    assert observed["probes"] == 2
     assert "--agent" in observed["command"]
     diagnostic_index = observed["command"].index("--diagnostic-file")
     assert observed["command"][diagnostic_index + 1].endswith("last-agent-bootstrap.txt")
-    assert observed["port"] == 8765
-    assert observed["expected_version"] == windows_app.VERSION
+
+
+def test_exact_verified_agent_from_other_current_process_wins_spawn_race(monkeypatch, tmp_path):
+    args = _args(tmp_path)
+    state = {"probes": 0, "terminated": 0}
+
+    class Child:
+        pid = 4242
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+        @staticmethod
+        def terminate():
+            state["terminated"] += 1
+
+    monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: _no_redirect())
+
+    def probe(*_args, **_kwargs):
+        state["probes"] += 1
+        if state["probes"] == 1:
+            return AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED")
+        return AgentProbe(
+            "exact",
+            {"service_version": windows_app.VERSION, "pid": 9999, "port": 8765},
+        )
+
+    monkeypatch.setattr(windows_app, "_verified_agent_probe", probe)
+    monkeypatch.setattr(windows_app.subprocess, "Popen", lambda *_args, **_kwargs: Child())
+
+    assert windows_app.ensure_agent_running(args) is None
+    assert state["terminated"] == 1
 
 
 def test_child_agent_exit_surfaces_sanitized_child_diagnostic(monkeypatch, tmp_path):
@@ -144,7 +176,7 @@ def test_child_agent_exit_surfaces_sanitized_child_diagnostic(monkeypatch, tmp_p
     monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: _no_redirect())
     monkeypatch.setattr(
         windows_app,
-        "probe_agent",
+        "_verified_agent_probe",
         lambda *_args, **_kwargs: AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED"),
     )
 
@@ -160,7 +192,7 @@ def test_child_agent_exit_surfaces_sanitized_child_diagnostic(monkeypatch, tmp_p
         diagnostic.parent.mkdir(parents=True, exist_ok=True)
         diagnostic.write_text("FAILED:RuntimeError.DATA_ROOT_IN_USE\n", encoding="utf-8")
         observed["diagnostic"] = diagnostic
-        return SimpleNamespace(poll=lambda: 1, returncode=1)
+        return SimpleNamespace(pid=4242, poll=lambda: 1, returncode=1)
 
     monkeypatch.setattr(windows_app.subprocess, "Popen", fake_popen)
 
