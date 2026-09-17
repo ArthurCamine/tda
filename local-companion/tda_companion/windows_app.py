@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import VERSION
-from .agent import AgentController, wait_until_ready
-from .agent_connection import probe_agent
+from .agent import AgentController
+from .agent_connection import AgentConnection, AgentProbe
 from .installation_lock import agent_bootstrap_lock, installation_reconcile_lock
 from .installed_acceptance import (
     REQUIRED_OBSERVATIONS,
@@ -62,8 +62,6 @@ def _write_diagnostic(path: Path | None, status: str, detail: str | None = None)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(line + "\n", encoding="utf-8")
     except (OSError, UnicodeError):
-        # Diagnostics explain failures; they must never *become* a bootstrap
-        # failure because a cache path is locked, unavailable or out of space.
         return
 
 
@@ -191,22 +189,31 @@ def _read_agent_bootstrap_diagnostic(path: Path | None) -> str | None:
     return safe or None
 
 
+def _verified_agent_probe(port: int, timeout: float = 0.5) -> AgentProbe:
+    """Probe without a token but with the same owner proof used before auth."""
+    connection = AgentConnection(
+        "",
+        port,
+        lambda: None,
+        expected_version=VERSION,
+    )
+    return connection.probe(timeout=timeout)
+
+
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
-    # Installation repair and Agent bootstrap use distinct mutexes. The parent UI
-    # may hold the bootstrap lock while the child Agent acquires the installation
-    # lock during its own startup, avoiding both duplicate spawn and deadlock.
     paths = _paths_for_args(args)
     reconciliation = _reconcile_installation(paths)
     if reconciliation.redirect_executable is not None:
         raise RuntimeError("ACTIVE_VERSION_REDIRECT_REQUIRED")
 
     with agent_bootstrap_lock():
-        existing = probe_agent(args.port, expected_version=VERSION, timeout=0.5)
+        existing = _verified_agent_probe(args.port, timeout=0.5)
         if existing.state == "exact":
             return None
         if existing.state == "compatible":
             raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
         if existing.state in {"foreign", "incompatible"}:
+            # Do not spawn into a port whose owner/identity cannot be proven.
             return None
 
         agent_diagnostic: Path | None = _agent_bootstrap_diagnostic(paths)
@@ -214,8 +221,6 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
             agent_diagnostic.parent.mkdir(parents=True, exist_ok=True)
             agent_diagnostic.unlink(missing_ok=True)
         except OSError:
-            # Diagnostics are supplemental; inability to persist them must never
-            # become a new reason for the Agent itself to fail to start.
             agent_diagnostic = None
 
         command = _entry_command() + _agent_arguments(args)
@@ -233,20 +238,37 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
             close_fds=True,
             creationflags=creationflags,
         )
-        # Frozen Python applications can start noticeably slower while Defender
-        # scans a freshly installed image. Keep polling the child instead of
-        # misclassifying a healthy cold start as a lifecycle failure.
+
         deadline = time.monotonic() + 15
+        last_probe = AgentProbe("unavailable", code="AGENT_CONNECTION_TIMEOUT")
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
                 suffix = f":{detail}" if detail else ""
                 raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}{suffix}")
-            if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
-                return process
+
+            last_probe = _verified_agent_probe(args.port, timeout=0.3)
+            if last_probe.state == "exact":
+                observed_pid = (last_probe.payload or {}).get("pid")
+                if observed_pid == getattr(process, "pid", None):
+                    return process
+                # Another exact current Agent won the race. Keep the verified
+                # service and stop only the child we just created.
+                try:
+                    process.terminate()
+                except (AttributeError, OSError):
+                    pass
+                return None
+            if last_probe.state == "compatible":
+                raise RuntimeError("STALE_AGENT_VERSION_REMAINS")
+            time.sleep(0.1)
+
         detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
-        suffix = f":{detail}" if detail else ""
-        raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT{suffix}")
+        if detail:
+            raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT:{detail}")
+        if last_probe.code:
+            raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT:{last_probe.code}")
+        raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -391,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
 
         reconciliation = _reconcile_installation(paths)
         if _redirect_to_active_version(args, reconciliation):
-            _write_diagnostic(diagnostic_file, "REDIRECTED", "NEWER_INSTALLED_VERSION")
+            _write_diagnostic(diagnostic_file, "REDIRECTED", "ACTIVE_INSTALLED_VERSION")
             return 0
         if reconciliation.applied and (reconciliation.terminated_pids or reconciliation.removed_entries):
             system_log.write(
