@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 import os
 from contextlib import contextmanager
-from ctypes import WinDLL, get_last_error
 from ctypes import wintypes
 from typing import Iterator
 
@@ -31,7 +31,7 @@ def installation_reconcile_lock(timeout_seconds: float = 15.0) -> Iterator[None]
         yield
         return
 
-    kernel32 = WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -43,7 +43,9 @@ def installation_reconcile_lock(timeout_seconds: float = 15.0) -> Iterator[None]
 
     handle = kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     if not handle:
-        raise InstallationLockError(f"INSTALLATION_LOCK_CREATE_FAILED:{get_last_error()}")
+        raise InstallationLockError(
+            f"INSTALLATION_LOCK_CREATE_FAILED:{ctypes.get_last_error()}"
+        )
 
     acquired = False
     try:
