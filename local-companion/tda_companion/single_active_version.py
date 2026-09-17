@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -17,6 +18,8 @@ _RECONCILE_MUTEX = r"Local\TDACompanion.SingleActiveVersion"
 _WAIT_OBJECT_0 = 0x00000000
 _WAIT_ABANDONED = 0x00000080
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_INSTALL_GUARD_SCHEMA = "tda_installation_guard_v1"
+_INSTALL_GUARD_MAX_AGE_SECONDS = 60 * 60
 
 
 class SingleActiveVersionError(RuntimeError):
@@ -40,6 +43,7 @@ class ReconcileResult:
     removed_entries: tuple[str, ...] = ()
     removed_update_cache_entries: tuple[str, ...] = ()
     removed_metadata_entries: tuple[str, ...] = ()
+    redirect_executable: Path | None = None
 
 
 @contextmanager
@@ -75,6 +79,79 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
     if _VERSION_DIR.fullmatch(value) is None:
         raise SingleActiveVersionError("TARGET_VERSION_INVALID")
     return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
+
+
+def _installation_guard_path(paths: CompanionPaths) -> Path:
+    return paths.cache_root / "maintenance" / "installation-guard.json"
+
+
+def _active_installation_guard(paths: CompanionPaths) -> tuple[str, str | None] | None:
+    """Return a live MSI/maintenance guard, cleaning only stale/corrupt leftovers.
+
+    The guard is a coordination primitive, not an authentication boundary. It
+    prevents an old Startup/UI process from racing an MSI transaction after the
+    old Agent was stopped but before Windows Installer has committed/rolled back.
+    A target candidate may start during transactional verification; every other
+    installed version must stand down.
+    """
+    path = _installation_guard_path(paths)
+    try:
+        if not path.is_file() or path.stat().st_size > 16 * 1024:
+            if path.exists() and path.stat().st_size > 16 * 1024:
+                path.unlink(missing_ok=True)
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or value.get("schema") != _INSTALL_GUARD_SCHEMA:
+            raise ValueError("schema")
+        action = value.get("action")
+        target_version = value.get("target_version")
+        created_at = value.get("created_at")
+        if action not in {"major_upgrade", "uninstall"}:
+            raise ValueError("action")
+        if target_version is not None and (
+            not isinstance(target_version, str) or _VERSION_DIR.fullmatch(target_version) is None
+        ):
+            raise ValueError("target")
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            raise ValueError("created_at")
+        age = time.time() - float(created_at)
+        if age < -300 or age > _INSTALL_GUARD_MAX_AGE_SECONDS:
+            path.unlink(missing_ok=True)
+            return None
+        return str(action), target_version
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+
+
+def _valid_installed_versions(paths: CompanionPaths) -> dict[str, Path]:
+    versions_root = paths.companion_root / "versions"
+    result: dict[str, Path] = {}
+    if not versions_root.is_dir():
+        return result
+    for entry in versions_root.iterdir():
+        if not entry.is_dir() or _VERSION_DIR.fullmatch(entry.name) is None:
+            continue
+        executable = entry / "TDACompanion.exe"
+        if executable.is_file():
+            result[entry.name] = executable
+    return result
+
+
+def authoritative_installed_version(paths: CompanionPaths, running_version: str) -> tuple[str, Path]:
+    """Never let an older executable downgrade a valid newer installation."""
+    _version_tuple(running_version)
+    installed = _valid_installed_versions(paths)
+    running_executable = paths.companion_root / "versions" / running_version / "TDACompanion.exe"
+    if running_version not in installed and running_executable.is_file():
+        installed[running_version] = running_executable
+    if not installed:
+        raise SingleActiveVersionError("NO_VALID_INSTALLED_VERSION")
+    active = max(installed, key=_version_tuple)
+    return active, installed[active]
 
 
 def _windows_process_image(pid: int) -> Path | None:
@@ -200,13 +277,40 @@ def _terminate_pid(pid: int) -> None:
         raise SingleActiveVersionError("STALE_TDA_PROCESS_TERMINATION_FAILED") from exc
 
 
+def _current_process_image(pid: int) -> Path | None:
+    image = _windows_process_image(pid)
+    if image is not None:
+        return image
+    try:
+        import psutil
+
+        return Path(psutil.Process(pid).exe())
+    except BaseException:
+        return None
+
+
+def _terminate_verified_installed_process(paths: CompanionPaths, observed: InstalledCompanionProcess) -> None:
+    """Revalidate PID identity immediately before destructive termination."""
+    current = _current_process_image(observed.pid)
+    if current is None:
+        raise SingleActiveVersionError("STALE_TDA_PROCESS_IDENTITY_UNVERIFIED")
+    belongs, version = installed_image_identity(current, paths.companion_root / "versions")
+    if (
+        not belongs
+        or version != observed.version
+        or _normalized_absolute(current) != _normalized_absolute(observed.image_path)
+    ):
+        raise SingleActiveVersionError("STALE_TDA_PROCESS_IDENTITY_CHANGED")
+    _terminate_pid(observed.pid)
+
+
 def terminate_non_target_processes(
     paths: CompanionPaths,
     target_version: str,
     *,
     current_pid: int | None = None,
     scan: Callable[[], list[InstalledCompanionProcess]] | None = None,
-    terminate_pid: Callable[[int], None] = _terminate_pid,
+    terminate_pid: Callable[[int], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[int, ...]:
     _version_tuple(target_version)
@@ -226,7 +330,10 @@ def terminate_non_target_processes(
         if not stale:
             return tuple(dict.fromkeys(terminated))
         for process in stale:
-            terminate_pid(process.pid)
+            if terminate_pid is None:
+                _terminate_verified_installed_process(paths, process)
+            else:
+                terminate_pid(process.pid)
             terminated.append(process.pid)
         sleep(0.15 * (attempt + 1))
 
@@ -302,13 +409,6 @@ def cleanup_installed_update_cache(
     remove_entry: Callable[[Path], None] = _remove_entry,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[str, ...]:
-    """Remove MSI/cache entries that cannot be useful after target is installed.
-
-    Future-version entries are intentionally preserved so a verified BITS
-    download can survive an app restart before the user accepts that update.
-    Entries for the installed target and every older semantic version are stale
-    once the target executable is running successfully.
-    """
     target = _version_tuple(target_version)
     updates_root = paths.cache_root / "updates"
     if not updates_root.is_dir():
@@ -336,7 +436,6 @@ def cleanup_stale_version_metadata(
     remove_entry: Callable[[Path], None] = _remove_entry,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[str, ...]:
-    """Remove only abandoned atomic marker temporaries from Companion root."""
     root = paths.companion_root
     if not root.is_dir():
         return ()
@@ -370,16 +469,17 @@ def reconcile_packaged_installation(
     *,
     current_pid: int | None = None,
     scan: Callable[[], list[InstalledCompanionProcess]] | None = None,
-    terminate_pid: Callable[[int], None] = _terminate_pid,
+    terminate_pid: Callable[[int], None] | None = None,
     remove_entry: Callable[[Path], None] = _remove_entry,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ReconcileResult:
-    """Converge an installed Companion to one active version.
+    """Converge an installed Companion to one active version without downgrading.
 
-    Development/module execution is intentionally ignored. For a packaged build
-    the current executable must itself be the target executable under
-    Companion/versions/<semver>; only then may this routine kill old TDA
-    processes or remove old version directories.
+    Development/module execution is ignored. During a transactional upgrade only
+    the candidate named by the installation guard may start, and it must not
+    mutate MSI-owned version state before commit. Outside maintenance, the newest
+    valid installed version is authoritative: launching an older binary redirects
+    forward instead of deleting the newer installation.
     """
 
     belongs, running_version = installed_image_identity(
@@ -389,7 +489,22 @@ def reconcile_packaged_installation(
     if not belongs or running_version != target_version:
         return ReconcileResult(applied=False, target_version=target_version)
 
+    guard = _active_installation_guard(paths)
+    if guard is not None:
+        action, guarded_target = guard
+        if action == "major_upgrade" and guarded_target == running_version:
+            return ReconcileResult(applied=False, target_version=target_version)
+        raise SingleActiveVersionError("INSTALLATION_MAINTENANCE_ACTIVE")
+
     with _reconcile_lock():
+        active_version, active_executable = authoritative_installed_version(paths, running_version)
+        if _version_tuple(active_version) > _version_tuple(running_version):
+            return ReconcileResult(
+                applied=False,
+                target_version=target_version,
+                redirect_executable=active_executable,
+            )
+
         terminated = terminate_non_target_processes(
             paths,
             target_version,
