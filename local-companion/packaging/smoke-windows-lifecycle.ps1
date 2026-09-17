@@ -8,9 +8,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$previousVersion = "0.2.0"
-$previousUrl = "https://github.com/Faysk/tda/releases/download/companion-v0.2.0/TDACompanion-x64.msi"
-$previousSha256 = "dd01d6334c66f4315b3542f2cdf20b3a6cce86484e4a74945aea80cbbeec3398"
+# Use the exact generation implicated in the real deleted-EXE zombie incident.
+$previousVersion = "0.3.4"
+$previousUrl = "https://github.com/Faysk/tda/releases/download/companion-rc-v0.3.4-43307c819877/TDACompanion-x64.msi"
+$previousSha256 = "e96e2f3245184937a22965b71fb216323ad36add3767277f28429b25527e77b6"
 $msi = (Resolve-Path $CurrentMsiPath).Path
 $rollbackProbeMsi = (Resolve-Path $RollbackProbeMsiPath).Path
 if ($CurrentVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "INVALID_CURRENT_VERSION" }
@@ -114,7 +115,8 @@ function Current-MaintenanceExe {
 }
 
 function Start-PreviousAgent([string]$Executable) {
-    $process = Start-Process -FilePath $Executable -ArgumentList @("--headless") -PassThru -WindowStyle Hidden
+    # Match the field failure: old installed Agent launched as the Startup service.
+    $process = Start-Process -FilePath $Executable -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     while ([DateTime]::UtcNow -lt $deadline) {
         $process.Refresh()
@@ -145,7 +147,7 @@ function Assert-ProcessExited($Process, [string]$Code) {
 }
 
 try {
-    # The previous release is mutable on GitHub in theory, so never trust the URL alone.
+    # Releases are mutable on GitHub in theory, so never trust the URL alone.
     Invoke-WebRequest -Uri $previousUrl -OutFile $previousMsi -UseBasicParsing
     $downloadedSha = (Get-FileHash -Algorithm SHA256 $previousMsi).Hash.ToLowerInvariant()
     if ($downloadedSha -ne $previousSha256) { throw "PREVIOUS_RELEASE_HASH_MISMATCH" }
@@ -163,10 +165,9 @@ try {
     if (-not (Test-Path $productKey)) { throw "PREVIOUS_PRODUCT_REGISTRY_MISSING" }
     if (-not (Test-Path $shortcut)) { throw "PREVIOUS_SHORTCUT_MISSING" }
 
-    # 0.2.0 predates the richer ProductMetadata/StartupRegistration contract.
     # Capture exactly what the historical MSI produced and require rollback to
-    # restore the same presence/absence and values instead of projecting 0.3.x
-    # registry fields backwards onto it.
+    # restore the same presence/absence and values instead of assuming current
+    # registry/startup metadata existed in the previous release.
     $baselineRegistry = @{}
     foreach ($name in @("Installed", "Version", "ProductCode", "InstallDir")) {
         $baselineRegistry[$name] = Get-RegistryValueSnapshot $productKey $name
