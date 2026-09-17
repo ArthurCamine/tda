@@ -147,15 +147,24 @@ def test_failed_recovery_enters_backoff_instead_of_spawn_storm(monkeypatch):
     assert connection.status()["retry_after_seconds"] > 0
 
 
-def test_compatible_agent_is_read_only_until_exact_version(monkeypatch):
-    connection = AgentConnection(TOKEN, 8765, lambda: None, expected_version="0.3.3")
-    compatible = AgentProbe("compatible", _payload("0.3.2"), "AGENT_VERSION_MISMATCH")
+def test_compatible_agent_is_replaced_before_any_authenticated_request(monkeypatch):
+    starts = 0
 
-    def compatible_probe(**_kwargs):
-        connection._record_probe(compatible)
-        return compatible
+    def start_agent():
+        nonlocal starts
+        starts += 1
 
-    monkeypatch.setattr(connection, "probe", compatible_probe)
+    connection = AgentConnection(TOKEN, 8765, start_agent, expected_version="0.3.3")
+
+    def versioned_probe(**_kwargs):
+        if starts:
+            probe = AgentProbe("exact", _payload("0.3.3"))
+        else:
+            probe = AgentProbe("compatible", _payload("0.3.2"), "AGENT_VERSION_MISMATCH")
+        connection._record_probe(probe)
+        return probe
+
+    monkeypatch.setattr(connection, "probe", versioned_probe)
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         connection,
@@ -164,10 +173,29 @@ def test_compatible_agent_is_read_only_until_exact_version(monkeypatch):
     )
 
     assert connection.get("/jobs") == {"ok": True}
+    assert starts == 1
+    assert calls == [("GET", "/jobs")]
+    assert connection.status()["state"] == "ready"
+    assert connection.status()["service_version"] == "0.3.3"
+
+
+def test_shutdown_refuses_to_authenticate_to_compatible_old_agent(monkeypatch):
+    connection = AgentConnection(TOKEN, 8765, lambda: None, expected_version="0.3.3")
+
+    def compatible_probe(**_kwargs):
+        probe = AgentProbe("compatible", _payload("0.3.2"), "AGENT_VERSION_MISMATCH")
+        connection._record_probe(probe)
+        return probe
+
+    monkeypatch.setattr(connection, "probe", compatible_probe)
+    monkeypatch.setattr(
+        connection,
+        "_request_once",
+        lambda *_args, **_kwargs: pytest.fail("old Agent must never receive the pairing token"),
+    )
+
     with pytest.raises(AgentConnectionError, match="AGENT_VERSION_MISMATCH"):
-        connection.post("/lifecycle", {"action": "pause"})
-    assert connection.post("/agent/control", {"action": "shutdown"}) == {"ok": True}
-    assert calls == [("GET", "/jobs"), ("POST", "/agent/control")]
+        connection.stop_by_user()
 
 
 def test_shutdown_is_idempotent_when_agent_is_already_down(monkeypatch):

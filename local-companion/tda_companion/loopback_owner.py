@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any, Callable, Iterable
-
-_VERSION_DIR = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-_COMPANION_EXE = "tdacompanion.exe"
 
 
 class LoopbackOwnerError(RuntimeError):
@@ -27,28 +23,13 @@ def _normalized_path(path: Path) -> str:
 
 
 def _trusted_companion_executable(actual_value: str | Path, expected_value: str | Path) -> bool:
+    # Authentication is stricter than recovery identity. Only the exact
+    # executable expected by this desktop may receive the pairing token. Old
+    # sibling versions are handled by Single Active Version reconciliation and
+    # are never an authenticated read-only fallback.
     expected = _resolved_path(expected_value)
     actual = _resolved_path(actual_value)
-    if _normalized_path(actual) == _normalized_path(expected):
-        return True
-
-    if expected.name.casefold() != _COMPANION_EXE:
-        return False
-    versions_root = expected.parent.parent
-    if (
-        versions_root.name.casefold() != "versions"
-        or _VERSION_DIR.fullmatch(expected.parent.name) is None
-    ):
-        return False
-    try:
-        relative = actual.relative_to(versions_root)
-    except ValueError:
-        return False
-    return (
-        len(relative.parts) == 2
-        and _VERSION_DIR.fullmatch(relative.parts[0]) is not None
-        and relative.parts[1].casefold() == _COMPANION_EXE
-    )
+    return _normalized_path(actual) == _normalized_path(expected)
 
 
 def _listener_address(address: Any) -> tuple[str, int]:
@@ -89,16 +70,12 @@ def verify_loopback_owner(
     connection_reader: Callable[[], Iterable[Any]] | None = None,
     process_executable: Callable[[int], str] | None = None,
 ) -> None:
-    """Fail closed unless the reported Agent PID owns the IPv4 loopback listener
-    and runs a trusted Companion executable.
+    """Fail closed unless the reported Agent is the exact packaged target.
 
-    The current executable is always accepted. Installed builds also accept a
-    sibling semver TDACompanion.exe under the same Companion/versions root so the
-    existing read-only version-compatibility path keeps working during upgrades.
-
-    This is defense in depth against a different local process spoofing /health.
-    It is not a privilege boundary against arbitrary code already running as the
-    same Windows user, which can also modify per-user installation files.
+    This verification is used before authenticated loopback requests. Recovery
+    of stale installed processes is intentionally a separate mechanism that can
+    recognize an old TDA process even when its executable has already disappeared
+    from disk; that weaker recovery identity is never enough to receive a token.
     """
     if not isinstance(port, int) or not 1024 <= port <= 65535:
         raise LoopbackOwnerError("AGENT_PORT_OWNER_UNVERIFIED")

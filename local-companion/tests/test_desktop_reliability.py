@@ -13,6 +13,7 @@ from tda_companion.desktop import DesktopBridge
 from tda_companion.desktop_session_bridge import SessionDesktopBridge
 from tda_companion.large_download import LargeDownloadError
 from tda_companion.network import NetworkError
+from tda_companion.system_log import SystemLog
 
 
 def _bridge(tmp_path: Path) -> SessionDesktopBridge:
@@ -98,9 +99,15 @@ def test_profile_discovery_failure_does_not_invalidate_selected_craig(monkeypatc
     assert result["error"] == "AGENT_CONNECTION_REFUSED"
 
 
-def test_background_logs_return_degraded_state_instead_of_throwing(monkeypatch, tmp_path: Path):
+def test_background_logs_use_local_fallback_when_agent_is_unavailable(monkeypatch, tmp_path: Path):
     bridge = _bridge(tmp_path)
     _offline(bridge.client)
+    SystemLog(bridge.paths.logs_root).write(
+        "warning",
+        "bootstrap",
+        "AGENT_RECOVERY_TEST",
+        "local log remains readable",
+    )
     monkeypatch.setattr(
         bridge.client,
         "get",
@@ -109,9 +116,12 @@ def test_background_logs_return_degraded_state_instead_of_throwing(monkeypatch, 
 
     result = bridge.logs(limit=50)
 
-    assert result["logs"] == []
-    assert result["unavailable"] is True
+    assert result["local_fallback"] is True
+    assert result["error"] == "AGENT_CONNECTION_REFUSED"
     assert result["connection"]["state"] == "unavailable"
+    assert len(result["logs"]) == 1
+    assert result["logs"][0]["code"] == "AGENT_RECOVERY_TEST"
+    assert result["logs"][0]["message"] == "local log remains readable"
 
 
 def test_installed_bridge_correlates_maintenance_operation_id(monkeypatch, tmp_path: Path):

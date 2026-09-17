@@ -1,4 +1,4 @@
-import { selectLatestCompanionInstallableRelease } from "@/features/edit/processing/companion-release";
+import { selectLatestCompanionStableRelease } from "@/features/edit/processing/companion-stable-release";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,7 +27,7 @@ export async function GET() {
 			);
 		}
 
-		const asset = selectLatestCompanionInstallableRelease(await releasesResponse.json());
+		const asset = selectLatestCompanionStableRelease(await releasesResponse.json());
 		if (!asset) {
 			return Response.json(
 				{ error: "COMPANION_RELEASE_NOT_FOUND" },
@@ -37,7 +37,7 @@ export async function GET() {
 
 		return Response.json(
 			{
-				channel: asset.channel,
+				channel: "stable",
 				version: asset.version,
 				tag: asset.tag,
 				minimum_api: "1",

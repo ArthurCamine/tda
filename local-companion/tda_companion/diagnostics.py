@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import VERSION
-from .agent import wait_until_ready
+from .agent_connection import AgentConnection
 from .asr_models import get_profile, inspect_model_install
 from .asr_runtime import inspect_whisper_runtime
 from .diagnostic_capabilities import build_capabilities, capability_rows, overall_status
@@ -23,12 +23,23 @@ from .paths import CompanionPaths
 from .qwen_acceptance import ALIGNER_PROFILE
 from .qwen_physical_gate import inspect_qwen_physical_gate
 from .qwen_runtime import inspect_qwen_runtime
+from .runtime_compat import (
+    MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
+    MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+)
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
 from .updates import PRODUCTION_ORIGIN, UpdateManifest, fetch_manifest
 
 WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 WEBVIEW2_RENDERER_ENV = "TDA_DESKTOP_RENDERER"
+_MAINTENANCE_DIAGNOSTIC_FILES = (
+    "last-operation.json",
+    "last-update.json",
+    "last-uninstall.json",
+    "last-maintenance-error.json",
+)
+_MAINTENANCE_DIAGNOSTIC_LIMIT = 64 * 1024
 
 
 def _check(code: str, status: str, message: str, detail: str | None = None) -> dict[str, Any]:
@@ -36,6 +47,66 @@ def _check(code: str, status: str, message: str, detail: str | None = None) -> d
     if detail:
         value["detail"] = detail[:240]
     return value
+
+
+def _agent_check(port: int) -> dict[str, Any]:
+    """Use the same identity + process-owner truth as authenticated desktop traffic.
+
+    AgentConnection.probe() never sends the pairing token and never invokes
+    recovery. In packaged builds it also verifies that the reported PID owns the
+    IPv4 loopback listener and that its executable is the exact installed
+    TDACompanion binary expected by this version.
+    """
+    connection = AgentConnection(
+        token="",
+        port=port,
+        start_agent=lambda: None,
+        expected_version=VERSION,
+    )
+    probe = connection.probe(timeout=0.5)
+    payload = probe.payload or {}
+    observed_version = payload.get("service_version")
+    pid = payload.get("pid")
+
+    if probe.state == "exact":
+        detail_parts = []
+        if isinstance(observed_version, str) and observed_version:
+            detail_parts.append(f"v{observed_version}")
+        if isinstance(pid, int) and pid > 0:
+            detail_parts.append(f"pid {pid}")
+        return _check(
+            "agent",
+            "pass",
+            "Agent local verificado",
+            " · ".join(detail_parts) or None,
+        )
+    if probe.state == "compatible":
+        detail = f"esperado v{VERSION}"
+        if isinstance(observed_version, str) and observed_version:
+            detail += f" · observado v{observed_version}"
+        if probe.code:
+            detail += f" · {probe.code}"
+        return _check("agent", "fail", "Agent local é de outra versão", detail)
+    if probe.state == "incompatible":
+        return _check(
+            "agent",
+            "fail",
+            "Agent local usa API incompatível",
+            probe.code or "AGENT_API_INCOMPATIBLE",
+        )
+    if probe.state == "foreign":
+        return _check(
+            "agent",
+            "fail",
+            "Porta local ocupada por processo não verificado",
+            probe.code or "AGENT_PORT_OWNER_UNVERIFIED",
+        )
+    return _check(
+        "agent",
+        "fail",
+        "Agent local não respondeu",
+        probe.code or "AGENT_UNAVAILABLE",
+    )
 
 
 def _writable_check(path: Path, code: str) -> dict[str, Any]:
@@ -137,6 +208,14 @@ def _whisper_runtime_check(paths: CompanionPaths) -> dict[str, Any]:
     version = state.get("version")
     if status == "missing":
         return _check("whisper_runtime", "unavailable", "Runtime Whisper ainda não está instalado")
+    if status == "incompatible":
+        installed = f"v{version}" if version else "desconhecida"
+        return _check(
+            "whisper_runtime",
+            "fail",
+            "Runtime Whisper está desatualizado para este Companion",
+            f"instalado {installed} · mínimo v{MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION}",
+        )
     if status != "ready":
         return _check(
             "whisper_runtime",
@@ -187,6 +266,14 @@ def _qwen_runtime_check(paths: CompanionPaths) -> dict[str, Any]:
     version = state.get("version")
     if status == "missing":
         return _check("qwen_runtime", "unavailable", "Runtime Qwen ainda não está instalado")
+    if status == "incompatible":
+        installed = f"v{version}" if version else "desconhecida"
+        return _check(
+            "qwen_runtime",
+            "fail",
+            "Runtime Qwen está desatualizado para este Companion",
+            f"instalado {installed} · mínimo v{MIN_COMPATIBLE_QWEN_RUNTIME_VERSION}",
+        )
     if status != "ready":
         return _check(
             "qwen_runtime",
@@ -443,13 +530,8 @@ def _maintenance_channel_check(manifest: UpdateManifest | None) -> dict[str, Any
 
 
 def run_diagnostics(paths: CompanionPaths, port: int) -> dict[str, Any]:
-    agent_ready = wait_until_ready(port, timeout=0.5)
     checks: list[dict[str, Any]] = [
-        _check(
-            "agent",
-            "pass" if agent_ready else "fail",
-            "Agent local respondendo" if agent_ready else "Agent local não respondeu",
-        ),
+        _agent_check(port),
         _writable_check(paths.state_root, "state"),
         _writable_check(paths.data_root, "data"),
         _sqlite_check(paths.data_root / "jobs.sqlite3"),
@@ -511,6 +593,26 @@ def run_diagnostics(paths: CompanionPaths, port: int) -> dict[str, Any]:
     }
 
 
+def _maintenance_diagnostics(paths: CompanionPaths) -> dict[str, Any]:
+    """Collect only bounded, structured maintenance receipts; never raw MSI logs."""
+    root = paths.cache_root / "maintenance"
+    evidence: dict[str, Any] = {}
+    for name in _MAINTENANCE_DIAGNOSTIC_FILES:
+        path = root / name
+        try:
+            if not path.is_file() or path.stat().st_size > _MAINTENANCE_DIAGNOSTIC_LIMIT:
+                continue
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            evidence[name] = {"status": "unreadable"}
+            continue
+        if isinstance(value, dict):
+            evidence[name] = value
+        else:
+            evidence[name] = {"status": "invalid_schema"}
+    return evidence
+
+
 def export_diagnostics(paths: CompanionPaths, port: int, destination: Path | None = None) -> Path:
     report = run_diagnostics(paths, port)
     if destination is None:
@@ -520,16 +622,20 @@ def export_diagnostics(paths: CompanionPaths, port: int, destination: Path | Non
 
     log = SystemLog(paths.logs_root)
     logs = log.tail(limit=500)
+    maintenance = _maintenance_diagnostics(paths)
     manifest = {
         "schema": "tda_diagnostics_v1",
         "version": VERSION,
         "contains_audio": False,
         "contains_transcript": False,
         "contains_pairing_token": False,
+        "contains_maintenance_evidence": bool(maintenance),
     }
 
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         archive.writestr("diagnostics.json", json.dumps(report, ensure_ascii=False, indent=2))
         archive.writestr("logs.json", json.dumps(logs, ensure_ascii=False, indent=2))
+        if maintenance:
+            archive.writestr("maintenance.json", json.dumps(maintenance, ensure_ascii=False, indent=2))
     return destination

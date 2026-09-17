@@ -199,15 +199,19 @@ def test_parse_manifest_never_allows_rc_version_only_download_url():
         )
 
 
-def test_fetch_manifest_uses_no_store_and_accepts_current_rc_contract():
-    client = _Client(json.dumps(_manifest_json(channel="rc")).encode("utf-8"))
+def test_fetch_manifest_is_stable_only_even_if_server_regresses_to_rc():
+    client = _Client(json.dumps(_manifest_json()).encode("utf-8"))
     result = fetch_manifest(timeout=4.5, client=client)  # type: ignore[arg-type]
 
     assert result.version == "0.3.6"
-    assert result.tag == "companion-rc-v0.3.6-0123456789ab"
+    assert result.tag == "companion-v0.3.6"
     assert client.timeout == 4.5
     assert client.request.get_header("Cache-control") == "no-store"
     assert client.request.get_header("Pragma") == "no-cache"
+
+    rc_client = _Client(json.dumps(_manifest_json(channel="rc")).encode("utf-8"))
+    with pytest.raises(NetworkError, match="^MANIFEST_INVALID$"):
+        fetch_manifest(client=rc_client)  # type: ignore[arg-type]
 
     with pytest.raises(NetworkError, match="^MANIFEST_INVALID$"):
         fetch_manifest(client=_Client(b"not-json"))  # type: ignore[arg-type]

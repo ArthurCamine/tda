@@ -45,6 +45,11 @@ function Invoke-RollbackProbe([string]$ProbeMsi, [string]$LogName) {
     if (-not (Test-Path $log)) { throw "ROLLBACK_PROBE_LOG_MISSING" }
     $probeMarker = Select-String -Path $log -SimpleMatch "TDA Companion rollback probe: forced upgrade failure." -Quiet
     if (-not $probeMarker) {
+        Write-Host "--- rollback probe action trace ---"
+        Select-String -Path $log -Pattern "PrepareMajorUpgrade|PrepareUninstall|RollbackProbeFailure|Return value 3|CustomAction" |
+            Select-Object -Last 80 |
+            ForEach-Object { Write-Host $_.Line }
+        Write-Host "--- rollback probe tail ---"
         Get-Content $log -Tail 200 | Write-Host
         throw "ROLLBACK_PROBE_DID_NOT_REACH_FORCED_FAILURE:$($result.ExitCode)"
     }
@@ -108,6 +113,37 @@ function Current-MaintenanceExe {
     return Join-Path $tdaRoot "Companion\versions\$CurrentVersion\TDACompanionMaintenance.exe"
 }
 
+function Start-PreviousAgent([string]$Executable) {
+    $process = Start-Process -FilePath $Executable -ArgumentList @("--headless") -PassThru -WindowStyle Hidden
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $process.Refresh()
+        if ($process.HasExited) {
+            throw "PREVIOUS_AGENT_EXITED_EARLY:$($process.ExitCode)"
+        }
+        try {
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/v1/health" -UseBasicParsing -TimeoutSec 1
+            if ($response.StatusCode -eq 200) {
+                return $process
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 150
+    }
+    try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+    throw "PREVIOUS_AGENT_START_TIMEOUT"
+}
+
+function Assert-ProcessExited($Process, [string]$Code) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(6)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $Process.Refresh()
+        if ($Process.HasExited) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    try { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue } catch {}
+    throw $Code
+}
+
 try {
     # The previous release is mutable on GitHub in theory, so never trust the URL alone.
     Invoke-WebRequest -Uri $previousUrl -OutFile $previousMsi -UseBasicParsing
@@ -119,7 +155,9 @@ try {
     Invoke-Msi @("/i", "`"$previousMsi`"", "/qn") "01-install-$previousVersion.log"
     $previousMarker = Join-Path $tdaRoot "Companion\current-version.txt"
     $previousExe = Join-Path $tdaRoot "Companion\versions\$previousVersion\TDACompanion.exe"
+    $previousVersionRoot = Split-Path $previousExe -Parent
     $candidateExe = Join-Path $tdaRoot "Companion\versions\$CurrentVersion\TDACompanion.exe"
+    $currentVersionRoot = Split-Path $candidateExe -Parent
     Assert-FileValue $previousMarker $previousVersion "PREVIOUS_VERSION_MARKER"
     if (-not (Test-Path $previousExe)) { throw "PREVIOUS_EXECUTABLE_MISSING" }
     if (-not (Test-Path $productKey)) { throw "PREVIOUS_PRODUCT_REGISTRY_MISSING" }
@@ -145,9 +183,14 @@ try {
     }
     $tokenBefore = (Get-Content $oldToken -Raw).Trim()
 
+    # The rollback path must first prove that the new MSI can stop an Agent that
+    # belongs to the old installed version before touching transactional MSI state.
+    $rollbackAgent = Start-PreviousAgent $previousExe
+
     # C-07: fail after RemoveExistingProducts. With Schedule=afterInstallInitialize,
     # this happens inside the MSI transaction and must restore the previous product.
     Invoke-RollbackProbe $rollbackProbeMsi "02-rollback-probe-$CurrentVersion.log"
+    Assert-ProcessExited $rollbackAgent "ROLLBACK_OLD_AGENT_SURVIVED_PREPARE_MAJOR_UPGRADE"
 
     Assert-FileValue $previousMarker $previousVersion "ROLLBACK_VERSION_MARKER"
     if (-not (Test-Path $previousExe)) { throw "ROLLBACK_PREVIOUS_EXECUTABLE_NOT_RESTORED" }
@@ -161,8 +204,11 @@ try {
     Assert-RegistryValueSnapshot $runKey "TDA Companion Agent" $baselineStartup "ROLLBACK_STARTUP"
     if (-not (Test-Path $shortcut)) { throw "ROLLBACK_SHORTCUT_NOT_RESTORED" }
 
-    # Real successful WiX MajorUpgrade after rollback proof.
+    # Repeat with a live old Agent for the successful MajorUpgrade path.
+    $upgradeAgent = Start-PreviousAgent $previousExe
     Invoke-Msi @("/i", "`"$msi`"", "/qn") "03-upgrade-to-$CurrentVersion.log"
+    Assert-ProcessExited $upgradeAgent "UPGRADE_OLD_AGENT_SURVIVED_PREPARE_MAJOR_UPGRADE"
+
     $currentMarker = Join-Path $tdaRoot "Companion\current-version.txt"
     Assert-FileValue $currentMarker $CurrentVersion "CURRENT_VERSION_MARKER"
     if (-not (Test-Path $candidateExe)) {
@@ -173,53 +219,55 @@ try {
     if (Test-Path $previousExe) {
         throw "PREVIOUS_EXECUTABLE_LEFT_AFTER_MAJOR_UPGRADE"
     }
+    if (Test-Path $previousVersionRoot) {
+        throw "PREVIOUS_VERSION_DIRECTORY_LEFT_AFTER_MAJOR_UPGRADE"
+    }
     $currentVersionRegistry = Get-RegistryValueSnapshot $productKey "Version"
     $currentProductCode = Get-RegistryValueSnapshot $productKey "ProductCode"
     if (-not $currentVersionRegistry.Exists -or [string]$currentVersionRegistry.Value -ne $CurrentVersion) {
         throw "CURRENT_REGISTRY_VERSION_INVALID"
     }
     if (-not $currentProductCode.Exists -or -not [string]$currentProductCode.Value) {
-        throw "CURRENT_PRODUCT_CODE_MISSING"
+        throw "CURRENT_REGISTRY_PRODUCT_CODE_INVALID"
     }
+    if (-not (Test-Path $shortcut)) { throw "CURRENT_SHORTCUT_MISSING" }
 
-    # Normal uninstall must remove application integration and preserve all user roots.
-    Invoke-Msi @("/x", "`"$msi`"", "/qn") "04-uninstall-preserve.log"
-    if (Test-Path $currentMarker) { throw "VERSION_MARKER_LEFT_AFTER_PRESERVE_UNINSTALL" }
+    # Preserve uninstall keeps persistent roots but removes every application-owned
+    # executable/marker/registry/shortcut/startup artifact.
+    $maintenanceExe = Current-MaintenanceExe
+    if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_MISSING_AFTER_UPGRADE" }
+    $uninstall = Start-Process -FilePath $maintenanceExe -ArgumentList @("--uninstall", "--parent-pid", "0") -Wait -PassThru
+    if ($uninstall.ExitCode -ne 0) { throw "MAINTENANCE_PRESERVE_UNINSTALL_FAILED:$($uninstall.ExitCode)" }
     Assert-PersistentRoots "keep-across-upgrade"
-    Assert-FileValue $oldToken $tokenBefore "PAIRING_TOKEN_PRESERVE_UNINSTALL"
+    if (Test-Path $candidateExe) { throw "PRESERVE_UNINSTALL_EXECUTABLE_LEFT_BEHIND" }
+    if (Test-Path $currentVersionRoot) { throw "PRESERVE_UNINSTALL_VERSION_DIRECTORY_LEFT_BEHIND" }
+    if (Test-Path $currentMarker) { throw "PRESERVE_UNINSTALL_VERSION_MARKER_LEFT_BEHIND" }
+    if (Test-Path $productKey) { throw "PRESERVE_UNINSTALL_PRODUCT_REGISTRY_LEFT_BEHIND" }
+    if (Test-Path $shortcut) { throw "PRESERVE_UNINSTALL_SHORTCUT_LEFT_BEHIND" }
+    $startupAfterUninstall = Get-RegistryValueSnapshot $runKey "TDA Companion Agent"
+    if ($startupAfterUninstall.Exists) { throw "PRESERVE_UNINSTALL_STARTUP_LEFT_BEHIND" }
 
-    # Reinstall and prove the product-owned maintenance executable can purge everything.
-    Invoke-Msi @("/i", "`"$msi`"", "/qn") "05-reinstall-for-purge.log"
-    Seed-PersistentRoots "remove-on-purge"
-    $maintenance = Current-MaintenanceExe
-    if (-not (Test-Path $maintenance)) { throw "MAINTENANCE_EXECUTABLE_MISSING" }
-    $purge = Start-Process -FilePath $maintenance -ArgumentList @("--uninstall", "--purge", "--root", "`"$tdaRoot`"") -Wait -PassThru
-    if ($purge.ExitCode -ne 0) { throw "PURGE_EXIT_CODE:$($purge.ExitCode)" }
-    if (Test-Path $tdaRoot) {
-        Get-ChildItem -Force -Recurse $tdaRoot -ErrorAction SilentlyContinue | Select-Object -First 80 | Format-Table | Out-String | Write-Host
-        throw "PURGE_ROOT_LEFT_BEHIND"
-    }
+    # Reinstall and verify explicit purge removes every TDA per-user root.
+    Invoke-Msi @("/i", "`"$msi`"", "/qn") "04-reinstall-for-purge.log"
+    $maintenanceExe = Current-MaintenanceExe
+    if (-not (Test-Path $maintenanceExe)) { throw "MAINTENANCE_EXE_MISSING_BEFORE_PURGE" }
+    $purge = Start-Process -FilePath $maintenanceExe -ArgumentList @("--uninstall", "--purge", "--parent-pid", "0") -Wait -PassThru
+    if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
+    if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
-    Write-Host "TDA Companion lifecycle smoke: PASS ($previousVersion -> forced rollback -> $CurrentVersion -> preserve uninstall -> purge)"
+    Write-Host "TDA Companion rollback, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {
-    # Best-effort cleanup only if the test failed before purge. 0.2.0 did not
-    # publish ProductCode in the TDA registry, so its verified baseline MSI is
-    # the authoritative uninstall fallback.
-    if (Test-Path $tdaRoot) {
-        $maintenance = Current-MaintenanceExe
-        if (Test-Path $maintenance) {
-            try { Start-Process -FilePath $maintenance -ArgumentList @("--uninstall", "--purge", "--root", "`"$tdaRoot`"") -Wait | Out-Null } catch { }
-        } elseif (Test-Path $productKey) {
-            try {
-                $productCodeSnapshot = Get-RegistryValueSnapshot $productKey "ProductCode"
-                if ($productCodeSnapshot.Exists -and [string]$productCodeSnapshot.Value) {
-                    Start-Process -FilePath "msiexec.exe" -ArgumentList @("/x", [string]$productCodeSnapshot.Value, "/qn", "/norestart") -Wait | Out-Null
-                } elseif (Test-Path $previousMsi) {
-                    Start-Process -FilePath "msiexec.exe" -ArgumentList @("/x", "`"$previousMsi`"", "/qn", "/norestart") -Wait | Out-Null
-                }
-            } catch { }
+    try {
+        Get-Process TDACompanion -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like (Join-Path $tdaRoot "Companion\versions\*") } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+    } catch {}
+    try {
+        $installedCode = (Get-ItemProperty -Path $productKey -ErrorAction SilentlyContinue).ProductCode
+        if ($installedCode) {
+            Start-Process -FilePath "msiexec.exe" -ArgumentList @("/x", $installedCode, "/qn", "/norestart") -Wait | Out-Null
         }
-    }
-    Remove-Item $previousMsi -Force -ErrorAction SilentlyContinue
+    } catch {}
+    Remove-Item $tdaRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
