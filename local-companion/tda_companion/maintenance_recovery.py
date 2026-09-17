@@ -13,6 +13,11 @@ from .single_active_version import installed_image_identity
 _OPERATION_ID = re.compile(r"^[0-9a-f]{32}$")
 _STALE_SECONDS = 120.0
 _MAX_BYTES = 64 * 1024
+_REQUIRED_TARGET_FILES = (
+    "TDACompanion.exe",
+    "TDACompanionMaintenance.exe",
+    "_internal/base_library.zip",
+)
 # Only these running stages prove that msiexec already returned successfully.
 # Earlier stages can describe a same-version repair that never actually ran, so
 # filesystem equality alone must never turn them into a false success receipt.
@@ -48,6 +53,20 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _complete_target_install(paths: CompanionPaths, version: str, executable: Path) -> bool:
+    root = paths.companion_root / "versions" / version
+    try:
+        if not root.is_dir() or root.is_symlink():
+            return False
+        for relative in _REQUIRED_TARGET_FILES:
+            path = root.joinpath(*relative.split("/"))
+            if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
+                return False
+        return (root / "TDACompanion.exe").resolve() == executable.resolve()
+    except OSError:
+        return False
+
+
 def recover_interrupted_maintenance(
     paths: CompanionPaths,
     current_version: str,
@@ -57,16 +76,10 @@ def recover_interrupted_maintenance(
 ) -> dict[str, Any] | None:
     """Resolve a stale running journal from the installation state that survived.
 
-    Windows Installer owns transaction rollback. If the maintenance helper dies
-    after MSI commit, the new packaged app can prove that the target installation
-    is present and close the journal as recovered. If the previous version is the
-    one that survived, the journal is closed as failed/rolled back. Fresh journals
-    are left untouched so a concurrently running helper is never second-guessed.
-
-    A same-version installation is not proof by itself: repair/reinstall attempts
-    may have had the target files before msiexec was ever launched. Therefore a
-    stale update is only recovered as completed from a stage reached *after*
-    msiexec returned successfully.
+    Windows Installer owns transaction rollback. Recovery only closes an update
+    as successful if a post-msiexec stage was reached *and* the surviving target
+    is materially complete. A lone executable or torn version directory is never
+    promoted to a success receipt.
     """
     belongs, running_version = installed_image_identity(
         executable,
@@ -108,14 +121,12 @@ def recover_interrupted_maintenance(
         marker = paths.companion_root / "current-version.txt"
         try:
             installed_marker = marker.read_text(encoding="utf-8").strip()
-        except OSError:
+        except (OSError, UnicodeError):
             installed_marker = ""
-        target_executable = paths.companion_root / "versions" / current_version / "TDACompanion.exe"
         target_survived = bool(
             target_version == current_version
             and installed_marker == current_version
-            and target_executable.is_file()
-            and target_executable.resolve() == executable.resolve()
+            and _complete_target_install(paths, current_version, executable)
         )
 
         if target_survived and stage in _UPDATE_COMMIT_PROVABLE_STAGES:
@@ -124,9 +135,6 @@ def recover_interrupted_maintenance(
             recovered["error_code"] = None
             recovered["recovery"] = "target_installation_survived"
         elif target_survived:
-            # The target already being present is ambiguous for a same-version
-            # repair. Preserve that truth instead of claiming either success or
-            # MSI rollback without evidence.
             recovered["status"] = "failed"
             recovered["stage"] = "failed"
             recovered["failure_stage"] = stage
@@ -137,10 +145,8 @@ def recover_interrupted_maintenance(
             recovered["stage"] = "failed"
             recovered["failure_stage"] = stage
             recovered["error_code"] = "UPDATE_INTERRUPTED_ROLLED_BACK"
-            recovered["recovery"] = "running_version_survived"
+            recovered["recovery"] = "running_version_survived_or_target_incomplete"
     else:
-        # If this packaged application can start, explicit uninstall did not
-        # finish. Keep user data and close the stale operation deterministically.
         recovered["status"] = "failed"
         recovered["stage"] = "failed"
         recovered["failure_stage"] = stage
