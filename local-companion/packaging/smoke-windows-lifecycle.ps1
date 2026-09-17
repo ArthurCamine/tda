@@ -91,7 +91,7 @@ function Assert-RegistryValueSnapshot(
     if ([bool]$actual.Exists -ne [bool]$Expected.Exists) {
         throw "$Code`:EXISTENCE_CHANGED"
     }
-    if ($actual.Exists -and ([string]$actual.Value -cne [string]$Expected.Value) {
+    if ($actual.Exists -and ([string]$actual.Value -cne [string]$Expected.Value)) {
         throw "$Code`:VALUE_CHANGED"
     }
 }
