@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseCompanionDownloadManifest } from "./companion-download";
+import {
+	companionManifestUrl,
+	parseCompanionDownloadManifest,
+} from "./companion-download";
+
+describe("companionManifestUrl", () => {
+	it("keeps stable as the default surface and requires explicit RC opt-in", () => {
+		expect(companionManifestUrl("stable")).toBe(
+			"/api/downloads/companion/windows/manifest",
+		);
+		expect(companionManifestUrl("rc")).toBe(
+			"/api/downloads/companion/windows/manifest?channel=rc",
+		);
+	});
+});
 
 describe("parseCompanionDownloadManifest", () => {
 	it("binds a stable version to the exact pinned stable tag", () => {
@@ -20,19 +34,19 @@ describe("parseCompanionDownloadManifest", () => {
 		});
 	});
 
-	it("accepts a newer RC only when channel, version, tag and URL agree", () => {
-		const tag = "companion-rc-v0.3.4-abcdef123456";
+	it("accepts an RC only when channel, version, tag and URL agree", () => {
+		const tag = "companion-rc-v0.3.8-abcdef123456";
 		expect(
 			parseCompanionDownloadManifest({
 				channel: "rc",
-				version: "0.3.4",
+				version: "0.3.8",
 				tag,
 				asset: {
 					url: `/api/downloads/companion/windows?tag=${tag}`,
 				},
 			}),
 		).toEqual({
-			version: "0.3.4",
+			version: "0.3.8",
 			channel: "rc",
 			tag,
 			url: `/api/downloads/companion/windows?tag=${tag}`,
