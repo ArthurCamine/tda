@@ -54,6 +54,15 @@ def open_verified_release(
     expected_github_url: str,
     timeout: float,
 ):
-    """Open a TDA download endpoint while constraining its complete redirect chain."""
-    opener = urllib.request.build_opener(_ReleaseRedirectHandler(expected_github_url))
+    """Open a TDA release while constraining every redirect in the chain.
+
+    Stable downloads normally start at dnd.faysk.dev and must first redirect to
+    the exact GitHub asset. Runtime RC discovery already resolves an immutable
+    exact GitHub asset, so that direct form is also accepted; its first redirect
+    must then be GitHub's official release-asset storage host.
+    """
+    handler = _ReleaseRedirectHandler(expected_github_url)
+    if request.full_url == expected_github_url:
+        handler.reached_github = True
+    opener = urllib.request.build_opener(handler)
     return opener.open(request, timeout=timeout)
