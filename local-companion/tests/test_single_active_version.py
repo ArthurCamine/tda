@@ -214,20 +214,23 @@ def test_partial_newer_directory_never_becomes_authoritative(tmp_path: Path):
     assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.8"
 
 
-def test_current_target_must_be_materially_complete_before_cleanup(tmp_path: Path):
+def test_current_target_must_be_materially_complete_before_any_destructive_cleanup(tmp_path: Path):
     paths = _paths(tmp_path)
     target = paths.companion_root / "versions" / "0.3.8" / "TDACompanion.exe"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"companion")
     old = _installed_executable(paths, "0.3.7")
+    old_process = InstalledCompanionProcess(pid=7007, image_path=old, version="0.3.7")
 
-    with pytest.raises(SingleActiveVersionError, match="NO_VALID_INSTALLED_VERSION"):
+    with pytest.raises(SingleActiveVersionError, match="TARGET_INSTALLATION_INCOMPLETE"):
         reconcile_packaged_installation(
             paths,
             "0.3.8",
             target,
             current_pid=5000,
-            scan=lambda: [],
+            scan=lambda: [old_process],
+            terminate_pid=lambda _pid: pytest.fail("incomplete target must not terminate healthy old version"),
+            remove_entry=lambda _path: pytest.fail("incomplete target must not delete healthy old version"),
             sleep=lambda _seconds: None,
         )
 
