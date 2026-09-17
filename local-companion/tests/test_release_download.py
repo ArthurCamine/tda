@@ -5,6 +5,7 @@ from urllib.request import Request
 
 import pytest
 
+import tda_companion.release_download as release_download
 from tda_companion.release_download import ReleaseRedirectError, _ReleaseRedirectHandler
 
 
@@ -30,6 +31,34 @@ def test_release_redirect_accepts_exact_github_asset_then_github_storage():
     storage_url = "https://release-assets.githubusercontent.com/github-production-release-asset/x?sig=abc"
     storage = _redirect(handler, github, storage_url)
     assert storage.full_url == storage_url
+
+
+def test_open_verified_release_marks_direct_exact_github_request_as_reached(monkeypatch):
+    captured = {}
+
+    class Opener:
+        def open(self, request, timeout):  # noqa: ANN001
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return object()
+
+    def build_opener(handler):  # noqa: ANN001
+        captured["handler"] = handler
+        return Opener()
+
+    monkeypatch.setattr(release_download.urllib.request, "build_opener", build_opener)
+    request = Request(EXPECTED)
+    result = release_download.open_verified_release(
+        request,
+        expected_github_url=EXPECTED,
+        timeout=7.0,
+    )
+
+    assert result is not None
+    assert captured["handler"].reached_github is True
+    storage_url = "https://release-assets.githubusercontent.com/github-production-release-asset/x?sig=abc"
+    redirected = _redirect(captured["handler"], request, storage_url)
+    assert redirected.full_url == storage_url
 
 
 def test_release_redirect_rejects_any_first_hop_other_than_exact_expected_asset():
