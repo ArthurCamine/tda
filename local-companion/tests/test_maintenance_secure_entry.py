@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def _load_secure_module():
     if "winreg" not in sys.modules:
@@ -31,11 +33,18 @@ def test_secure_maintenance_never_reads_or_posts_pairing_token(tmp_path: Path, m
     legacy = secure.legacy
     removed: list[bool] = []
     terminated: list[int] = []
+    alive = {111, 222}
 
     monkeypatch.setattr(legacy, "_remove_startup_value", lambda: removed.append(True))
-    monkeypatch.setattr(legacy, "_installed_companion_pids", lambda _root: [111, 222])
+    monkeypatch.setattr(legacy, "_installed_companion_pids", lambda _root: sorted(alive))
     monkeypatch.setattr(secure.os, "getpid", lambda: 111)
-    monkeypatch.setattr(legacy, "_terminate_pid", lambda pid: terminated.append(pid))
+
+    def terminate(pid: int):
+        terminated.append(pid)
+        alive.discard(pid)
+
+    monkeypatch.setattr(legacy, "_terminate_pid", terminate)
+    monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         legacy,
         "_token",
@@ -53,6 +62,21 @@ def test_secure_maintenance_never_reads_or_posts_pairing_token(tmp_path: Path, m
 
     assert removed == [True]
     assert terminated == [222]
+    assert alive == {111}
+
+
+def test_secure_maintenance_fails_closed_when_old_process_survives(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    legacy = secure.legacy
+
+    monkeypatch.setattr(legacy, "_remove_startup_value", lambda: None)
+    monkeypatch.setattr(legacy, "_installed_companion_pids", lambda _root: [222])
+    monkeypatch.setattr(secure.os, "getpid", lambda: 111)
+    monkeypatch.setattr(legacy, "_terminate_pid", lambda _pid: None)
+    monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(legacy.MaintenanceError, match="TDA_PROCESS_STILL_RUNNING"):
+        secure.prepare_uninstall(tmp_path, 8765)
 
 
 def test_secure_entry_replaces_legacy_dispatch_symbol():
