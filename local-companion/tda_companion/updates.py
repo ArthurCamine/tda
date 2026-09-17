@@ -91,6 +91,12 @@ def _release_locked_download_url(
 
 
 def parse_manifest(value: object) -> UpdateManifest:
+    """Validate either release channel for explicit tooling/tests.
+
+    The production desktop stable client adds a stricter channel check in
+    fetch_manifest(). Keeping this parser channel-generic lets explicit RC
+    tooling validate immutable RC manifests without weakening stable installs.
+    """
     if not isinstance(value, dict):
         raise ValueError("INVALID_UPDATE_MANIFEST")
 
@@ -133,6 +139,12 @@ def fetch_manifest(
     *,
     client: NetworkClient | None = None,
 ) -> UpdateManifest:
+    """Fetch the production *stable* manifest and reject any prerelease response.
+
+    This is intentionally defense in depth. Even if the server-side stable
+    selector regresses in the future, an installed stable Companion must never
+    consume an RC merely because its semantic version is higher.
+    """
     request = urllib.request.Request(
         MANIFEST_URL,
         headers={
@@ -150,7 +162,10 @@ def fetch_manifest(
         if len(body) > 64 * 1024:
             raise NetworkError("MANIFEST_INVALID")
     try:
-        return parse_manifest(json.loads(body.decode("utf-8")))
+        value = json.loads(body.decode("utf-8"))
+        if not isinstance(value, dict) or value.get("channel") != "stable":
+            raise ValueError("STABLE_UPDATE_CHANNEL_REQUIRED")
+        return parse_manifest(value)
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise NetworkError("MANIFEST_INVALID") from exc
 
