@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -55,10 +56,10 @@ def test_old_compatible_agent_is_not_accepted_as_operational_fallback(monkeypatc
         windows_app.ensure_agent_running(args)
 
 
-def test_unavailable_agent_spawns_and_waits_for_exact_version(monkeypatch, tmp_path):
+def test_unavailable_agent_spawns_once_inside_bootstrap_lock(monkeypatch, tmp_path):
     args = _args(tmp_path)
     process = SimpleNamespace(poll=lambda: None)
-    observed = {}
+    observed = {"lock_entered": 0, "lock_exited": 0}
 
     monkeypatch.setattr(windows_app, "_reconcile_installation", lambda _paths: None)
     monkeypatch.setattr(
@@ -67,7 +68,19 @@ def test_unavailable_agent_spawns_and_waits_for_exact_version(monkeypatch, tmp_p
         lambda *_args, **_kwargs: AgentProbe("unavailable", code="AGENT_CONNECTION_REFUSED"),
     )
 
+    @contextmanager
+    def fake_bootstrap_lock():
+        observed["lock_entered"] += 1
+        try:
+            yield
+        finally:
+            observed["lock_exited"] += 1
+
+    monkeypatch.setattr(windows_app, "agent_bootstrap_lock", fake_bootstrap_lock)
+
     def fake_popen(command, **kwargs):
+        assert observed["lock_entered"] == 1
+        assert observed["lock_exited"] == 0
         observed["command"] = command
         observed["kwargs"] = kwargs
         return process
@@ -87,6 +100,8 @@ def test_unavailable_agent_spawns_and_waits_for_exact_version(monkeypatch, tmp_p
     )
 
     assert windows_app.ensure_agent_running(args) is process
+    assert observed["lock_entered"] == 1
+    assert observed["lock_exited"] == 1
     assert "--agent" in observed["command"]
     assert observed["port"] == 8765
     assert observed["expected_version"] == windows_app.VERSION
