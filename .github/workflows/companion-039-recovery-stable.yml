@@ -1,0 +1,174 @@
+name: Companion 0.3.9 Recovery Stable Bridge
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-bridge:
+    name: publish one-time self-update bridge
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate exact successful main CI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$TRIGGER_RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRIGGER_RUN_ID" > trigger-run.json
+          python - <<'PY'
+          import json, os
+          value = json.load(open('trigger-run.json', encoding='utf-8'))
+          if value.get('name') != 'CI':
+              raise SystemExit('BRIDGE_TRIGGER_WORKFLOW_INVALID')
+          if value.get('head_sha') != os.environ['SOURCE_SHA']:
+              raise SystemExit('BRIDGE_TRIGGER_SOURCE_MISMATCH')
+          if value.get('conclusion') != 'success' or value.get('status') != 'completed':
+              raise SystemExit('BRIDGE_TRIGGER_NOT_SUCCESSFUL')
+          if value.get('event') != 'push' or value.get('head_branch') != 'main':
+              raise SystemExit('BRIDGE_TRIGGER_NOT_MAIN_PUSH')
+          PY
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the one-time bridge version
+        id: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(PYTHONPATH=local-companion python -c 'import tda_companion; print(tda_companion.VERSION)')"
+          if [[ "$VERSION" != "0.3.9" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Recovery bridge is intentionally limited to Companion 0.3.9." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=companion-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve exact CI artifact
+        if: steps.bridge.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRIGGER_RUN_ID/artifacts?per_page=100" > artifacts.json
+          python - <<'PY'
+          import json
+          rows = json.load(open('artifacts.json', encoding='utf-8')).get('artifacts', [])
+          exact = [a for a in rows if a.get('name') == 'TDACompanion-windows-x64' and not a.get('expired', False)]
+          if len(exact) != 1:
+              raise SystemExit(f'BRIDGE_ARTIFACT_COUNT_INVALID:{len(exact)}')
+          PY
+
+      - name: Download exact validated Companion bytes
+        if: steps.bridge.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$TRIGGER_RUN_ID" --repo "$GITHUB_REPOSITORY" --name TDACompanion-windows-x64 --dir dist
+          test -f dist/TDACompanion-x64.msi
+          test -f dist/TDACompanion-x64.msi.sha256
+          test -f dist/TDACompanion-payload-manifest.json
+          test -f dist/TDACompanion-0.3.9-windows-x64.zip
+          EXPECTED="$(awk '{print tolower($1)}' dist/TDACompanion-x64.msi.sha256)"
+          ACTUAL="$(sha256sum dist/TDACompanion-x64.msi | awk '{print $1}')"
+          [[ "$EXPECTED" == "$ACTUAL" ]] || { echo "::error::MSI checksum mismatch"; exit 1; }
+
+      - name: Build immutable candidate evidence
+        if: steps.bridge.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TREE_SHA="$(git rev-parse 'HEAD^{tree}')"
+          PYTHONPATH=local-companion python -m tda_companion.release_evidence candidate-manifest             --source-sha "$SOURCE_SHA"             --source-tree-sha "$TREE_SHA"             --workflow-run-id "$TRIGGER_RUN_ID"             --msi dist/TDACompanion-x64.msi             --checksum dist/TDACompanion-x64.msi.sha256             --zip dist/TDACompanion-0.3.9-windows-x64.zip             --payload-manifest dist/TDACompanion-payload-manifest.json             --output dist/TDACompanion-candidate.json >/dev/null
+
+      - name: Publish or verify one-time Stable bridge
+        if: steps.bridge.outputs.enabled == 'true'
+        shell: bash
+        env:
+          STABLE_TAG: ${{ steps.bridge.outputs.stable_tag }}
+          BRIDGE_VERSION: ${{ steps.bridge.outputs.version }}
+        run: |
+          set -euo pipefail
+          MSI_SHA="$(sha256sum dist/TDACompanion-x64.msi | awk '{print $1}')"
+
+          if gh release view "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > stable.json
+            python - <<'PY'
+          import json, os
+          value = json.load(open('stable.json', encoding='utf-8'))
+          if value.get('tagName') != os.environ['STABLE_TAG'] or value.get('isDraft') is not False or value.get('isPrerelease') is not False:
+              raise SystemExit('BRIDGE_EXISTING_RELEASE_STATE_INVALID')
+          if value.get('targetCommitish') != os.environ['SOURCE_SHA']:
+              raise SystemExit('BRIDGE_EXISTING_RELEASE_SOURCE_MISMATCH')
+          PY
+            rm -rf existing && mkdir existing
+            gh release download "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" --dir existing
+            cmp -s existing/TDACompanion-x64.msi dist/TDACompanion-x64.msi
+            cmp -s existing/TDACompanion-x64.msi.sha256 dist/TDACompanion-x64.msi.sha256
+            cmp -s existing/TDACompanion-payload-manifest.json dist/TDACompanion-payload-manifest.json
+            cmp -s existing/TDACompanion-candidate.json dist/TDACompanion-candidate.json
+            cmp -s existing/TDACompanion-0.3.9-windows-x64.zip dist/TDACompanion-0.3.9-windows-x64.zip
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$STABLE_TAG" >/dev/null 2>&1; then
+            echo "::error::Stable bridge tag exists without a matching release"
+            exit 1
+          fi
+
+          cat > release-notes.md <<EOF
+          TDA Companion v${BRIDGE_VERSION} — one-time automatic recovery bridge.
+
+          This release exists so installed 0.3.8 clients, whose updater intentionally
+          accepts only the Stable channel, can reach the hardened lifecycle/runtime
+          delivery build through the normal in-app update flow. No manual MSI download
+          is required.
+
+          - Source SHA: ${SOURCE_SHA}
+          - Validated CI run: ${TRIGGER_RUN_ID}
+          - MSI SHA-256: ${MSI_SHA}
+          - Exact CI-produced bytes; no rebuild in this workflow.
+          EOF
+          gh release create "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA"             --title "TDA Companion v${BRIDGE_VERSION}" --notes-file release-notes.md --latest             dist/TDACompanion-x64.msi dist/TDACompanion-x64.msi.sha256             dist/TDACompanion-0.3.9-windows-x64.zip             dist/TDACompanion-payload-manifest.json dist/TDACompanion-candidate.json
+
+      - name: Verify Stable bridge from fresh release bytes
+        if: steps.bridge.outputs.enabled == 'true'
+        shell: bash
+        env:
+          STABLE_TAG: ${{ steps.bridge.outputs.stable_tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,targetCommitish > final.json
+          python - <<'PY'
+          import json, os
+          value = json.load(open('final.json', encoding='utf-8'))
+          if value.get('tagName') != os.environ['STABLE_TAG'] or value.get('isDraft') is not False or value.get('isPrerelease') is not False:
+              raise SystemExit('BRIDGE_FINAL_RELEASE_STATE_INVALID')
+          if value.get('targetCommitish') != os.environ['SOURCE_SHA']:
+              raise SystemExit('BRIDGE_FINAL_RELEASE_SOURCE_MISMATCH')
+          PY
+          rm -rf final && mkdir final
+          gh release download "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" --dir final
+          test -f final/TDACompanion-x64.msi
+          [[ "$(sha256sum final/TDACompanion-x64.msi | awk '{print $1}')" == "$(awk '{print tolower($1)}' final/TDACompanion-x64.msi.sha256)" ]]
+          git fetch --force origin "refs/tags/$STABLE_TAG:refs/tags/$STABLE_TAG"
+          [[ "$(git rev-list -n 1 "$STABLE_TAG")" == "$SOURCE_SHA" ]]
+          echo "RECOVERY_STABLE_BRIDGE_READY tag=$STABLE_TAG source=$SOURCE_SHA"
