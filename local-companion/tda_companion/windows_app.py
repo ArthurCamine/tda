@@ -169,11 +169,27 @@ def _redirect_to_active_version(args: argparse.Namespace, result: ReconcileResul
     return True
 
 
+def _agent_bootstrap_diagnostic(paths: CompanionPaths) -> Path:
+    return paths.cache_root / "diagnostics" / "last-agent-bootstrap.txt"
+
+
+def _read_agent_bootstrap_diagnostic(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.stat().st_size > 4096:
+            return None
+        line = path.read_text(encoding="utf-8").splitlines()[0].strip()
+    except (OSError, UnicodeError, IndexError):
+        return None
+    safe = re.sub(r"[^A-Za-z0-9_.:-]", "_", line)[:180]
+    return safe or None
+
+
 def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
     # Installation repair and Agent bootstrap use distinct mutexes. The parent UI
     # may hold the bootstrap lock while the child Agent acquires the installation
     # lock during its own startup, avoiding both duplicate spawn and deadlock.
-    reconciliation = _reconcile_installation(_paths_for_args(args))
+    paths = _paths_for_args(args)
+    reconciliation = _reconcile_installation(paths)
     if reconciliation.redirect_executable is not None:
         raise RuntimeError("ACTIVE_VERSION_REDIRECT_REQUIRED")
 
@@ -186,11 +202,21 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
         if existing.state in {"foreign", "incompatible"}:
             return None
 
+        agent_diagnostic = _agent_bootstrap_diagnostic(paths)
+        try:
+            agent_diagnostic.parent.mkdir(parents=True, exist_ok=True)
+            agent_diagnostic.unlink(missing_ok=True)
+        except OSError:
+            # Diagnostics must never become a new reason for Agent startup to fail.
+            agent_diagnostic = paths.cache_root / f"agent-bootstrap-{os.getpid()}.txt"
+
         creationflags = 0
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
-            _entry_command() + _agent_arguments(args),
+            _entry_command()
+            + _agent_arguments(args)
+            + ["--diagnostic-file", str(agent_diagnostic)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -200,10 +226,14 @@ def ensure_agent_running(args: argparse.Namespace) -> subprocess.Popen | None:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}")
+                detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
+                suffix = f":{detail}" if detail else ""
+                raise RuntimeError(f"LOCAL_AGENT_EXITED:{process.returncode}{suffix}")
             if wait_until_ready(args.port, timeout=0.3, expected_version=VERSION):
                 return process
-        raise RuntimeError("LOCAL_AGENT_START_TIMEOUT")
+        detail = _read_agent_bootstrap_diagnostic(agent_diagnostic)
+        suffix = f":{detail}" if detail else ""
+        raise RuntimeError(f"LOCAL_AGENT_START_TIMEOUT{suffix}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
