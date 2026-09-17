@@ -115,6 +115,48 @@ jobs:
             exit 1
           fi
 
+      - name: Require compatible stable runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft,isPrerelease > stable-runtime-releases.json
+          PYTHONPATH=local-companion python - <<'PY'
+          import json
+          import re
+          from tda_companion.runtime_compat import (
+              MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
+              MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+              version_tuple,
+          )
+
+          releases = json.load(open('stable-runtime-releases.json', encoding='utf-8'))
+          families = {
+              'whisper': (
+                  re.compile(r'^companion-whisper-runtime-v(\d+\.\d+\.\d+)$'),
+                  MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+              ),
+              'qwen': (
+                  re.compile(r'^companion-qwen-runtime-v(\d+\.\d+\.\d+)$'),
+                  MIN_COMPATIBLE_QWEN_RUNTIME_VERSION,
+              ),
+          }
+          for family, (pattern, minimum) in families.items():
+              versions = []
+              for release in releases:
+                  if release.get('isDraft') is not False or release.get('isPrerelease') is not False:
+                      continue
+                  match = pattern.fullmatch(str(release.get('tagName') or ''))
+                  if match:
+                      versions.append(match.group(1))
+              latest = max(versions, key=version_tuple) if versions else None
+              if latest is None or version_tuple(latest) < version_tuple(minimum):
+                  raise SystemExit(
+                      f'COMPANION_STABLE_{family.upper()}_RUNTIME_INCOMPATIBLE:'
+                      f'latest={latest or "missing"}:minimum={minimum}'
+                  )
+              print(f'STABLE_RUNTIME_COMPATIBLE family={family} latest={latest} minimum={minimum}')
+          PY
+
       - name: Verify RC tag and release target resolve to tested source
         shell: bash
         run: |
