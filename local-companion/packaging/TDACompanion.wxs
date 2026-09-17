@@ -40,6 +40,15 @@
         KeyPath="yes" />
     </Component>
 
+    <!-- A second copy of the maintenance helper lives in the MSI Binary table.
+         It can run before RemoveExistingProducts, which is essential when the
+         cached MSI for the currently installed version does not know how to stop
+         a stale Agent during MajorUpgrade. It is extracted to MSI temporary
+         storage and is never considered an installed Companion process. -->
+    <Binary
+      Id="TDACompanionMaintenanceUpgradeBinary"
+      SourceFile="!(bindpath.App)\TDACompanionMaintenance.exe" />
+
     <Component Id="InstalledVersion" Directory="CompanionRoot">
       <File
         Id="CurrentVersionFile"
@@ -88,18 +97,31 @@
         KeyPath="yes" />
     </Component>
 
+    <!-- New-package upgrade preparation. This closes the 0.3.x -> new-version
+         gap even if the old cached MSI skipped PrepareUninstall during upgrade. -->
+    <CustomAction
+      Id="PrepareMajorUpgrade"
+      BinaryRef="TDACompanionMaintenanceUpgradeBinary"
+      ExeCommand="--prepare-uninstall"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="check" />
+
+    <!-- Installed helper used for normal uninstall and, for versions containing
+         this contract, also while that product is being removed by a future
+         MajorUpgrade. Failure is no longer ignored. -->
     <CustomAction
       Id="PrepareUninstall"
       FileRef="TDACompanionMaintenanceExe"
       ExeCommand="--prepare-uninstall"
       Execute="deferred"
       Impersonate="yes"
-      Return="ignore" />
+      Return="check" />
 
     <?if $(RollbackProbe) = "1" ?>
     <!-- Test-only Type 19 failure. It is compiled only into the rollback-probe
          MSI and runs after the old product has been removed. Because
-         RemoveExistingProducts is now inside the transaction, this failure must
+         RemoveExistingProducts is inside the transaction, this failure must
          restore the previous product. Production builds pass RollbackProbe=0. -->
     <CustomAction
       Id="RollbackProbeFailure"
@@ -107,7 +129,8 @@
     <?endif ?>
 
     <InstallExecuteSequence>
-      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
+      <Custom Action="PrepareMajorUpgrade" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="PrepareUninstall" Before="RemoveFiles" Condition='REMOVE="ALL"' />
       <?if $(RollbackProbe) = "1" ?>
       <Custom Action="RollbackProbeFailure" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
       <?endif ?>
