@@ -27,6 +27,13 @@ if (-not (Test-Path $wixPath)) {
 
 $version = (& $pythonPath -c "import tda_companion; print(tda_companion.VERSION)").Trim()
 if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "VERSION_NOT_FOUND" }
+$runtimeVersions = (& $pythonPath -c "from tda_companion.rc_runtime_artifacts import RC_WHISPER_VERSION, RC_QWEN_VERSION; print(f'{RC_WHISPER_VERSION}|{RC_QWEN_VERSION}')").Trim().Split('|')
+if ($runtimeVersions.Count -ne 2) { throw "RC_RUNTIME_VERSIONS_NOT_FOUND" }
+$whisperRuntimeVersion = $runtimeVersions[0]
+$qwenRuntimeVersion = $runtimeVersions[1]
+foreach ($runtimeVersion in @($whisperRuntimeVersion, $qwenRuntimeVersion)) {
+    if ($runtimeVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "RC_RUNTIME_VERSION_INVALID" }
+}
 
 $work = Join-Path $output "work"
 $dist = Join-Path $output "dist"
@@ -107,7 +114,7 @@ Preparação de runtimes para teste RC sem publicar releases stable:
   -QwenArtifact "C:\artifacts\TDAQwenRuntimeBundle-windows-x64.zip" `
   -QwenArtifactSha256 "<sha256-do-artifact-qwen>"
 
-O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashes/tamanhos internos do runtime antes da instalação. Somente Whisper 1.1.1 e Qwen 1.0.1 são aceitos neste RC. Python, CUDA Toolkit e PATH globais não são modificados.
+O helper verifica primeiro o SHA-256 externo do artifact e, em seguida, os hashes/tamanhos internos do runtime antes da instalação. Este build aceita exatamente Whisper $whisperRuntimeVersion e Qwen $qwenRuntimeVersion no fluxo RC. Python, CUDA Toolkit e PATH globais não são modificados.
 
 Depois, app\run-physical-acceptance.ps1 executa o gate físico local dos perfis ASR sem enviar áudio ao cloud. Os modelos pinados são materializados separadamente em Models na primeira execução. Por padrão o gate grava somente receipts sanitizados; transcrições exigem -WriteTranscripts explícito.
 
