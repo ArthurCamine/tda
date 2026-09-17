@@ -398,14 +398,14 @@ class DesktopBridge:
                 "status": state.get("status"),
                 "version": manifest.version,
             }
-        if state.get("status") == "corrupt" and state.get("version") == manifest.version:
-            raise RuntimeError("WHISPER_RUNTIME_REPAIR_REQUIRED")
+        repairing = state.get("status") == "corrupt" and state.get("version") == manifest.version
         archive = download_whisper_runtime(manifest, self.paths.cache_root)
         installed = install_whisper_runtime_archive(
             archive,
             self.paths.runtime_root,
             version=manifest.version,
             expected_sha256=manifest.sha256,
+            replace_corrupt=repairing,
         )
         verified = inspect_whisper_runtime(self.paths.runtime_root, verify_worker=True)
         if verified.get("status") != "ready" or verified.get("version") != manifest.version:
@@ -416,6 +416,7 @@ class DesktopBridge:
             "status": "ready",
             "version": manifest.version,
             "worker_sha256": installed["worker_sha256"],
+            "repaired": repairing,
         }
 
     def check_qwen_runtime(self) -> dict[str, Any]:
