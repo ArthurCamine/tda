@@ -79,6 +79,28 @@ def test_corrupt_current_version_can_be_repaired_transactionally(tmp_path: Path)
     assert not list((runtime_root / "whisper").glob(".*.backup"))
 
 
+def test_orphaned_target_without_selector_can_be_repaired(tmp_path: Path):
+    runtime_root = tmp_path / "Runtime"
+    version = MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
+    orphan = runtime_root / "whisper" / version
+    orphan.mkdir(parents=True)
+    (orphan / "TDAWhisperWorker.exe").write_bytes(b"partial-old")
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "missing"
+
+    replacement = tmp_path / "runtime-replacement.zip"
+    digest = _runtime_zip(replacement, payload=b"recovered")
+    install_whisper_runtime_archive(
+        replacement,
+        runtime_root,
+        version=version,
+        expected_sha256=digest,
+        replace_corrupt=True,
+    )
+
+    assert (orphan / "TDAWhisperWorker.exe").read_bytes() == b"recovered"
+    assert inspect_whisper_runtime(runtime_root, verify_worker=True)["status"] == "ready"
+
+
 def test_repair_never_replaces_a_healthy_runtime(tmp_path: Path):
     archive = tmp_path / "runtime.zip"
     digest = _runtime_zip(archive)
