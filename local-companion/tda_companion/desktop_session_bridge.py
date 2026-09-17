@@ -18,6 +18,7 @@ from .paths import CompanionPaths
 from .qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig
 from .qwen_runtime import inspect_qwen_runtime
 from .settings import SettingsStore
+from .system_log import SystemLog
 from .telemetry import SystemTelemetry
 
 _NETWORK_MESSAGES = {
@@ -216,9 +217,18 @@ class SessionDesktopBridge(DesktopBridge):
         try:
             return super().logs(level=level, component=component, limit=limit)
         except AgentConnectionError as exc:
+            # Logs already live in the local per-user filesystem. They are most
+            # useful precisely when the Agent is unavailable or its loopback
+            # owner fails verification, so the trusted Desktop reads the same
+            # sanitized log files directly instead of blanking the diagnostics UI.
+            rows = SystemLog(self.paths.logs_root).tail(
+                level=level,
+                component=component,
+                limit=limit,
+            )
             return {
-                "logs": [],
-                "unavailable": True,
+                "logs": rows,
+                "local_fallback": True,
                 "error": exc.code,
                 "connection": self.client.status(),
             }
