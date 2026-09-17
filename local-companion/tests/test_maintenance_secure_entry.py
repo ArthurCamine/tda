@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -41,11 +42,11 @@ def test_secure_uninstall_never_reads_token_or_mutates_msi_owned_startup(tmp_pat
     )
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: (sorted(alive), []))
 
-    def terminate(pid: int):
+    def terminate(_root: Path, pid: int):
         terminated.append(pid)
         alive.discard(pid)
 
-    monkeypatch.setattr(legacy, "_terminate_pid", terminate)
+    monkeypatch.setattr(secure, "_terminate_verified_pid", terminate)
     monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         legacy,
@@ -66,28 +67,44 @@ def test_secure_uninstall_never_reads_token_or_mutates_msi_owned_startup(tmp_pat
     assert alive == set()
 
 
-def test_major_upgrade_stops_old_processes_and_proves_port_free(tmp_path: Path, monkeypatch):
+def test_prepare_install_guards_stops_old_processes_and_proves_port_free(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    legacy = secure.legacy
     alive = {222}
     terminated: list[int] = []
     port_checks: list[int] = []
 
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: (sorted(alive), []))
 
-    def terminate(pid: int):
+    def terminate(_root: Path, pid: int):
         terminated.append(pid)
         alive.discard(pid)
 
-    monkeypatch.setattr(legacy, "_terminate_pid", terminate)
+    monkeypatch.setattr(secure, "_terminate_verified_pid", terminate)
     monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(secure, "_wait_port_free", lambda port: port_checks.append(port))
 
-    secure.prepare_major_upgrade(tmp_path, 8765)
+    secure.prepare_major_upgrade(tmp_path, 8765, "0.3.8")
 
     assert terminated == [222]
     assert alive == set()
     assert port_checks == [8765]
+    guard = json.loads((tmp_path / "Cache" / "maintenance" / "installation-guard.json").read_text(encoding="utf-8"))
+    assert guard["action"] == "major_upgrade"
+    assert guard["target_version"] == "0.3.8"
+
+
+def test_prepare_install_clears_guard_when_quiescence_fails(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    monkeypatch.setattr(
+        secure,
+        "_stop_installed_processes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(secure.legacy.MaintenanceError("STOP_FAILED")),
+    )
+
+    with pytest.raises(secure.legacy.MaintenanceError, match="STOP_FAILED"):
+        secure.prepare_major_upgrade(tmp_path, 8765, "0.3.8")
+
+    assert not (tmp_path / "Cache" / "maintenance" / "installation-guard.json").exists()
 
 
 def test_explicit_uninstall_does_not_block_on_unrelated_listener(tmp_path: Path, monkeypatch):
@@ -102,66 +119,140 @@ def test_explicit_uninstall_does_not_block_on_unrelated_listener(tmp_path: Path,
     secure.prepare_uninstall(tmp_path, 8765)
 
 
-def test_major_upgrade_cli_is_owned_by_secure_wrapper(tmp_path: Path, monkeypatch):
+def test_secure_msi_action_cli_owns_prepare_verify_commit_and_rollback(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    observed: list[tuple[Path, int]] = []
+    observed: list[tuple[str, Path, object]] = []
     monkeypatch.setattr(
         secure,
         "prepare_major_upgrade",
-        lambda root, port=8765: observed.append((root, port)),
+        lambda root, port=8765, target_version=None: observed.append(("prepare", root, (port, target_version))),
     )
+    monkeypatch.setattr(
+        secure,
+        "verify_installed_target",
+        lambda root, version, port=8765: observed.append(("verify", root, (port, version))),
+    )
+    monkeypatch.setattr(secure, "finish_major_upgrade", lambda root: observed.append(("finish", root, None)))
+    monkeypatch.setattr(secure, "rollback_major_upgrade", lambda root: observed.append(("rollback", root, None)))
     monkeypatch.setattr(
         secure.legacy,
         "main",
-        lambda _argv: pytest.fail("legacy parser must not receive --prepare-major-upgrade"),
+        lambda _argv: pytest.fail("legacy parser must not receive secure MSI actions"),
     )
 
-    assert secure.main(["--prepare-major-upgrade", "--root", str(tmp_path), "--port", "9876"]) == 0
-    assert observed == [(tmp_path.resolve(), 9876)]
+    assert secure.main(["--prepare-major-upgrade", "--root", str(tmp_path), "--port", "9876", "--target-version", "0.3.8"]) == 0
+    assert secure.main(["--verify-installed-target", "--root", str(tmp_path), "--target-version", "0.3.8"]) == 0
+    assert secure.main(["--finish-major-upgrade", "--root", str(tmp_path)]) == 0
+    assert secure.main(["--rollback-major-upgrade", "--root", str(tmp_path)]) == 0
+    assert observed == [
+        ("prepare", tmp_path.resolve(), (9876, "0.3.8")),
+        ("verify", tmp_path.resolve(), (8765, "0.3.8")),
+        ("finish", tmp_path.resolve(), None),
+        ("rollback", tmp_path.resolve(), None),
+    ]
 
 
 def test_secure_maintenance_fails_closed_when_old_process_survives(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    legacy = secure.legacy
-
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: ([222], []))
-    monkeypatch.setattr(legacy, "_terminate_pid", lambda _pid: None)
+    monkeypatch.setattr(secure, "_terminate_verified_pid", lambda _root, _pid: None)
     monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
 
-    with pytest.raises(legacy.MaintenanceError, match="TDA_PROCESS_STILL_RUNNING"):
+    with pytest.raises(secure.legacy.MaintenanceError, match="TDA_PROCESS_STILL_RUNNING"):
         secure.prepare_uninstall(tmp_path, 8765)
 
 
 def test_secure_maintenance_fails_closed_when_process_identity_is_unreadable(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    legacy = secure.legacy
-
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: ([], [9320]))
     monkeypatch.setattr(
-        legacy,
-        "_terminate_pid",
-        lambda _pid: pytest.fail("unverified same-name process must never be killed blindly"),
+        secure,
+        "_terminate_verified_pid",
+        lambda *_args: pytest.fail("unverified same-name process must never be killed blindly"),
     )
 
-    with pytest.raises(legacy.MaintenanceError, match="TDA_PROCESS_IDENTITY_UNVERIFIED"):
-        secure.prepare_major_upgrade(tmp_path, 8765)
+    with pytest.raises(secure.legacy.MaintenanceError, match="TDA_PROCESS_IDENTITY_UNVERIFIED"):
+        secure.prepare_major_upgrade(tmp_path, 8765, "0.3.8")
 
 
-def test_major_upgrade_fails_closed_when_agent_port_never_frees(tmp_path: Path, monkeypatch):
+def test_verified_termination_rechecks_process_image_before_kill(tmp_path: Path, monkeypatch):
     secure = _load_secure_module()
-    legacy = secure.legacy
+    outside = tmp_path.parent / "other" / "TDACompanion.exe"
+    monkeypatch.setattr(secure.legacy, "_process_image", lambda _pid: outside)
+    monkeypatch.setattr(
+        secure.legacy,
+        "_terminate_pid",
+        lambda _pid: pytest.fail("changed PID identity must not be terminated"),
+    )
 
+    with pytest.raises(secure.legacy.MaintenanceError, match="TDA_PROCESS_IDENTITY_CHANGED"):
+        secure._terminate_verified_pid(tmp_path, 9320)
+
+
+def test_prepare_install_fails_closed_when_agent_port_never_frees(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
     monkeypatch.setattr(secure, "_scan_tda_processes", lambda _root: ([], []))
     monkeypatch.setattr(secure, "_port_is_free", lambda _port: False)
     monkeypatch.setattr(secure.time, "sleep", lambda _seconds: None)
     ticks = iter([0.0, 10.0])
     monkeypatch.setattr(secure.time, "monotonic", lambda: next(ticks, 10.0))
 
-    with pytest.raises(legacy.MaintenanceError, match="AGENT_PORT_STILL_OCCUPIED"):
-        secure.prepare_major_upgrade(tmp_path, 8765)
+    with pytest.raises(secure.legacy.MaintenanceError, match="AGENT_PORT_STILL_OCCUPIED"):
+        secure.prepare_major_upgrade(tmp_path, 8765, "0.3.8")
+
+    assert not (tmp_path / "Cache" / "maintenance" / "installation-guard.json").exists()
+
+
+def test_verify_installed_target_starts_candidate_and_requires_exact_health(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    executable = tmp_path / "Companion" / "versions" / "0.3.8" / "TDACompanion.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"app")
+    observed: list[tuple[Path, str, int]] = []
+
+    monkeypatch.setattr(secure, "_health_matches_target", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(secure, "_port_is_free", lambda _port: True)
+    monkeypatch.setattr(
+        secure,
+        "_spawn_target_agent",
+        lambda exe, version, port: observed.append((exe, version, port)),
+    )
+
+    secure.verify_installed_target(tmp_path, "0.3.8", 8765)
+
+    assert observed == [(executable, "0.3.8", 8765)]
+
+
+def test_install_update_does_not_create_unguarded_pre_msi_shutdown_gap(tmp_path: Path, monkeypatch):
+    secure = _load_secure_module()
+    legacy = secure.legacy
+    operation_id = "a" * 32
+    msi = tmp_path / "candidate.msi"
+    msi.write_bytes(b"candidate")
+    expected_sha = legacy._sha256(msi)
+    executable = tmp_path / "Companion" / "versions" / "0.3.8" / "TDACompanion.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"app")
+    (tmp_path / "Companion" / "current-version.txt").write_text("0.3.8", encoding="utf-8")
+
+    monkeypatch.setattr(secure, "_maintenance_lock", lambda: pytest.importorskip("contextlib").nullcontext())
+    monkeypatch.setattr(legacy, "_wait_parent", lambda _pid: None)
+    monkeypatch.setattr(
+        secure,
+        "_stop_installed_processes",
+        lambda *_args, **_kwargs: pytest.fail("in-app updater must let the MSI pre-transaction action own shutdown"),
+    )
+    monkeypatch.setattr(legacy, "_run_msiexec", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(secure, "_health_matches_target", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(legacy.subprocess, "Popen", lambda *_args, **_kwargs: object())
+
+    secure.install_update(tmp_path, msi, expected_sha, "0.3.8", None, 8765, operation_id)
+
+    assert (tmp_path / "Cache" / "maintenance" / "last-update.json").is_file()
 
 
 def test_secure_entry_replaces_legacy_dispatch_symbols():
     secure = _load_secure_module()
     assert secure.legacy.prepare_uninstall is secure.prepare_uninstall
     assert secure.legacy.install_update is secure.install_update
+    assert secure.legacy.uninstall is secure.uninstall
