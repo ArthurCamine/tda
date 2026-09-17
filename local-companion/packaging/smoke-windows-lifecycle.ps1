@@ -113,6 +113,37 @@ function Current-MaintenanceExe {
     return Join-Path $tdaRoot "Companion\versions\$CurrentVersion\TDACompanionMaintenance.exe"
 }
 
+function Start-PreviousAgent([string]$Executable) {
+    $process = Start-Process -FilePath $Executable -ArgumentList @("--headless") -PassThru -WindowStyle Hidden
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $process.Refresh()
+        if ($process.HasExited) {
+            throw "PREVIOUS_AGENT_EXITED_EARLY:$($process.ExitCode)"
+        }
+        try {
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/v1/health" -UseBasicParsing -TimeoutSec 1
+            if ($response.StatusCode -eq 200) {
+                return $process
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 150
+    }
+    try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+    throw "PREVIOUS_AGENT_START_TIMEOUT"
+}
+
+function Assert-ProcessExited($Process, [string]$Code) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(6)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $Process.Refresh()
+        if ($Process.HasExited) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    try { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue } catch {}
+    throw $Code
+}
+
 try {
     # The previous release is mutable on GitHub in theory, so never trust the URL alone.
     Invoke-WebRequest -Uri $previousUrl -OutFile $previousMsi -UseBasicParsing
@@ -150,9 +181,14 @@ try {
     }
     $tokenBefore = (Get-Content $oldToken -Raw).Trim()
 
+    # The rollback path must first prove that the new MSI can stop an Agent that
+    # belongs to the old installed version before touching transactional MSI state.
+    $rollbackAgent = Start-PreviousAgent $previousExe
+
     # C-07: fail after RemoveExistingProducts. With Schedule=afterInstallInitialize,
     # this happens inside the MSI transaction and must restore the previous product.
     Invoke-RollbackProbe $rollbackProbeMsi "02-rollback-probe-$CurrentVersion.log"
+    Assert-ProcessExited $rollbackAgent "ROLLBACK_OLD_AGENT_SURVIVED_PREPARE_MAJOR_UPGRADE"
 
     Assert-FileValue $previousMarker $previousVersion "ROLLBACK_VERSION_MARKER"
     if (-not (Test-Path $previousExe)) { throw "ROLLBACK_PREVIOUS_EXECUTABLE_NOT_RESTORED" }
@@ -166,8 +202,11 @@ try {
     Assert-RegistryValueSnapshot $runKey "TDA Companion Agent" $baselineStartup "ROLLBACK_STARTUP"
     if (-not (Test-Path $shortcut)) { throw "ROLLBACK_SHORTCUT_NOT_RESTORED" }
 
-    # Real successful WiX MajorUpgrade after rollback proof.
+    # Repeat with a live old Agent for the successful MajorUpgrade path.
+    $upgradeAgent = Start-PreviousAgent $previousExe
     Invoke-Msi @("/i", "`"$msi`"", "/qn") "03-upgrade-to-$CurrentVersion.log"
+    Assert-ProcessExited $upgradeAgent "UPGRADE_OLD_AGENT_SURVIVED_PREPARE_MAJOR_UPGRADE"
+
     $currentMarker = Join-Path $tdaRoot "Companion\current-version.txt"
     Assert-FileValue $currentMarker $CurrentVersion "CURRENT_VERSION_MARKER"
     if (-not (Test-Path $candidateExe)) {
@@ -203,9 +242,14 @@ try {
     if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
     if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
-    Write-Host "TDA Companion rollback, MajorUpgrade, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
+    Write-Host "TDA Companion rollback, live-Agent MajorUpgrade, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {
+    try {
+        Get-Process TDACompanion -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like (Join-Path $tdaRoot "Companion\versions\*") } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+    } catch {}
     try {
         $installedCode = (Get-ItemProperty -Path $productKey -ErrorAction SilentlyContinue).ProductCode
         if ($installedCode) {
