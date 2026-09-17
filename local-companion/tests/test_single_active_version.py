@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import tda_companion.single_active_version as sav
 from tda_companion.paths import CompanionPaths
 from tda_companion.single_active_version import (
     InstalledCompanionProcess,
@@ -24,6 +27,23 @@ def _installed_executable(paths: CompanionPaths, version: str) -> Path:
     executable.parent.mkdir(parents=True, exist_ok=True)
     executable.write_bytes(b"companion")
     return executable
+
+
+def _write_guard(paths: CompanionPaths, action: str, target_version: str | None) -> Path:
+    path = paths.cache_root / "maintenance" / "installation-guard.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "tda_installation_guard_v1",
+                "action": action,
+                "target_version": target_version,
+                "created_at": time.time(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_missing_old_executable_is_still_recognized_as_installed_process(tmp_path: Path):
@@ -68,9 +88,9 @@ def test_process_scan_uses_win32_image_fallback_when_psutil_cannot_resolve_exe(t
 def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_path: Path):
     paths = _paths(tmp_path)
     target = _installed_executable(paths, "0.3.8")
-    old_030 = _installed_executable(paths, "0.3.0")
+    _installed_executable(paths, "0.3.0")
     old_034 = _installed_executable(paths, "0.3.4")
-    old_034.unlink()  # Reproduce the real zombie: process alive, image gone from disk.
+    old_034.unlink()
 
     paths.state_root.mkdir(parents=True)
     paths.data_root.mkdir(parents=True)
@@ -85,7 +105,6 @@ def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_pa
     maintenance.mkdir(parents=True)
     (maintenance / "last-operation.json").write_text("keep", encoding="utf-8")
 
-    # Installed/older update payloads are disposable after 0.3.8 is healthy.
     for version in ("0.3.1", "0.3.8", "0.3.9"):
         update_dir = paths.cache_root / "updates" / version
         update_dir.mkdir(parents=True)
@@ -102,13 +121,7 @@ def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_pa
     def scan():
         if 9320 not in alive:
             return []
-        return [
-            InstalledCompanionProcess(
-                pid=9320,
-                image_path=old_034,
-                version="0.3.4",
-            )
-        ]
+        return [InstalledCompanionProcess(pid=9320, image_path=old_034, version="0.3.4")]
 
     terminated: list[int] = []
 
@@ -150,11 +163,81 @@ def test_reconcile_kills_old_process_and_deletes_every_non_target_version(tmp_pa
     assert (paths.runtime_root / "runtime.keep").read_text(encoding="utf-8") == "keep"
 
 
+def test_older_binary_redirects_forward_instead_of_deleting_newer_install(tmp_path: Path):
+    paths = _paths(tmp_path)
+    old = _installed_executable(paths, "0.3.8")
+    newer = _installed_executable(paths, "0.3.9")
+    (paths.companion_root / "current-version.txt").write_text("0.3.9\n", encoding="utf-8")
+
+    result = reconcile_packaged_installation(
+        paths,
+        "0.3.8",
+        old,
+        current_pid=5000,
+        scan=lambda: [],
+        terminate_pid=lambda _pid: pytest.fail("old binary must not terminate newer processes"),
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.applied is False
+    assert result.redirect_executable == newer
+    assert old.is_file()
+    assert newer.is_file()
+    assert (paths.companion_root / "current-version.txt").read_text(encoding="utf-8").strip() == "0.3.9"
+
+
+def test_transaction_guard_allows_only_candidate_without_mutating_version_tree(tmp_path: Path):
+    paths = _paths(tmp_path)
+    old = _installed_executable(paths, "0.3.7")
+    candidate = _installed_executable(paths, "0.3.8")
+    _write_guard(paths, "major_upgrade", "0.3.8")
+
+    candidate_result = reconcile_packaged_installation(paths, "0.3.8", candidate)
+    assert candidate_result.applied is False
+    assert old.is_file()
+    assert candidate.is_file()
+
+    with pytest.raises(SingleActiveVersionError, match="INSTALLATION_MAINTENANCE_ACTIVE"):
+        reconcile_packaged_installation(paths, "0.3.7", old)
+
+
+def test_stale_guard_is_self_cleaned_and_does_not_brick_startup(tmp_path: Path):
+    paths = _paths(tmp_path)
+    target = _installed_executable(paths, "0.3.8")
+    guard = _write_guard(paths, "major_upgrade", "0.3.8")
+    value = json.loads(guard.read_text(encoding="utf-8"))
+    value["created_at"] = time.time() - 7200
+    guard.write_text(json.dumps(value), encoding="utf-8")
+
+    result = reconcile_packaged_installation(paths, "0.3.8", target, scan=lambda: [], sleep=lambda _s: None)
+
+    assert result.applied is True
+    assert not guard.exists()
+
+
+def test_verified_termination_refuses_pid_identity_change(tmp_path: Path, monkeypatch):
+    paths = _paths(tmp_path)
+    observed = InstalledCompanionProcess(
+        pid=9320,
+        image_path=paths.companion_root / "versions" / "0.3.4" / "TDACompanion.exe",
+        version="0.3.4",
+    )
+    foreign = tmp_path / "other" / "TDACompanion.exe"
+    monkeypatch.setattr(sav, "_current_process_image", lambda _pid: foreign)
+    monkeypatch.setattr(
+        sav,
+        "_terminate_pid",
+        lambda _pid: pytest.fail("PID with changed identity must never be terminated"),
+    )
+
+    with pytest.raises(SingleActiveVersionError, match="STALE_TDA_PROCESS_IDENTITY_CHANGED"):
+        sav._terminate_verified_installed_process(paths, observed)
+
+
 def test_reconcile_refuses_to_continue_while_old_tda_process_survives(tmp_path: Path):
     paths = _paths(tmp_path)
     target = _installed_executable(paths, "0.3.8")
     old = paths.companion_root / "versions" / "0.3.4" / "TDACompanion.exe"
-
     process = InstalledCompanionProcess(pid=9320, image_path=old, version="0.3.4")
 
     with pytest.raises(SingleActiveVersionError, match="STALE_TDA_PROCESS_STILL_RUNNING"):
@@ -168,7 +251,6 @@ def test_reconcile_refuses_to_continue_while_old_tda_process_survives(tmp_path: 
             sleep=lambda _seconds: None,
         )
 
-    # Cleanup must not run while a process from the old version is still alive.
     assert (paths.companion_root / "versions" / "0.3.4").parent.exists()
 
 
