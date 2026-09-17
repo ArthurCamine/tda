@@ -18,6 +18,7 @@ from .paths import CompanionPaths
 from .qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig
 from .qwen_runtime import inspect_qwen_runtime
 from .settings import SettingsStore
+from .telemetry import SystemTelemetry
 
 _NETWORK_MESSAGES = {
     "OFFLINE": "Este computador parece estar sem acesso à Internet.",
@@ -160,6 +161,12 @@ class SessionDesktopBridge(DesktopBridge):
             storage = {"free_bytes": usage.free, "total_bytes": usage.total}
         except OSError:
             storage = {"free_bytes": None, "total_bytes": None}
+        try:
+            system = SystemTelemetry().snapshot()
+        except Exception:
+            # Agent availability must not determine whether the local UI can
+            # render. Telemetry is best-effort and independently degradable.
+            system = {}
         whisper_runtime = inspect_whisper_runtime(self.paths.runtime_root, verify_worker=False)
         qwen_runtime = inspect_qwen_runtime(self.paths.runtime_root, verify_worker=False)
         return {
@@ -174,7 +181,7 @@ class SessionDesktopBridge(DesktopBridge):
             },
             "connection": connection,
             "maintenance": self._maintenance_snapshot(),
-            "system": {},
+            "system": system,
             "storage": storage,
             "counts": {"processing": 0, "queued": 0, "completed": 0, "attention": 0},
             "jobs": [],
