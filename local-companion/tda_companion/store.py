@@ -151,6 +151,22 @@ class Store:
             context=context,
         )
 
+    @staticmethod
+    def _transcription_work_signature(body):
+        if body.get("kind") != "transcription.craig":
+            return None
+        return sha256_json(
+            {
+                "kind": "transcription.craig",
+                "source_id": body.get("source_id"),
+                "profile_id": body.get("profile_id"),
+                "glossary": body.get("glossary", ""),
+                "context": body.get("context", ""),
+                "cpu": bool(body.get("cpu", False)),
+                "units": body.get("units"),
+            }
+        )
+
     def submit(self, key, body):
         signature = sha256_json(body)
         with self.tx() as db:
@@ -177,6 +193,28 @@ class Store:
                         {"status": active["status"]},
                     )
                     return self.dto(active)
+
+                requested_work = self._transcription_work_signature(body)
+                for candidate in db.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status IN ('queued','running')
+                    ORDER BY updated DESC
+                    """
+                ).fetchall():
+                    candidate_body = json.loads(candidate["body"])
+                    if (
+                        candidate_body.get("kind") == "transcription.craig"
+                        and self._transcription_work_signature(candidate_body) == requested_work
+                    ):
+                        self.event(
+                            db,
+                            candidate["id"],
+                            "DUPLICATE_WORK_REJECTED",
+                            {"status": candidate["status"]},
+                            level="warning",
+                        )
+                        raise Conflict("TRANSCRIPTION_WORK_ALREADY_ACTIVE")
             units = body.get("units")
             if isinstance(units, bool) or not isinstance(units, int) or units < 1:
                 raise Conflict("JOB_UNITS_INVALID")
