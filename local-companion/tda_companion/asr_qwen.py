@@ -35,9 +35,9 @@ CancelCallback = Callable[[], bool]
 WindowReader = Callable[[Path], Iterable["AudioWindow"]]
 EnergyReader = Callable[["AudioWindow", float, float], float]
 
-QWEN_WINDOW_SECONDS = 180.0
+QWEN_WINDOW_SECONDS = 60.0
 QWEN_SAMPLE_RATE = 16_000
-QWEN_MAX_NEW_TOKENS = 2048
+QWEN_MAX_NEW_TOKENS = 1024
 QWEN_SEGMENT_GAP_SECONDS = 1.0
 QWEN_SEGMENT_MAX_SECONDS = 30.0
 
