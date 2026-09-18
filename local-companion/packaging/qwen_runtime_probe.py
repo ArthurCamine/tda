@@ -12,6 +12,46 @@ def _version(distribution: str) -> str:
         return "unavailable"
 
 
+def _driver_version(pynvml) -> str | None:
+    try:
+        pynvml.nvmlInit()
+        try:
+            value = pynvml.nvmlSystemGetDriverVersion()
+        finally:
+            pynvml.nvmlShutdown()
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="replace")
+        text = str(value or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
+def _cuda_execution_probe(torch) -> tuple[bool | None, str | None]:
+    if not bool(torch.cuda.is_available()) or int(torch.cuda.device_count()) < 1:
+        return None, None
+    try:
+        probe = torch.ones((32,), device="cuda:0", dtype=torch.float32)
+        observed = float((probe * 2.0).sum().item())
+        torch.cuda.synchronize()
+        if observed != 64.0:
+            raise RuntimeError("CUDA_EXECUTION_RESULT_INVALID")
+        return True, None
+    except Exception as exc:
+        value = f"{type(exc).__name__}: {exc}".casefold()
+        if any(
+            marker in value
+            for marker in (
+                "driver version is insufficient",
+                "cuda driver version is insufficient",
+                "forward compatibility was attempted",
+                "unsupported display driver",
+            )
+        ):
+            return False, "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+        return False, "QWEN_CUDA_EXECUTION_FAILED"
+
+
 def main() -> int:
     try:
         import accelerate
@@ -50,6 +90,8 @@ def main() -> int:
 
     cuda_available = bool(torch.cuda.is_available())
     device_count = int(torch.cuda.device_count()) if cuda_available else 0
+    driver_version = _driver_version(pynvml)
+    cuda_execution_ready, cuda_execution_error = _cuda_execution_probe(torch)
     devices: list[dict[str, object]] = []
     for index in range(device_count):
         props = torch.cuda.get_device_properties(index)
@@ -69,6 +111,9 @@ def main() -> int:
         "python": sys.version.split()[0],
         "torch": _version("torch"),
         "torch_cuda": str(torch.version.cuda or "none"),
+        "driver_version": driver_version,
+        "cuda_execution_ready": cuda_execution_ready,
+        "cuda_execution_error": cuda_execution_error,
         "transformers": transformers.__version__,
         "accelerate": _version("accelerate"),
         "huggingface_hub": _version("huggingface-hub"),
