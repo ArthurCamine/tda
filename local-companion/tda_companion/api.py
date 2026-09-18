@@ -182,6 +182,24 @@ def create_app(
                         "Job claimed",
                         {"job_id": job_id, "attempt": attempt, "kind": body["kind"]},
                     )
+                    if body["kind"] == "transcription.craig":
+                        # Persist a truthful stage before supervisor-side runtime
+                        # validation so the UI never looks frozen before the first
+                        # worker message arrives.
+                        store.set_stage(job_id, attempt, "runtime_validation")
+                        store.record_worker_event(
+                            job_id,
+                            attempt,
+                            "WORKER_DISPATCH_PREPARING",
+                            {"profile_id": body["profile_id"]},
+                        )
+                        log(
+                            "info",
+                            "worker",
+                            "WORKER_DISPATCH_PREPARING",
+                            "Validating sealed runtime receipt before worker launch",
+                            {"job_id": job_id, "profile_id": body["profile_id"]},
+                        )
 
                     def is_cancelled() -> bool:
                         try:
