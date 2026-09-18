@@ -65,3 +65,31 @@ def test_stale_fail_cannot_overwrite_new_retry_attempt(tmp_path):
         pass
 
     assert store.get(job['id'])['status'] == 'succeeded'
+
+
+def test_worker_detail_event_is_persisted_only_for_active_attempt(tmp_path):
+    store = Store(tmp_path)
+    job = store.submit('worker-event', BODY)
+    claim = store.claim()
+    assert claim is not None
+
+    assert store.record_worker_event(
+        job['id'],
+        claim[1],
+        'MODEL_DOWNLOAD_PROGRESS',
+        {'stage': 'model_prepare', 'downloaded_bytes': 123456},
+    ) is True
+    event = store.events(job['id'])[0]
+    assert event['code'] == 'MODEL_DOWNLOAD_PROGRESS'
+    assert event['data'] == {
+        'stage': 'model_prepare',
+        'downloaded_bytes': 123456,
+    }
+
+    store.action(job['id'], 'cancel')
+    assert store.record_worker_event(
+        job['id'],
+        claim[1],
+        'MODEL_DOWNLOAD_PROGRESS',
+        {'downloaded_bytes': 999999},
+    ) is False
