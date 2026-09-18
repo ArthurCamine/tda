@@ -9,8 +9,8 @@ from typing import Any, Iterable
 
 from .qwen_acceptance import QwenAcceptanceError
 
-QWEN_GATE_WINDOW_SECONDS = 180.0
-QWEN_GATE_STEP_SECONDS = 30.0
+QWEN_GATE_WINDOW_SECONDS = 60.0
+QWEN_GATE_STEP_SECONDS = 15.0
 QWEN_GATE_SAMPLE_RATE = 16_000
 QWEN_GATE_MAX_SOURCE_BYTES = 16 * 1024**3
 
@@ -69,7 +69,7 @@ def materialize_qwen_acceptance_window(
     window_seconds: float = QWEN_GATE_WINDOW_SECONDS,
     step_seconds: float = QWEN_GATE_STEP_SECONDS,
 ) -> dict[str, float]:
-    """Write the highest-energy 180s window from a long local track to a temporary WAV.
+    """Write the highest-energy bounded window from a long local track to a temporary WAV.
 
     The caller owns the temporary destination and must remove it after acceptance. No
     transcript text or source path is returned from this helper.
