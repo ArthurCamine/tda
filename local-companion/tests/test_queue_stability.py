@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from tda_companion.store import Store
+import pytest
+
+from tda_companion.store import Conflict, Store
 
 
 BODY = dict(
@@ -121,6 +123,35 @@ def test_identical_active_transcription_is_reused_across_different_idempotency_k
     assert duplicate_running['id'] == first['id']
     assert duplicate_running['status'] == 'running'
     assert len(store.jobs()) == 1
+
+
+def test_same_active_asr_work_with_different_destination_is_rejected(tmp_path):
+    store = Store(tmp_path)
+    first_body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'desktop-session',
+        'source_id': 'craig-' + 'c' * 64,
+        'profile_id': 'qwen-quality',
+        'glossary': 'Yuhara',
+        'context': 'mesa principal',
+        'cpu': False,
+        'units': 4,
+    }
+    web_body = {
+        **first_body,
+        'campaign_id': 'campaign-web',
+        'session_id': 'session-web',
+    }
+
+    first = store.submit('desktop-work', first_body)
+    with pytest.raises(Conflict, match='TRANSCRIPTION_WORK_ALREADY_ACTIVE'):
+        store.submit('web-work', web_body)
+
+    assert len(store.jobs()) == 1
+    assert store.get(first['id'])['context']['campaign_id'] == 'desktop-local'
+    event = store.events(first['id'])[0]
+    assert event['code'] == 'DUPLICATE_WORK_REJECTED'
 
 
 def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
