@@ -68,6 +68,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($script in @(
+            "local-companion/packaging/plan.ps1",
             "local-companion/packaging/install-rc-runtimes.ps1",
             "local-companion/packaging/run-physical-acceptance.ps1",
             "local-companion/packaging/run-installed-acceptance.ps1",
