@@ -117,9 +117,16 @@ def _workflow_uv_pin(path: Path) -> str:
     return next(iter(pins))
 
 
-def collect() -> tuple[dict[str, str], dict[str, list[str]], str, dict[str, str]]:
+def collect() -> tuple[
+    dict[str, str],
+    dict[str, list[str]],
+    str,
+    dict[str, str],
+    dict[str, dict[str, str]],
+]:
     pins: dict[str, str] = {}
     sources: dict[str, list[str]] = {}
+    exceptions: dict[str, dict[str, str]] = {}
 
     project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     specs: list[str] = list(project["project"].get("dependencies", []))
@@ -146,6 +153,23 @@ def collect() -> tuple[dict[str, str], dict[str, list[str]], str, dict[str, str]
 
     qwen = _runtime_json(QWEN_RUNTIME, "tda_qwen_runtime_build_v1")
     qwen_python = str(qwen["python"])
+    raw_exceptions = qwen.get("dependency_freshness_exceptions", {})
+    if not isinstance(raw_exceptions, dict):
+        raise RuntimeError("QWEN_RUNTIME_FRESHNESS_EXCEPTIONS_INVALID")
+    for raw_name, raw_value in raw_exceptions.items():
+        name = canonical(str(raw_name))
+        if not isinstance(raw_value, dict):
+            raise RuntimeError(f"DEPENDENCY_FRESHNESS_EXCEPTION_INVALID:{name}")
+        version = raw_value.get("version")
+        reason = raw_value.get("reason")
+        if (
+            not isinstance(version, str)
+            or not version
+            or not isinstance(reason, str)
+            or len(reason.strip()) < 20
+        ):
+            raise RuntimeError(f"DEPENDENCY_FRESHNESS_EXCEPTION_INVALID:{name}")
+        exceptions[name] = {"version": version, "reason": reason.strip()}
     if qwen_python != python_pin:
         raise RuntimeError(f"QWEN_RUNTIME_PYTHON_PIN_MISMATCH:{qwen_python}:{python_pin}")
     torch = qwen.get("torch")
@@ -171,20 +195,43 @@ def collect() -> tuple[dict[str, str], dict[str, list[str]], str, dict[str, str]
     for source, version in uv_sources.items():
         add_pin(pins, sources, "uv", version, source)
 
-    return pins, sources, python_pin, lock
+    for name, exception in exceptions.items():
+        pinned = pins.get(name)
+        if pinned is None:
+            raise RuntimeError(f"DEPENDENCY_FRESHNESS_EXCEPTION_ORPHANED:{name}")
+        if pinned != exception["version"]:
+            raise RuntimeError(
+                f"DEPENDENCY_FRESHNESS_EXCEPTION_VERSION_MISMATCH:{name}:{exception['version']}:{pinned}"
+            )
+
+    return pins, sources, python_pin, lock, exceptions
 
 
 def main() -> int:
-    pins, sources, python_pin, lock = collect()
+    pins, sources, python_pin, lock, exceptions = collect()
     stale: list[str] = []
 
     print(f"Auditing {len(pins)} direct/runtime Python pins...")
     for name in sorted(pins):
         pinned = pins[name]
         latest = latest_pypi(name)
-        state = "current" if pinned == latest else "STALE"
+        exception = exceptions.get(name)
+        excepted = (
+            pinned != latest
+            and exception is not None
+            and exception.get("version") == pinned
+        )
+        state = (
+            "current"
+            if pinned == latest
+            else "COMPATIBILITY EXCEPTION"
+            if excepted
+            else "STALE"
+        )
         print(f"{name}: {pinned} -> {latest} [{state}] ({', '.join(sources[name])})")
-        if pinned != latest:
+        if excepted:
+            print(f"  reason: {exception['reason']}")
+        elif pinned != latest:
             stale.append(f"{name}: pinned {pinned}, latest {latest}")
 
     current_python = latest_python_312()
@@ -202,7 +249,10 @@ def main() -> int:
         print("Update pins and rerun Companion/MSI/runtime gates, or document an explicit compatibility exception.", file=sys.stderr)
         return 1
 
-    print("\nAll tracked direct/runtime Companion dependency pins are current.")
+    if exceptions:
+        print("\nAll tracked direct/runtime Companion dependency pins are current or carry an exact compatibility exception.")
+    else:
+        print("\nAll tracked direct/runtime Companion dependency pins are current.")
     return 0
 
 
