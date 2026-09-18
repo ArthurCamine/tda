@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA = "tda_qwen_acceptance_transcript_v1"
 ALIGNER_DIRECTORY = "qwen3-forced-aligner-0.6b-hf"
 MAX_ACCEPTANCE_AUDIO_BYTES = 2 * 1024**3
 MAX_ACCEPTANCE_AUDIO_SECONDS = 240.0
-QWEN_ACCEPTANCE_MAX_NEW_TOKENS = 1024
+QWEN_ACCEPTANCE_MAX_NEW_TOKENS = 512
 _COPY_CHUNK = 1024 * 1024
 
 ALIGNER_PROFILE = AsrProfile(
@@ -109,8 +109,47 @@ def _runtime_versions() -> dict[str, str]:
     return values
 
 
+def _nvml_driver_version() -> str | None:
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        try:
+            value = pynvml.nvmlSystemGetDriverVersion()
+        finally:
+            pynvml.nvmlShutdown()
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="replace")
+        text = str(value or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
+def _cuda_execution_failure_code(exc: BaseException) -> str:
+    value = f"{type(exc).__name__}: {exc}".casefold()
+    if any(
+        marker in value
+        for marker in (
+            "driver version is insufficient",
+            "cuda driver version is insufficient",
+            "forward compatibility was attempted",
+            "unsupported display driver",
+        )
+    ):
+        return "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+    return "QWEN_CUDA_EXECUTION_FAILED"
+
+
 def probe_qwen_cuda() -> dict[str, Any]:
-    """Probe PyTorch CUDA without loading any ASR or aligner model."""
+    """Probe both CUDA discovery and an actual kernel execution.
+
+    torch.cuda.is_available() alone is not a sufficient compatibility check: a
+    packaged runtime can discover the GPU while the installed NVIDIA driver is
+    too old for the CUDA family bundled with Torch. The physical gate therefore
+    performs a tiny allocation/kernel/synchronize before any model is loaded.
+    """
+    driver_version = _nvml_driver_version()
     try:
         import torch
 
@@ -128,11 +167,33 @@ def probe_qwen_cuda() -> dict[str, Any]:
                     "total_memory_bytes": int(props.total_memory),
                 }
             )
+
+        execution_ready: bool | None = None
+        execution_error: str | None = None
+        if available and count > 0:
+            try:
+                probe = torch.ones((32,), device="cuda:0", dtype=torch.float32)
+                observed = float((probe * 2.0).sum().item())
+                torch.cuda.synchronize()
+                if observed != 64.0:
+                    raise RuntimeError("CUDA_EXECUTION_RESULT_INVALID")
+                execution_ready = True
+            except Exception as exc:
+                execution_ready = False
+                execution_error = _cuda_execution_failure_code(exc)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
         return {
             "available": available,
             "device_count": count,
             "bf16_supported": bool(torch.cuda.is_bf16_supported()) if available else False,
             "torch_cuda": str(torch.version.cuda or "none"),
+            "driver_version": driver_version,
+            "execution_ready": execution_ready,
+            "execution_error": execution_error,
             "devices": devices,
         }
     except Exception:
@@ -141,9 +202,11 @@ def probe_qwen_cuda() -> dict[str, Any]:
             "device_count": 0,
             "bf16_supported": False,
             "torch_cuda": "unavailable",
+            "driver_version": driver_version,
+            "execution_ready": False,
+            "execution_error": "QWEN_CUDA_EXECUTION_FAILED",
             "devices": [],
         }
-
 
 def _capability_tuple(value: str) -> tuple[int, int]:
     try:
@@ -160,6 +223,11 @@ def resolve_qwen_plan(profile_id: str, *, cuda_status: dict[str, Any] | None = N
     status = cuda_status if cuda_status is not None else probe_qwen_cuda()
     if not status.get("available") or int(status.get("device_count") or 0) < 1:
         raise QwenAcceptanceError("QWEN_CUDA_UNAVAILABLE")
+    if status.get("execution_ready") is False:
+        code = str(status.get("execution_error") or "QWEN_CUDA_EXECUTION_FAILED")
+        if code not in {"QWEN_CUDA_DRIVER_INCOMPATIBLE", "QWEN_CUDA_EXECUTION_FAILED"}:
+            code = "QWEN_CUDA_EXECUTION_FAILED"
+        raise QwenAcceptanceError(code)
     devices = status.get("devices") or []
     first = devices[0] if isinstance(devices, list) and devices else {}
     capability = str(first.get("compute_capability") or "")
@@ -330,6 +398,16 @@ def _qwen_inference_failure_code(exc: BaseException) -> str:
     if any(
         marker in value
         for marker in (
+            "driver version is insufficient",
+            "cuda driver version is insufficient",
+            "forward compatibility was attempted",
+            "unsupported display driver",
+        )
+    ):
+        return "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+    if any(
+        marker in value
+        for marker in (
             "out of memory",
             "cuda_error_out_of_memory",
             "cublas_status_alloc_failed",
@@ -374,7 +452,7 @@ def run_qwen_asr_sample(
         load_started = time.monotonic()
         processor = AutoProcessor.from_pretrained(str(model_root), local_files_only=True)
         model = AutoModelForMultimodalLM.from_pretrained(
-            str(model_root), dtype=dtype, device_map="auto", local_files_only=True
+            str(model_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
         )
         load_seconds = max(time.monotonic() - load_started, 0.0)
         if not _model_is_cuda_only(model):
@@ -433,7 +511,7 @@ def run_qwen_alignment_sample(
         load_started = time.monotonic()
         processor = AutoProcessor.from_pretrained(str(aligner_root), local_files_only=True)
         model = AutoModelForTokenClassification.from_pretrained(
-            str(aligner_root), dtype=dtype, device_map="auto", local_files_only=True
+            str(aligner_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
         )
         load_seconds = max(time.monotonic() - load_started, 0.0)
         if not _model_is_cuda_only(model):
