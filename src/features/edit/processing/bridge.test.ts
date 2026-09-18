@@ -59,6 +59,35 @@ describe("loopback bridge", () => {
 		});
 		expect(request).toHaveBeenCalledTimes(2);
 	});
+	it("deletes a terminal job through the authenticated local action endpoint", async () => {
+		const request = vi.fn<typeof fetch>().mockResolvedValue(
+			Response.json({ deleted: true, id: "test-job" }),
+		);
+		const bridge = new LocalBridge(request);
+		bridge.pair(token);
+
+		await bridge.deleteJob("test-job", signal());
+
+		expect(request).toHaveBeenCalledTimes(1);
+		const [url, options] = request.mock.calls[0];
+		expect(url).toBe(`${LOCAL_API}/jobs/test-job/delete`);
+		expect(options).toMatchObject({
+			method: "POST",
+			credentials: "omit",
+			redirect: "error",
+			referrerPolicy: "no-referrer",
+			cache: "no-store",
+			mode: "cors",
+			headers: {
+				Accept: "application/json",
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			body: "{}",
+		});
+		bridge.disconnect();
+	});
+
 	it("rejects path injection without a request", async () => {
 		const request = vi.fn<typeof fetch>();
 		const bridge = new LocalBridge(request);
