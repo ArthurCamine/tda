@@ -277,6 +277,9 @@ def prepare_whisper_model(
             raise
         except Exception as exc:
             raise WhisperRuntimeError("WHISPER_MODEL_DOWNLOAD_FAILED") from exc
+        # Hugging Face local-dir metadata is useful only while downloading.
+        # Do not bind transient resume metadata into the installed model hash.
+        shutil.rmtree(staging / ".cache", ignore_errors=True)
         downloaded = _tree_bytes(staging)
         if downloaded > 0:
             report(
