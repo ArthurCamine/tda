@@ -216,6 +216,8 @@ class SessionDesktopBridge(DesktopBridge):
     def _begin_preparation(self, profile_id: str, engine: str) -> None:
         now = time.monotonic()
         with self._preparation_lock:
+            if self._preparation_state.get("active") is True:
+                raise RuntimeError("TRANSCRIPTION_PREPARATION_ALREADY_RUNNING")
             self._preparation_started_at = now
             self._preparation_stage_started_at = now
             self._preparation_state = {
