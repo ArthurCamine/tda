@@ -93,6 +93,9 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
                     "schema": "tda_qwen_runtime_probe_v1",
                     "ready": True,
                     "cuda_available": True,
+                    "cuda_execution_ready": True,
+                    "cuda_execution_error": None,
+                    "driver_version": "570.144",
                     "torch_cuda": "12.6",
                     "long_track_acceptance_window": True,
                 }
