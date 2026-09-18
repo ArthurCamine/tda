@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
+from .qwen_acceptance_window import QWEN_GATE_WINDOW_SECONDS
 from .qwen_runtime import current_qwen_worker
 
 _MAX_STDOUT_BYTES = 64 * 1024
@@ -146,7 +147,7 @@ def prepare_qwen_profile_from_craig(
             {
                 "profile_id": profile_id,
                 "track_number": int(track.number),
-                "audio_window_seconds": 180,
+                "audio_window_seconds": int(QWEN_GATE_WINDOW_SECONDS),
             },
         )
         command = [
@@ -183,7 +184,7 @@ def prepare_qwen_profile_from_craig(
             {
                 "profile_id": profile_id,
                 "track_number": int(track.number),
-                "audio_window_seconds": 180,
+                "audio_window_seconds": int(QWEN_GATE_WINDOW_SECONDS),
             },
         )
         gpu = value.get("gpu") if isinstance(value.get("gpu"), dict) else {}
