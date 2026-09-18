@@ -184,6 +184,17 @@ export class ProcessingController {
 		});
 	};
 
+	deleteJob = async (id: string) => {
+		if (this.#state.connection !== "connected") return;
+		const job = this.#state.jobs.find((candidate) => candidate.id === id);
+		if (!job || ["queued", "running"].includes(job.status)) return;
+
+		await this.run(async (signal) => {
+			await this.bridge.deleteJob(id, signal);
+			await this.read(signal);
+		});
+	};
+
 	synthetic = async () => {
 		if (
 			this.#state.connection !== "connected" ||
