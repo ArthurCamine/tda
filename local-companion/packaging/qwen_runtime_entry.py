@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import tempfile
+import wave
 from importlib import metadata
 from pathlib import Path
 
@@ -65,6 +66,7 @@ def _probe() -> int:
         import safetensors  # noqa: F401
         import torch
         import transformers
+        from tda_companion.qwen_acceptance import _decode_audio_array
         from tda_companion.qwen_physical_gate import MIN_GATE_AUDIO_SECONDS
         from transformers import (
             AutoModelForMultimodalLM,
@@ -91,6 +93,21 @@ def _probe() -> int:
         )
         return 1
 
+    try:
+        with tempfile.TemporaryDirectory(prefix="tda-qwen-audio-probe-") as value:
+            sample = Path(value) / "probe.wav"
+            with wave.open(str(sample), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(16_000)
+                output.writeframes(b"\x00\x00" * 16_000)
+            decoded = _decode_audio_array(sample)
+            audio_decode_ready = int(getattr(decoded, "size", 0)) == 16_000
+            if not audio_decode_ready:
+                raise RuntimeError("QWEN_AUDIO_DECODE_PROBE_INVALID")
+    except Exception:
+        audio_decode_ready = False
+
     available = bool(torch.cuda.is_available())
     count = int(torch.cuda.device_count()) if available else 0
     driver_version = _driver_version(pynvml)
@@ -111,7 +128,8 @@ def _probe() -> int:
         json.dumps(
             {
                 "schema": "tda_qwen_runtime_probe_v1",
-                "ready": True,
+                "ready": audio_decode_ready,
+                "error": None if audio_decode_ready else "QWEN_AUDIO_DECODE_RUNTIME_FAILED",
                 "python_packages": {
                     "torch": _version("torch"),
                     "transformers": _version("transformers"),
@@ -125,6 +143,7 @@ def _probe() -> int:
                 "transformers": transformers.__version__,
                 "torch_cuda": str(torch.version.cuda or "none"),
                 "driver_version": driver_version,
+                "audio_decode_ready": audio_decode_ready,
                 "cuda_available": available,
                 "cuda_device_count": count,
                 "cuda_execution_ready": cuda_execution_ready,

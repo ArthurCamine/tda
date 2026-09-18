@@ -1,4 +1,4 @@
-VERSION = "0.3.10"
+VERSION = "0.3.11"
 
 # Install the production retry policy at package import time so every
 # AgentConnection consumer shares the same idempotency-aware transport contract.

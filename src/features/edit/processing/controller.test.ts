@@ -106,6 +106,48 @@ describe("processing state", () => {
 		finish?.(Response.json(health));
 		await pending;
 	});
+	it("deletes only terminal jobs and refreshes them out of local history", async () => {
+		let jobs: Array<Record<string, unknown>> = [job];
+		const request = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+			const value = String(url);
+			if (value.endsWith("/health")) return Response.json(health);
+			if (value.endsWith("/capabilities")) return Response.json(caps);
+			if (value.endsWith("/jobs/test-job/delete") && init?.method === "POST") {
+				jobs = [];
+				return Response.json({ deleted: true, id: "test-job" });
+			}
+			return Response.json({ jobs });
+		});
+		const controller = new ProcessingController(new LocalBridge(request));
+		await controller.connect(token);
+
+		request.mockClear();
+		await controller.deleteJob(job.id);
+		expect(request).not.toHaveBeenCalled();
+
+		jobs = [
+			{
+				...job,
+				status: "failed",
+				stage: "failed",
+				error: { code: "WORKER_EXECUTION_FAILED", recoverable: true },
+			},
+		];
+		await controller.refresh();
+		request.mockClear();
+
+		await controller.deleteJob(job.id);
+
+		expect(
+			request.mock.calls.some(
+				([url, init]) =>
+					String(url).endsWith("/jobs/test-job/delete") &&
+					init?.method === "POST",
+			),
+		).toBe(true);
+		expect(controller.snapshot().jobs).toEqual([]);
+	});
+
 	it("reuses idempotency key after an uncertain submission", async () => {
 		const { request, controller } = fixture();
 		await controller.connect(token);

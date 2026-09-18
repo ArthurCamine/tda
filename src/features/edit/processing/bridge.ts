@@ -156,6 +156,9 @@ export class LocalBridge {
 			await this.json(`/jobs/${identifier(id)}/${action}`, signal, {}),
 		);
 	}
+	async deleteJob(id: string, signal: AbortSignal) {
+		await this.json(`/jobs/${identifier(id)}/delete`, signal, {});
+	}
 	async craigSource(file: File, signal: AbortSignal) {
 		if (!(file instanceof Blob) || file.size <= 0)
 			throw new BridgeError("invalid_response");

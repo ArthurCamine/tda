@@ -83,6 +83,8 @@ def probe_qwen_long_track_gate(
         raise QwenDesktopPrepareError("QWEN_RUNTIME_UNAVAILABLE")
     result = _run([str(worker), "--probe"], timeout=30.0, runner=runner)
     value = _parse_json_stdout(result, schema="tda_qwen_runtime_probe_v1")
+    if value.get("audio_decode_ready") is not True:
+        raise QwenDesktopPrepareError("QWEN_AUDIO_DECODE_RUNTIME_FAILED")
     if int(getattr(result, "returncode", 1)) != 0 or value.get("ready") is not True:
         raise QwenDesktopPrepareError("QWEN_RUNTIME_PROBE_FAILED")
     if value.get("long_track_acceptance_window") is not True:

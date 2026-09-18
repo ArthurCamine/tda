@@ -14,7 +14,7 @@ import type { JobEvent, LocalJob, SystemGpu } from "./protocol";
 import styles from "./processing.module.css";
 
 type Confirmation =
-	| { id: string; action: "cancel" | "retry" }
+	| { id: string; action: "cancel" | "retry" | "delete" }
 	| { action: "resume" };
 
 function jobTone(status: LocalJob["status"]): StatusTone {
@@ -112,12 +112,14 @@ function JobRow({
 	onCancel,
 	onRetry,
 	onResult,
+	onDelete,
 }: {
 	job: LocalJob;
 	busy: boolean;
 	onCancel: () => void;
 	onRetry: () => void;
 	onResult: () => void;
+	onDelete: () => void;
 }) {
 	const percent = progressPercent(job);
 	return (
@@ -159,6 +161,11 @@ function JobRow({
 				{job.status === "succeeded" && job.result_available ? (
 					<Button size="sm" disabled={busy} onClick={onResult}>
 						Consultar resultado local
+					</Button>
+				) : null}
+				{["succeeded", "failed", "interrupted", "cancelled"].includes(job.status) ? (
+					<Button size="sm" variant="tertiary" disabled={busy} onClick={onDelete}>
+						Remover
 					</Button>
 				) : null}
 			</div>
@@ -226,6 +233,7 @@ export function ProcessingPanel() {
 		setConfirmation(null);
 		if (!choice) return;
 		if (choice.action === "resume") await controller.lifecycle("resume");
+		else if (choice.action === "delete") await controller.deleteJob(choice.id);
 		else await controller.jobAction(choice.id, choice.action);
 	}
 
@@ -237,6 +245,7 @@ export function ProcessingPanel() {
 			onCancel={() => setConfirmation({ id: job.id, action: "cancel" })}
 			onRetry={() => setConfirmation({ id: job.id, action: "retry" })}
 			onResult={() => void controller.result(job.id)}
+			onDelete={() => setConfirmation({ id: job.id, action: "delete" })}
 		/>
 	);
 
@@ -563,19 +572,23 @@ export function ProcessingPanel() {
 								? "Retomar a fila local?"
 								: confirmation.action === "cancel"
 									? "Cancelar este trabalho?"
-									: "Repetir este trabalho?"}
+									: confirmation.action === "delete"
+										? "Excluir este trabalho?"
+										: "Repetir este trabalho?"}
 						</h2>
 						<p>
 							{confirmation.action === "resume"
 								? "O serviço poderá iniciar os trabalhos que aguardam na fila."
 								: confirmation.action === "cancel"
 									? `O cancelamento será enviado ao trabalho ${confirmation.id}.`
-									: `Uma nova tentativa será criada para ${confirmation.id}; repetir não promete retomar do ponto exato.`}
+									: confirmation.action === "delete"
+										? `O trabalho ${confirmation.id}, seus eventos e eventual resultado local serão excluídos do histórico. Modelos, sessão Craig e checkpoints não serão apagados.`
+										: `Uma nova tentativa será criada para ${confirmation.id}; repetir não promete retomar do ponto exato.`}
 						</p>
 						<div className={styles.dialogActions}>
 							<Button onClick={() => setConfirmation(null)}>Voltar</Button>
 							<Button variant="primary" onClick={() => void confirm()}>
-								Confirmar
+								{confirmation.action === "delete" ? "Excluir" : "Confirmar"}
 							</Button>
 						</div>
 					</>

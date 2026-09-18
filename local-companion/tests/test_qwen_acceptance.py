@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
+import tda_companion.qwen_acceptance as acceptance
 from tda_companion.qwen_acceptance import (
     QwenAcceptanceError,
     _qwen_inference_failure_code,
@@ -88,6 +92,107 @@ def _align(_aligner_root: Path, _audio: Path, text: str, language: str, plan) ->
 
 def _duration(_audio: Path) -> float:
     return 2.0
+
+
+def _fake_qwen_modules(monkeypatch, processor):
+    torch = ModuleType("torch")
+    torch.bfloat16 = "bfloat16"
+    torch.cuda = SimpleNamespace(empty_cache=lambda: None)
+    torch.inference_mode = lambda: nullcontext()
+
+    class FakeModel:
+        hf_device_map = {"": "cuda:0"}
+        device = "cuda:0"
+        dtype = "bfloat16"
+        config = SimpleNamespace(timestamp_token_id=1)
+
+    class FakeAutoProcessor:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return processor
+
+    class FakeAutoModel:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakeModel()
+
+    transformers = ModuleType("transformers")
+    transformers.AutoProcessor = FakeAutoProcessor
+    transformers.AutoModelForMultimodalLM = FakeAutoModel
+    transformers.AutoModelForTokenClassification = FakeAutoModel
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+
+
+def test_qwen_asr_gate_passes_decoded_waveform_not_filesystem_path(monkeypatch, tmp_path: Path):
+    waveform = object()
+    seen: dict[str, object] = {}
+
+    class Processor:
+        def apply_transcription_request(self, *, audio, language, prompt):
+            seen["audio"] = audio
+            seen["language"] = language
+            seen["prompt"] = prompt
+            raise QwenAcceptanceError("SENTINEL_WAVEFORM_REACHED")
+
+    _fake_qwen_modules(monkeypatch, Processor())
+    monkeypatch.setattr(acceptance, "_decode_audio_array", lambda _path: waveform)
+
+    plan = acceptance.QwenPlan(
+        profile_id="qwen-quality",
+        device="cuda",
+        dtype="bfloat16",
+        compute_capability="8.9",
+    )
+    with pytest.raises(QwenAcceptanceError, match="SENTINEL_WAVEFORM_REACHED"):
+        acceptance.run_qwen_asr_sample(
+            tmp_path / "model",
+            tmp_path / "acceptance-window.wav",
+            plan,
+            prompt="Dandelion",
+        )
+
+    assert seen == {
+        "audio": waveform,
+        "language": "Portuguese",
+        "prompt": "Dandelion",
+    }
+
+
+def test_qwen_aligner_gate_passes_decoded_waveform_not_filesystem_path(monkeypatch, tmp_path: Path):
+    waveform = object()
+    seen: dict[str, object] = {}
+
+    class Processor:
+        def prepare_forced_aligner_inputs(self, *, audio, transcript, language):
+            seen["audio"] = audio
+            seen["transcript"] = transcript
+            seen["language"] = language
+            raise QwenAcceptanceError("SENTINEL_ALIGN_WAVEFORM_REACHED")
+
+    _fake_qwen_modules(monkeypatch, Processor())
+    monkeypatch.setattr(acceptance, "_decode_audio_array", lambda _path: waveform)
+
+    plan = acceptance.QwenPlan(
+        profile_id="qwen-fast",
+        device="cuda",
+        dtype="bfloat16",
+        compute_capability="8.9",
+    )
+    with pytest.raises(QwenAcceptanceError, match="SENTINEL_ALIGN_WAVEFORM_REACHED"):
+        acceptance.run_qwen_alignment_sample(
+            tmp_path / "aligner",
+            tmp_path / "acceptance-window.wav",
+            "segredo da mesa",
+            "Portuguese",
+            plan,
+        )
+
+    assert seen == {
+        "audio": waveform,
+        "transcript": "segredo da mesa",
+        "language": "Portuguese",
+    }
 
 
 def test_qwen_receipt_proves_gpu_and_alignment_without_leaking_transcript(tmp_path: Path):
@@ -209,6 +314,8 @@ def test_qwen_requires_cuda_capability_and_expected_gpu(tmp_path: Path):
         ),
         (RuntimeError("CUDA out of memory"), "QWEN_ASR_GPU_MEMORY_EXHAUSTED"),
         (RuntimeError("CUBLAS_STATUS_EXECUTION_FAILED"), "QWEN_ASR_CUDA_FAILED"),
+        (ImportError("librosa is required to load audio"), "QWEN_ASR_AUDIO_BACKEND_MISSING"),
+        (RuntimeError("torchcodec audio backend is unavailable"), "QWEN_ASR_AUDIO_BACKEND_MISSING"),
         (AttributeError("processor has no attribute"), "QWEN_ASR_RUNTIME_API_FAILED"),
         (ValueError("invalid audio shape"), "QWEN_ASR_INPUT_FAILED"),
         (RuntimeError("unknown backend failure"), "QWEN_ASR_INFERENCE_FAILED"),

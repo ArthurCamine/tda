@@ -255,6 +255,17 @@ class Store:
                 for row in rows
             ]
 
+    def remove(self, job_id):
+        with self.tx() as db:
+            row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] not in ("succeeded", "failed", "interrupted", "cancelled"):
+                raise Conflict("JOB_ACTIVE")
+            db.execute("DELETE FROM events WHERE job_id=?", (job_id,))
+            db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            return {"deleted": True, "id": job_id}
+
     def action(self, job_id, action):
         with self.tx() as db:
             row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()

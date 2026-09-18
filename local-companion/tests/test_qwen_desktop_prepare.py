@@ -31,6 +31,7 @@ def test_probe_requires_runtime_long_track_gate_feature(monkeypatch, tmp_path: P
             {
                 "schema": "tda_qwen_runtime_probe_v1",
                 "ready": True,
+                "audio_decode_ready": True,
                 "cuda_available": True,
                 "cuda_execution_ready": True,
                 "cuda_execution_error": None,
@@ -40,6 +41,30 @@ def test_probe_requires_runtime_long_track_gate_feature(monkeypatch, tmp_path: P
         )
 
     with pytest.raises(QwenDesktopPrepareError, match="QWEN_RUNTIME_LONG_GATE_REQUIRED"):
+        probe_qwen_long_track_gate(tmp_path / "Runtime", runner=runner)
+
+
+def test_probe_rejects_runtime_without_bundled_audio_decode(monkeypatch, tmp_path: Path):
+    worker = tmp_path / "TDAQwenWorker.exe"
+    worker.write_bytes(b"worker")
+    monkeypatch.setattr(prepare, "current_qwen_worker", lambda _root: worker)
+
+    def runner(command, **kwargs):  # noqa: ANN001, ANN003
+        return _result(
+            {
+                "schema": "tda_qwen_runtime_probe_v1",
+                "ready": False,
+                "audio_decode_ready": False,
+                "error": "QWEN_AUDIO_DECODE_RUNTIME_FAILED",
+                "cuda_available": True,
+                "cuda_execution_ready": True,
+                "cuda_execution_error": None,
+                "driver_version": "570.144",
+                "long_track_acceptance_window": True,
+            }
+        )
+
+    with pytest.raises(QwenDesktopPrepareError, match="QWEN_AUDIO_DECODE_RUNTIME_FAILED"):
         probe_qwen_long_track_gate(tmp_path / "Runtime", runner=runner)
 
 
@@ -53,6 +78,7 @@ def test_probe_rejects_gpu_discovery_without_executable_cuda(monkeypatch, tmp_pa
             {
                 "schema": "tda_qwen_runtime_probe_v1",
                 "ready": True,
+                "audio_decode_ready": True,
                 "cuda_available": True,
                 "cuda_execution_ready": False,
                 "cuda_execution_error": "QWEN_CUDA_DRIVER_INCOMPATIBLE",
@@ -92,6 +118,7 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
                 {
                     "schema": "tda_qwen_runtime_probe_v1",
                     "ready": True,
+                    "audio_decode_ready": True,
                     "cuda_available": True,
                     "cuda_execution_ready": True,
                     "cuda_execution_error": None,

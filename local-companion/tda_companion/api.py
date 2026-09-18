@@ -609,7 +609,9 @@ def create_app(
         return store.get(job_id)
 
     @app.post("/api/v1/jobs/{job_id}/{action}")
-    async def action(job_id: str, action: Literal["cancel", "retry"]):
+    async def action(job_id: str, action: Literal["cancel", "retry", "delete"]):
+        if action == "delete":
+            return store.remove(job_id)
         value = store.action(job_id, action)
         if action == "retry":
             worker_wake.set()
