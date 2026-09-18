@@ -65,8 +65,9 @@ def test_prepare_whisper_installs_runtime_and_defers_model_to_job(tmp_path: Path
     assert status["state"] == "completed"
     assert status["stage"] == "complete"
     rows = bridge._preparation_log.tail(component="preparation", limit=20)
-    assert [row["code"] for row in rows][-3:] == [
+    assert [row["code"] for row in rows][-4:] == [
         "PREPARATION_STARTED",
+        "PREPARATION_RUNTIME",
         "PREPARATION_VERIFY",
         "PREPARATION_COMPLETE",
     ]
