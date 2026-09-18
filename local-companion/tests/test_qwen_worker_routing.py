@@ -51,13 +51,20 @@ def _gate_ready(monkeypatch, calls: dict | None = None):
     monkeypatch.setattr(supervisor_module, "inspect_qwen_physical_gate", inspect)
 
 
-def test_qwen_profile_uses_isolated_runtime_worker_only_after_full_gate_revalidation(monkeypatch, tmp_path: Path):
+
+def test_qwen_profile_uses_sealed_gate_without_full_content_rehash(monkeypatch, tmp_path: Path):
     worker = tmp_path / "Runtime" / "qwen" / "1.0.0" / "TDAQwenWorker.exe"
     worker.parent.mkdir(parents=True)
     worker.write_bytes(b"worker")
-    calls: dict = {}
-    _gate_ready(monkeypatch, calls)
-    monkeypatch.setattr(supervisor_module, "current_qwen_worker", lambda _root: worker)
+    gate_calls: dict = {}
+    worker_calls: dict = {}
+    _gate_ready(monkeypatch, gate_calls)
+
+    def current_worker(_root, *, verify_worker=True):
+        worker_calls["verify_worker"] = verify_worker
+        return worker
+
+    monkeypatch.setattr(supervisor_module, "current_qwen_worker", current_worker)
 
     supervisor = CapturingSupervisor(
         data_root=tmp_path / "Data",
@@ -71,13 +78,13 @@ def test_qwen_profile_uses_isolated_runtime_worker_only_after_full_gate_revalida
     assert supervisor.process_command == [str(worker)]
     assert supervisor.command is not None
     assert supervisor.command.payload["profile_id"] == "qwen-fast"
-    assert calls["verify_model_content"] is True
-    assert calls["profile_id"] == "qwen-fast"
-
+    assert gate_calls["verify_model_content"] is False
+    assert gate_calls["profile_id"] == "qwen-fast"
+    assert worker_calls["verify_worker"] is False
 
 def test_qwen_profile_never_falls_back_to_agent_python_when_runtime_missing(monkeypatch, tmp_path: Path):
     _gate_ready(monkeypatch)
-    monkeypatch.setattr(supervisor_module, "current_qwen_worker", lambda _root: None)
+    monkeypatch.setattr(supervisor_module, "current_qwen_worker", lambda _root, **_kwargs: None)
     supervisor = CapturingSupervisor(
         data_root=tmp_path / "Data",
         models_root=tmp_path / "Models",
@@ -99,7 +106,7 @@ def test_qwen_profile_is_blocked_before_worker_lookup_when_physical_gate_is_miss
     monkeypatch.setattr(
         supervisor_module,
         "current_qwen_worker",
-        lambda _root: (_ for _ in ()).throw(AssertionError("worker lookup must not run")),
+        lambda _root, **_kwargs: (_ for _ in ()).throw(AssertionError("worker lookup must not run")),
     )
     supervisor = CapturingSupervisor(
         data_root=tmp_path / "Data",
@@ -119,7 +126,7 @@ def test_qwen_profile_derives_local_state_and_runtime_roots_from_data_root(monke
     worker = tmp_path / "Runtime" / "qwen" / "1.0.0" / "TDAQwenWorker.exe"
     worker.parent.mkdir(parents=True)
     worker.write_bytes(b"worker")
-    monkeypatch.setattr(supervisor_module, "current_qwen_worker", lambda _root: worker)
+    monkeypatch.setattr(supervisor_module, "current_qwen_worker", lambda _root, **_kwargs: worker)
     supervisor = CapturingSupervisor(
         data_root=tmp_path / "Data",
         models_root=tmp_path / "Models",
