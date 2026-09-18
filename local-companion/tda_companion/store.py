@@ -260,7 +260,7 @@ class Store:
             row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not row:
                 raise KeyError(job_id)
-            if row["status"] in ("queued", "running"):
+            if row["status"] not in ("succeeded", "failed", "interrupted", "cancelled"):
                 raise Conflict("JOB_ACTIVE")
             db.execute("DELETE FROM events WHERE job_id=?", (job_id,))
             db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
