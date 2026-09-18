@@ -70,7 +70,7 @@ def main() -> int:
             Qwen3ASRForConditionalGeneration,
         )
 
-        del accelerate, av, huggingface_hub, numpy, pynvml, safetensors
+        del accelerate, av, huggingface_hub, numpy, safetensors
         del AutoModelForMultimodalLM, AutoModelForTokenClassification, AutoProcessor
         del Qwen3ASRConfig, Qwen3ASRForConditionalGeneration
     except Exception as exc:
