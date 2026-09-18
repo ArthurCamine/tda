@@ -242,6 +242,8 @@ def main() -> int:
             raise RuntimeError("QWEN_RUNTIME_PACKAGED_TORCH_VERSION_MISMATCH")
         if str(probe.get("torch_cuda")) != str(config["torch"]["cuda_family"]):
             raise RuntimeError("QWEN_RUNTIME_PACKAGED_CUDA_FAMILY_MISMATCH")
+        if probe.get("audio_decode_ready") is not True:
+            raise RuntimeError("QWEN_RUNTIME_PACKAGED_AUDIO_DECODE_FAILED")
         expected_nvml = str(config["packages"]["nvidia-ml-py"])
         observed_nvml = str(probe.get("python_packages", {}).get("nvidia_ml_py", ""))
         if observed_nvml != expected_nvml:
