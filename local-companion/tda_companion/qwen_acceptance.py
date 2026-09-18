@@ -223,7 +223,7 @@ def resolve_qwen_plan(profile_id: str, *, cuda_status: dict[str, Any] | None = N
     status = cuda_status if cuda_status is not None else probe_qwen_cuda()
     if not status.get("available") or int(status.get("device_count") or 0) < 1:
         raise QwenAcceptanceError("QWEN_CUDA_UNAVAILABLE")
-    if status.get("execution_ready") is False:
+    if status.get("execution_ready") is not True:
         code = str(status.get("execution_error") or "QWEN_CUDA_EXECUTION_FAILED")
         if code not in {"QWEN_CUDA_DRIVER_INCOMPATIBLE", "QWEN_CUDA_EXECUTION_FAILED"}:
             code = "QWEN_CUDA_EXECUTION_FAILED"
