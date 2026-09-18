@@ -16,6 +16,7 @@ from .craig import CraigPackage, CraigTrack
 from .qwen_acceptance import (
     QwenAcceptanceError,
     QwenPlan,
+    _qwen_inference_failure_code,
     prepare_qwen_aligner,
     prepare_qwen_model,
     resolve_qwen_plan,
@@ -249,7 +250,7 @@ class QwenAsrSession:
             generated_ids = output_ids[:, inputs["input_ids"].shape[1] :]
             parsed = self.processor.decode(generated_ids, return_format="parsed")[0]
         except Exception as exc:
-            raise QwenRuntimeError("QWEN_ASR_INFERENCE_FAILED") from exc
+            raise QwenRuntimeError(_qwen_inference_failure_code(exc)) from exc
         if not isinstance(parsed, dict):
             raise QwenRuntimeError("QWEN_ASR_OUTPUT_INVALID")
         text = str(parsed.get("transcription") or "").strip()
