@@ -36,7 +36,7 @@ def _source_id() -> str:
     return "craig-" + "a" * 64
 
 
-def test_prepare_whisper_installs_runtime_and_defers_model_to_job(tmp_path: Path):
+def test_prepare_whisper_installs_runtime_and_model_before_ready(monkeypatch, tmp_path: Path):
     bridge = _bridge(tmp_path)
     source_id = _source_id()
     bridge._selected_sources.add(source_id)
@@ -49,8 +49,20 @@ def test_prepare_whisper_installs_runtime_and_defers_model_to_job(tmp_path: Path
     bridge.transcription_profiles = lambda: next(states)  # type: ignore[method-assign]
     bridge.install_whisper_runtime = lambda: {  # type: ignore[method-assign]
         "accepted": True,
-        "version": "1.1.0",
+        "version": "1.1.3",
     }
+    seen: dict[str, object] = {}
+
+    def fake_prepare(**kwargs):
+        seen.update(kwargs)
+        return {
+            "ready": True,
+            "profile_id": "whisper-detailed",
+            "prepared": True,
+            "model_content_sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(session_bridge, "prepare_whisper_profile", fake_prepare)
 
     value = bridge.prepare_transcription_profile(source_id, "whisper-detailed")
 
@@ -58,16 +70,21 @@ def test_prepare_whisper_installs_runtime_and_defers_model_to_job(tmp_path: Path
         "ready": True,
         "profile_id": "whisper-detailed",
         "prepared": True,
-        "runtime_version": "1.1.0",
-        "model_prepare_on_job": True,
+        "runtime_version": "1.1.3",
+        "model_content_sha256": "a" * 64,
+        "model_prepare_on_job": False,
     }
+    assert seen["models_root"] == tmp_path / "Models"
+    assert seen["runtime_root"] == tmp_path / "Runtime"
+    assert seen["profile_id"] == "whisper-detailed"
     status = bridge.preparation_status()
     assert status["state"] == "completed"
     assert status["stage"] == "complete"
     rows = bridge._preparation_log.tail(component="preparation", limit=20)
-    assert [row["code"] for row in rows][-4:] == [
+    assert [row["code"] for row in rows][-5:] == [
         "PREPARATION_STARTED",
         "PREPARATION_RUNTIME",
+        "PREPARATION_WHISPER_MODEL",
         "PREPARATION_VERIFY",
         "PREPARATION_COMPLETE",
     ]
