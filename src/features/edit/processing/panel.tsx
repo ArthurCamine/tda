@@ -573,7 +573,7 @@ export function ProcessingPanel() {
 								: confirmation.action === "cancel"
 									? "Cancelar este trabalho?"
 									: confirmation.action === "delete"
-										? "Remover este trabalho da lista?"
+										? "Excluir este trabalho?"
 										: "Repetir este trabalho?"}
 						</h2>
 						<p>
@@ -582,13 +582,13 @@ export function ProcessingPanel() {
 								: confirmation.action === "cancel"
 									? `O cancelamento será enviado ao trabalho ${confirmation.id}.`
 									: confirmation.action === "delete"
-										? `O trabalho ${confirmation.id}, seus eventos e eventual resultado local serão removidos do histórico. Modelos, sessão Craig e checkpoints não serão apagados.`
+										? `O trabalho ${confirmation.id}, seus eventos e eventual resultado local serão excluídos do histórico. Modelos, sessão Craig e checkpoints não serão apagados.`
 										: `Uma nova tentativa será criada para ${confirmation.id}; repetir não promete retomar do ponto exato.`}
 						</p>
 						<div className={styles.dialogActions}>
 							<Button onClick={() => setConfirmation(null)}>Voltar</Button>
 							<Button variant="primary" onClick={() => void confirm()}>
-								Confirmar
+								{confirmation.action === "delete" ? "Excluir" : "Confirmar"}
 							</Button>
 						</div>
 					</>
