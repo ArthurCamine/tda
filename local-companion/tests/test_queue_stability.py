@@ -93,3 +93,54 @@ def test_worker_detail_event_is_persisted_only_for_active_attempt(tmp_path):
         'MODEL_DOWNLOAD_PROGRESS',
         {'downloaded_bytes': 999999},
     ) is False
+
+
+def test_identical_active_transcription_is_reused_across_different_idempotency_keys(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'session-1',
+        'source_id': 'craig-' + 'a' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 4,
+    }
+
+    first = store.submit('desktop-first', body)
+    duplicate_queued = store.submit('desktop-second', body)
+    assert duplicate_queued['id'] == first['id']
+    assert len(store.jobs()) == 1
+    assert store.events(first['id'])[0]['code'] == 'DUPLICATE_SUBMISSION_REUSED'
+
+    claim = store.claim()
+    assert claim is not None
+    duplicate_running = store.submit('web-third', body)
+    assert duplicate_running['id'] == first['id']
+    assert duplicate_running['status'] == 'running'
+    assert len(store.jobs()) == 1
+
+
+def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'session-2',
+        'source_id': 'craig-' + 'b' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 1,
+    }
+    first = store.submit('first-run', body)
+    claim = store.claim()
+    assert claim is not None
+    store.complete(first['id'], claim[1], {'ok': True})
+
+    second = store.submit('second-run', body)
+    assert second['id'] != first['id']
+    assert len(store.jobs()) == 2
