@@ -311,11 +311,16 @@ try {
     if (-not (Test-Path $stableHelper -PathType Leaf)) { throw "STABLE_UPDATER_HELPER_MISSING" }
 
     Seed-PersistentRoots "keep-across-old-helper-update"
-    $stableAgentLaunch = Start-Process -FilePath $stableExe -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
+    $stableAgentLaunch = $null
     try {
-        $stableAgent = Get-VerifiedAgent $stableUpdaterVersion $stableExe "STABLE_UPDATER_AGENT_START_TIMEOUT"
-        if ($stableAgent.Id -ne $stableAgentLaunch.Id) {
-            throw "STABLE_UPDATER_AGENT_PID_MISMATCH:$($stableAgent.Id):$($stableAgentLaunch.Id)"
+        try {
+            $stableAgent = Get-VerifiedAgent $stableUpdaterVersion $stableExe "STABLE_UPDATER_AGENT_NOT_RUNNING"
+        } catch {
+            $stableAgentLaunch = Start-Process -FilePath $stableExe -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
+            $stableAgent = Get-VerifiedAgent $stableUpdaterVersion $stableExe "STABLE_UPDATER_AGENT_START_TIMEOUT"
+            if ($stableAgent.Id -ne $stableAgentLaunch.Id) {
+                throw "STABLE_UPDATER_AGENT_PID_MISMATCH:$($stableAgent.Id):$($stableAgentLaunch.Id)"
+            }
         }
 
         $operationId = [Guid]::NewGuid().ToString("N")
