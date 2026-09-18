@@ -237,6 +237,7 @@ class QwenAsrSession:
                 "QWEN_CUDA_DRIVER_INCOMPATIBLE",
                 "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
                 "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
             }:
                 raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_MODEL_LOAD_FAILED") from exc
@@ -296,6 +297,7 @@ class QwenAlignerSession:
                 "QWEN_CUDA_DRIVER_INCOMPATIBLE",
                 "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
                 "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
             }:
                 raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_ALIGNER_LOAD_FAILED") from exc
@@ -320,6 +322,14 @@ class QwenAlignerSession:
                 timestamp_token_id=self.model.config.timestamp_token_id,
             )[0]
         except Exception as exc:
+            code = _qwen_inference_failure_code(exc)
+            if code in {
+                "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+                "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+                "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
+            }:
+                raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_ALIGNMENT_FAILED") from exc
         if not isinstance(value, list) or not value:
             raise QwenRuntimeError("QWEN_ALIGNMENT_EMPTY")
