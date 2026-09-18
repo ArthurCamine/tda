@@ -221,6 +221,28 @@ def test_qwen_inference_failure_classifier_keeps_safe_cause_class(
     assert _qwen_inference_failure_code(error) == code
 
 
+def test_qwen_rejects_cuda_status_that_never_proved_execution(tmp_path: Path):
+    audio = tmp_path / "sample.flac"
+    audio.write_bytes(b"fake-audio")
+    unproven = _cuda()
+    unproven.pop("execution_ready", None)
+    unproven.pop("execution_error", None)
+
+    with pytest.raises(QwenAcceptanceError, match="QWEN_CUDA_EXECUTION_FAILED"):
+        run_qwen_gpu_acceptance(
+            audio,
+            tmp_path / "Models",
+            profile_id="qwen-fast",
+            cuda_status=unproven,
+            prepare_model=_prepare_model,
+            prepare_aligner=_prepare_aligner,
+            asr_runner=_asr,
+            aligner_runner=_align,
+            monitor_factory=_Monitor,
+            duration_reader=_duration,
+        )
+
+
 def test_qwen_rejects_discovered_gpu_when_cuda_execution_is_not_compatible(tmp_path: Path):
     audio = tmp_path / "sample.flac"
     audio.write_bytes(b"fake-audio")
