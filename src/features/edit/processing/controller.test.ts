@@ -107,7 +107,7 @@ describe("processing state", () => {
 		await pending;
 	});
 	it("deletes only terminal jobs and refreshes them out of local history", async () => {
-		let jobs = [job];
+		let jobs: Array<Record<string, unknown>> = [job];
 		const request = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
 			const value = String(url);
 			if (value.endsWith("/health")) return Response.json(health);
