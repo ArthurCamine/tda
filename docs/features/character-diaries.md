@@ -10,7 +10,7 @@ Diários são obras independentes em `/diario/<slug>`, com catálogo próprio em
 
 A decisão do autor nesta entrega autoriza a integração dos onze capítulos fornecidos e a preservação da experiência em livro. Planejamento, continuidade e guia de estilo são material local de trabalho e não entram nos arquivos públicos nem no Git.
 
-Cada diário pode preservar sua composição editorial independente. O catálogo usa o Design System do TDA; o leitor estático abre por navegação de documento completo, com CSS/JS isolados do shell React. O acesso ao catálogo fica no rodapé do site e no rodapé do leitor.
+Cada diário pode preservar sua composição editorial independente. O catálogo usa o Design System do TDA; o leitor estático abre por navegação de documento completo, com CSS/JS isolados do shell React. Por decisão editorial, o catálogo fica acessível pela URL direta `/diario` e pelo rodapé do leitor, sem link no layout compartilhado ou alteração na página principal. A integração com a navegação do site será definida em entrega posterior.
 
 ## Estrutura e atualização
 
