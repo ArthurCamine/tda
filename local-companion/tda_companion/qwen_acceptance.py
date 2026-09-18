@@ -425,6 +425,45 @@ def _validate_audio(path: Path, duration_reader: Callable[[Path], float]) -> tup
     return source, duration
 
 
+def _decode_audio_array(path: Path, *, sample_rate: int = 16_000) -> Any:
+    """Decode acceptance audio with the runtime's bundled PyAV.
+
+    Transformers 5.17 resolves string paths through torchcodec/librosa. The TDA
+    runtime already owns deterministic audio decoding through PyAV, so hand the
+    processor a NumPy waveform instead of a filesystem path.
+    """
+    try:
+        import av
+        import numpy as np
+    except ImportError as exc:
+        raise QwenAcceptanceError("QWEN_RUNTIME_NOT_INSTALLED") from exc
+
+    pieces: list[Any] = []
+    try:
+        with av.open(str(path.resolve())) as container:
+            stream = next((item for item in container.streams if item.type == "audio"), None)
+            if stream is None:
+                raise QwenAcceptanceError("QWEN_ACCEPTANCE_AUDIO_STREAM_MISSING")
+            resampler = av.AudioResampler(format="flt", layout="mono", rate=sample_rate)
+            for frame in container.decode(stream):
+                for converted in resampler.resample(frame):
+                    array = converted.to_ndarray().reshape(-1).astype(np.float32, copy=False)
+                    if array.size:
+                        pieces.append(array.copy())
+            for converted in resampler.resample(None):
+                array = converted.to_ndarray().reshape(-1).astype(np.float32, copy=False)
+                if array.size:
+                    pieces.append(array.copy())
+    except QwenAcceptanceError:
+        raise
+    except Exception as exc:
+        raise QwenAcceptanceError("QWEN_ACCEPTANCE_AUDIO_DECODE_FAILED") from exc
+
+    if not pieces:
+        raise QwenAcceptanceError("QWEN_ACCEPTANCE_AUDIO_EMPTY")
+    return np.concatenate(pieces).astype(np.float32, copy=False)
+
+
 def _torch_dtype(torch: Any, name: str) -> Any:
     try:
         return getattr(torch, name)
@@ -465,6 +504,8 @@ def _qwen_inference_failure_code(exc: BaseException) -> str:
         )
     ):
         return "QWEN_ASR_CUDA_FAILED"
+    if any(marker in value for marker in ("librosa", "torchcodec", "audio backend")):
+        return "QWEN_ASR_AUDIO_BACKEND_MISSING"
     if isinstance(exc, (AttributeError, TypeError)):
         return "QWEN_ASR_RUNTIME_API_FAILED"
     if isinstance(exc, ValueError):
@@ -498,8 +539,9 @@ def run_qwen_asr_sample(
             raise QwenAcceptanceError("QWEN_MODEL_NOT_GPU_RESIDENT")
 
         inference_started = time.monotonic()
+        audio = _decode_audio_array(audio_path)
         inputs = processor.apply_transcription_request(
-            audio=str(audio_path), language="Portuguese", prompt=prompt or None
+            audio=audio, language="Portuguese", prompt=prompt or None
         )
         inputs = inputs.to(model.device, model.dtype)
         with torch.inference_mode():
@@ -557,8 +599,9 @@ def run_qwen_alignment_sample(
             raise QwenAcceptanceError("QWEN_ALIGNER_NOT_GPU_RESIDENT")
 
         inference_started = time.monotonic()
+        audio = _decode_audio_array(audio_path)
         aligner_inputs, word_lists = processor.prepare_forced_aligner_inputs(
-            audio=str(audio_path), transcript=text, language=language or "Portuguese"
+            audio=audio, transcript=text, language=language or "Portuguese"
         )
         aligner_inputs = aligner_inputs.to(model.device, model.dtype)
         with torch.inference_mode():
