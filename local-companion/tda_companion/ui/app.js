@@ -648,8 +648,9 @@
     let profile = profileById(profileId);
     try {
       if (!profile?.ready) {
-        setProcessStatus(`Preparando ${profile?.label || profileId}…`, profile?.engine === "qwen3" ? "O primeiro uso pode baixar vários GB e executará um gate real de 180 s na GPU." : "O runtime será baixado e verificado antes de criar o job.", "busy");
+        startPreparationProgress(profile);
         const prepared = await api.prepare_transcription_profile(selectedSession.source_id, profileId);
+        await finishPreparationProgress();
         const gpuDetail = prepared?.gpu_name ? ` Gate aprovado em ${prepared.gpu_name}.` : "";
         setProcessStatus("Preparação concluída.", `Perfil validado.${gpuDetail}`, "success");
         await refreshProfiles();
@@ -675,9 +676,14 @@
       await refreshSnapshot();
     } catch (error) {
       submittedJobId = null;
+      await finishPreparationProgress();
       setProcessStatus("Não foi possível iniciar o processamento.", errorText(error), "warning");
       toast(`Processamento não iniciado: ${errorText(error)}`, true);
     } finally {
+      if (preparationTimer) {
+        window.clearInterval(preparationTimer);
+        preparationTimer = null;
+      }
       processBusy = false;
       updateProcessControls();
     }
