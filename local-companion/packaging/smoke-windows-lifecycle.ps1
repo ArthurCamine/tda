@@ -33,20 +33,42 @@ $productKey = "HKCU:\Software\Faysk\TDA Companion"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TDA\TDA Companion.lnk"
 
-function Invoke-Msi([string[]]$Arguments, [string]$LogName) {
+function Invoke-Msi([string[]]$Arguments, [string]$LogName, [int]$TimeoutSeconds = 240) {
     $log = Join-Path $logsRoot $LogName
-    $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @($Arguments + @("/norestart", "/L*v", "`"$log`"")) -Wait -PassThru
+    Write-Host "MSI start: $LogName"
+    $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @($Arguments + @("/norestart", "/L*v", "`"$log`"")) -PassThru
+    if (-not $result.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
+        Write-Host "MSI timeout after $TimeoutSeconds seconds: $LogName"
+        try { $result.Kill($true) } catch {}
+        try { $result.WaitForExit(5000) | Out-Null } catch {}
+        if (Test-Path $log) {
+            Write-Host "--- timed-out MSI trace: $LogName ---"
+            Select-String -Path $log -Pattern "Action start|Action ended|Return value 3|CustomAction|RemoveExistingProducts|InstallFinalize" |
+                Select-Object -Last 120 |
+                ForEach-Object { Write-Host $_.Line }
+            Write-Host "--- timed-out MSI tail: $LogName ---"
+            Get-Content $log -Tail 220 | Write-Host
+        }
+        throw "MSI_TIMEOUT:$LogName"
+    }
     if ($result.ExitCode -notin @(0, 3010)) {
         if (Test-Path $log) { Get-Content $log -Tail 160 | Write-Host }
         throw "MSI_EXIT_CODE:$($result.ExitCode):$LogName"
     }
+    Write-Host "MSI complete: $LogName ($($result.ExitCode))"
 }
 
 function Invoke-RollbackProbe([string]$ProbeMsi, [string]$LogName) {
     $log = Join-Path $logsRoot $LogName
     $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
         "/i", "`"$ProbeMsi`"", "/qn", "/norestart", "/L*v", "`"$log`""
-    ) -Wait -PassThru
+    ) -PassThru
+    if (-not $result.WaitForExit(180000)) {
+        try { $result.Kill($true) } catch {}
+        try { $result.WaitForExit(5000) | Out-Null } catch {}
+        if (Test-Path $log) { Get-Content $log -Tail 220 | Write-Host }
+        throw "ROLLBACK_PROBE_TIMEOUT"
+    }
     if ($result.ExitCode -in @(0, 3010)) {
         throw "ROLLBACK_PROBE_UNEXPECTED_SUCCESS:$($result.ExitCode)"
     }
@@ -330,6 +352,7 @@ try {
         Copy-Item -LiteralPath $stableHelper -Destination $handoffHelper
         $currentMsiSha256 = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
 
+        Write-Host "Stable updater helper start: $stableUpdaterVersion -> $CurrentVersion"
         $update = Start-Process -FilePath $handoffHelper -ArgumentList @(
             "--install-update",
             "--root", "`"$tdaRoot`"",
@@ -340,7 +363,14 @@ try {
             "--port", "8765",
             "--operation-id", $operationId,
             "--cleanup-self"
-        ) -Wait -PassThru
+        ) -PassThru
+        if (-not $update.WaitForExit(720000)) {
+            try { $update.Kill($true) } catch {}
+            try { $update.WaitForExit(5000) | Out-Null } catch {}
+            $lastOperation = Join-Path $tdaRoot "Cache\maintenance\last-operation.json"
+            if (Test-Path $lastOperation) { Get-Content -LiteralPath $lastOperation -Raw | Write-Host }
+            throw "STABLE_UPDATER_HELPER_TIMEOUT"
+        }
         if ($update.ExitCode -ne 0) {
             $lastOperation = Join-Path $tdaRoot "Cache\maintenance\last-operation.json"
             if (Test-Path $lastOperation) { Get-Content -LiteralPath $lastOperation -Raw | Write-Host }
