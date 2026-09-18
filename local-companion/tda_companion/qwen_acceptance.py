@@ -28,6 +28,7 @@ TRANSCRIPT_SCHEMA = "tda_qwen_acceptance_transcript_v1"
 ALIGNER_DIRECTORY = "qwen3-forced-aligner-0.6b-hf"
 MAX_ACCEPTANCE_AUDIO_BYTES = 2 * 1024**3
 MAX_ACCEPTANCE_AUDIO_SECONDS = 240.0
+QWEN_ACCEPTANCE_MAX_NEW_TOKENS = 1024
 _COPY_CHUNK = 1024 * 1024
 
 ALIGNER_PROFILE = AsrProfile(
@@ -385,7 +386,7 @@ def run_qwen_asr_sample(
         )
         inputs = inputs.to(model.device, model.dtype)
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=2048)
+            output_ids = model.generate(**inputs, max_new_tokens=QWEN_ACCEPTANCE_MAX_NEW_TOKENS)
         generated_ids = output_ids[:, inputs["input_ids"].shape[1] :]
         parsed = processor.decode(generated_ids, return_format="parsed")[0]
         inference_seconds = max(time.monotonic() - inference_started, 0.0)
