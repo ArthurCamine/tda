@@ -452,6 +452,9 @@
 
   function updateProcessControls() {
     const button = $("start-processing");
+    document.querySelectorAll('input[name="transcription-profile"]').forEach((input) => {
+      input.disabled = processBusy;
+    });
     if (!selectedSession) {
       button.disabled = true;
       button.textContent = "Preparar e processar";
@@ -474,6 +477,7 @@
   }
 
   function renderSession(session) {
+    if (!processBusy) resetPreparationProgress();
     selectedSession = session;
     submittedJobId = null;
     const empty = $("source-empty");
@@ -560,6 +564,8 @@
       input.value = profile.id;
       input.checked = profile.id === selectedProfileId;
       input.addEventListener("change", () => {
+        if (processBusy) return;
+        resetPreparationProgress();
         selectedProfileId = profile.id;
         document.querySelectorAll(".profile-option").forEach((node) => {
           node.classList.remove("selected");
@@ -1081,6 +1087,11 @@
       }
     });
     $("refresh-logs").addEventListener("click", () => refreshLogs(true));
+    $("preparation-open-logs").addEventListener("click", () => {
+      showView("logs");
+      $("log-search").value = "preparation";
+      refreshLogs(false);
+    });
     $("log-level").addEventListener("change", () => refreshLogs(true));
     $("log-search").addEventListener("input", () => renderLogRows($("full-logs"), allLogs, false));
     $("setting-startup").addEventListener("change", (event) => updateSetting("start_with_windows", event.target.checked));
@@ -1135,5 +1146,6 @@
   window.addEventListener("pywebviewready", boot, { once: true });
   window.addEventListener("beforeunload", () => {
     if (refreshTimer) window.clearInterval(refreshTimer);
+    if (preparationTimer) window.clearInterval(preparationTimer);
   });
 })();
