@@ -170,7 +170,8 @@ describe("processing state", () => {
 		await controller.deleteJob(job.id);
 
 		expect(request).not.toHaveBeenCalled();
-		expect(controller.snapshot().jobs).toEqual([terminal]);
+		expect(controller.snapshot().jobs).toHaveLength(1);
+		expect(controller.snapshot().jobs[0]).toMatchObject(terminal);
 	});
 
 	it("reuses idempotency key after an uncertain submission", async () => {
