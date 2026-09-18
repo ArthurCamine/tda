@@ -18,6 +18,7 @@ from .asr_models import (
     get_profile,
     inspect_model_install,
     model_path,
+    reset_model_install,
     write_install_marker,
 )
 from .asr_timeline import build_turns, deduplicate_cross_track_segments, flatten_tracks
@@ -224,8 +225,11 @@ def prepare_whisper_model(
     target = model_path(models_root, profile)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise WhisperRuntimeError("WHISPER_MODEL_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, profile)
+        except ModelRegistryError as exc:
+            raise WhisperRuntimeError("WHISPER_MODEL_REPAIR_FAILED") from exc
 
     report = report or (lambda _: None)
     report({"type": "stage", "stage": "model_prepare", "profile": profile.id})
