@@ -28,7 +28,7 @@ if (-not $pythonMatch.Success) { throw 'COMPANION_PYTHON_REQUIREMENT_INVALID' }
 $version = $projectVersionMatch.Groups['value'].Value
 $runtimeVersion = $runtimeVersionMatch.Groups['value'].Value
 $pythonRequirement = $pythonMatch.Groups['value'].Value
-if ($version -ne $runtimeVersion) { throw "COMPANION_VERSION_METADATA_MISMATCH:$version:$runtimeVersion" }
+if ($version -ne $runtimeVersion) { throw "COMPANION_VERSION_METADATA_MISMATCH:${version}:${runtimeVersion}" }
 
 [ordered]@{
     schema_version = 'tda_install_plan_v1'
