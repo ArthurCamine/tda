@@ -9,6 +9,7 @@
   let selectedProfileId = null;
   let processBusy = false;
   let submittedJobId = null;
+  let submittedJobStatus = null;
   let lastConnectionState = null;
   let preparationTimer = null;
   let preparationPollBusy = false;
@@ -454,8 +455,9 @@
 
   function updateProcessControls() {
     const button = $("start-processing");
+    const submittedActive = ["queued", "running"].includes(submittedJobStatus);
     document.querySelectorAll('input[name="transcription-profile"]').forEach((input) => {
-      input.disabled = processBusy;
+      input.disabled = processBusy || submittedActive;
     });
     if (!selectedSession) {
       button.disabled = true;
@@ -470,8 +472,12 @@
       if (!processBusy) setProcessStatus("Escolha a qualidade da transcrição.", "O perfil recomendado prioriza precisão para sessões importantes.");
       return;
     }
-    button.disabled = processBusy;
-    button.textContent = profile.ready ? "Processar sessão" : "Preparar e processar";
+    button.disabled = processBusy || submittedActive;
+    button.textContent = submittedActive
+      ? submittedJobStatus === "queued" ? "Sessão na fila" : "Processando sessão"
+      : submittedJobStatus && ["succeeded", "failed", "interrupted", "cancelled"].includes(submittedJobStatus)
+        ? "Processar novamente"
+        : profile.ready ? "Processar sessão" : "Preparar e processar";
     if (!processBusy && !submittedJobId) {
       if (profile.ready) setProcessStatus("Tudo pronto para processar.", `${profile.label} está disponível nesta máquina.`, "success");
       else setProcessStatus("O perfil será preparado no primeiro uso.", "Runtime, modelo e validações necessárias serão executados antes do job.", "warning");
@@ -482,6 +488,7 @@
     if (!processBusy) resetPreparationProgress();
     selectedSession = session;
     submittedJobId = null;
+    submittedJobStatus = null;
     const empty = $("source-empty");
     const summary = $("session-summary");
     const tracks = $("track-list");
@@ -574,6 +581,7 @@
         });
         label.classList.add("selected");
         submittedJobId = null;
+        submittedJobStatus = null;
         updateProcessControls();
       });
 
@@ -675,6 +683,7 @@
       );
       submittedJobId = result?.id || null;
       const status = result?.status || "queued";
+      submittedJobStatus = status;
       setProcessStatus(
         status === "running" ? "Transcrição iniciada." : "Sessão adicionada à fila.",
         submittedJobId ? `Job ${submittedJobId} · ${profile?.label || profileId}` : `${profile?.label || profileId} · aguardando o Agent`,
@@ -702,23 +711,46 @@
     const job = (snapshot.jobs || []).find((item) => item.id === submittedJobId);
     if (!job) return;
     const progress = job.progress || {};
+    submittedJobStatus = job.status;
+    updateProcessControls();
     if (job.status === "queued") {
-      setProcessStatus("Sessão na fila local.", "O Agent iniciará assim que o slot de processamento estiver livre.", "busy");
+      setProcessStatus("Sessão na fila local.", "O Agent iniciará assim que o slot de processamento estiver livre. O botão fica bloqueado para não criar uma cópia da mesma sessão.", "busy");
       return;
     }
     if (job.status === "running") {
-      const detail = typeof progress.completed === "number"
+      const stageDetails = {
+        model_prepare: "Baixando ou verificando o modelo local. A GPU pode ficar em 0% nesta etapa.",
+        model_load: "Modelo pronto; carregando na GPU para iniciar a transcrição.",
+        transcription: "Transcrevendo as faixas da sessão na GPU.",
+        alignment: "Alinhando palavras e timestamps.",
+        cross_track_dedup: "Removendo falas duplicadas entre faixas.",
+        merge_timeline: "Montando a linha do tempo única da sessão.",
+        turn_building: "Organizando os turnos de fala.",
+        result_prepare: "Consolidando e gravando o resultado local.",
+      };
+      const stageDetail = stageDetails[job.stage];
+      const progressDetail = typeof progress.completed === "number"
         ? `${progress.completed} de ${progress.total ?? "—"} ${progress.unit || "itens"}`
-        : "O worker está processando as faixas da sessão.";
-      setProcessStatus("Transcrição em andamento.", detail, "busy");
+        : null;
+      setProcessStatus(
+        job.stage === "model_prepare" ? "Preparando modelo de transcrição…" : "Transcrição em andamento.",
+        [stageDetail, progressDetail].filter(Boolean).join(" · ") || "O worker está processando a sessão.",
+        "busy",
+      );
       return;
     }
     if (job.status === "succeeded") {
       setProcessStatus("Transcrição concluída.", "O resultado local está pronto para o fluxo seguinte do TDA.", "success");
+      updateProcessControls();
       return;
     }
-    if (job.status === "failed" || job.status === "interrupted") {
-      setProcessStatus("O processamento precisa de atenção.", job.error?.code || "Consulte os logs técnicos para detalhes.", "warning");
+    if (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") {
+      setProcessStatus(
+        job.status === "cancelled" ? "Processamento cancelado." : "O processamento precisa de atenção.",
+        job.error?.code || (job.status === "cancelled" ? "Você pode iniciar novamente quando quiser." : "Consulte os logs técnicos para detalhes."),
+        "warning",
+      );
+      updateProcessControls();
     }
   }
 
