@@ -24,7 +24,7 @@ concurrency:
 env:
   VERCEL_ORG_ID: team_9wuTfarCQ3L63xtufPKUDzi0
   VERCEL_PROJECT_ID: prj_hDiDvvRiesg3qCDekGWE8JQMkIyH
-  VERCEL_CLI_VERSION: 59.11.7
+  VERCEL_CLI_VERSION: 59.23.2
   SUPABASE_PROJECT_REF: dmrqnbdvbkfqzctcerbx
   SUPABASE_CLI_VERSION: 2.117.0
   TDA_MIGRATION_BOUNDARY: 20260906210333
@@ -181,7 +181,7 @@ jobs:
           TDA_RELEASE_ID: ${{ steps.source.outputs.release }}
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
-      - name: Stage Production artifact without domain traffic
+      - name: Start staged Production artifact without domain traffic
         id: stage
         shell: bash
         env:
@@ -189,12 +189,21 @@ jobs:
           RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
-          URL="$(vercel deploy --prebuilt --prod --skip-domain --yes --token="$VERCEL_TOKEN" \
+          URL="$(vercel deploy --prebuilt --prod --skip-domain --yes --no-wait --token="$VERCEL_TOKEN" \
             --env APP_ENV=production \
             --env APP_COMMIT_SHA="$SOURCE_SHA" \
             --env TDA_RELEASE_ID="$RELEASE_ID" | tail -n 1)"
+          if [[ ! "$URL" =~ ^https://[A-Za-z0-9.-]+\.vercel\.app$ ]]; then
+            echo "::error::Vercel did not return a valid staged Production URL: $URL"
+            exit 1
+          fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Staged Production deployment: $URL"
+          echo "Staged Production deployment started: $URL"
+
+      - name: Wait for staged Production readiness
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+        run: vercel inspect "$DEPLOYMENT_URL" --wait --timeout=20m --token="$VERCEL_TOKEN"
 
       - name: Install pinned Supabase CLI when migrations changed
         if: ${{ steps.plan.outputs.migrations == 'true' }}
