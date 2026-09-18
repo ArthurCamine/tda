@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tda_companion.qwen_acceptance import QwenAcceptanceError, run_qwen_gpu_acceptance
+from tda_companion.qwen_acceptance import (
+    QwenAcceptanceError,
+    _qwen_inference_failure_code,
+    run_qwen_gpu_acceptance,
+)
 
 
 class _Monitor:
@@ -191,6 +195,23 @@ def test_qwen_requires_cuda_capability_and_expected_gpu(tmp_path: Path):
             monitor_factory=_Monitor,
             duration_reader=_duration,
         )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (RuntimeError("CUDA out of memory"), "QWEN_ASR_GPU_MEMORY_EXHAUSTED"),
+        (RuntimeError("CUBLAS_STATUS_EXECUTION_FAILED"), "QWEN_ASR_CUDA_FAILED"),
+        (AttributeError("processor has no attribute"), "QWEN_ASR_RUNTIME_API_FAILED"),
+        (ValueError("invalid audio shape"), "QWEN_ASR_INPUT_FAILED"),
+        (RuntimeError("unknown backend failure"), "QWEN_ASR_INFERENCE_FAILED"),
+    ],
+)
+def test_qwen_inference_failure_classifier_keeps_safe_cause_class(
+    error: BaseException,
+    code: str,
+):
+    assert _qwen_inference_failure_code(error) == code
 
 
 def test_qwen_acceptance_rejects_samples_above_alignment_window(tmp_path: Path):
