@@ -139,7 +139,14 @@ def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
     first = store.submit('first-run', body)
     claim = store.claim()
     assert claim is not None
-    store.complete(first['id'], claim[1], {'ok': True})
+    store.progress(
+        first['id'],
+        claim[1],
+        completed=1,
+        total=1,
+        stage='transcription',
+    )
+    assert store.complete(first['id'], claim[1], {'ok': True}) is True
 
     second = store.submit('second-run', body)
     assert second['id'] != first['id']
