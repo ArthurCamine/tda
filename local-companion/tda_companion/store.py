@@ -272,6 +272,21 @@ class Store:
             else:
                 if status not in ("failed", "interrupted"):
                     raise Conflict("JOB_NOT_RETRYABLE")
+                if body["kind"] == "transcription.craig":
+                    requested_work = self._transcription_work_signature(body)
+                    for candidate in db.execute(
+                        """
+                        SELECT body FROM jobs
+                        WHERE id<>? AND status IN ('queued','running')
+                        """,
+                        (job_id,),
+                    ).fetchall():
+                        candidate_body = json.loads(candidate["body"])
+                        if (
+                            candidate_body.get("kind") == "transcription.craig"
+                            and self._transcription_work_signature(candidate_body) == requested_work
+                        ):
+                            raise Conflict("TRANSCRIPTION_WORK_ALREADY_ACTIVE")
                 status = "queued"
                 # Real ASR checkpoint reuse is not wired yet. Reset progress instead
                 # of pretending that a partial transcript can resume safely.
