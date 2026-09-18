@@ -70,10 +70,10 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
                 "schema": "tda_qwen_gpu_acceptance_v1",
                 "pass": True,
                 "gpu": {"name": "NVIDIA GeForce RTX 4070 Laptop GPU"},
-                "inference": {"audio_seconds": 180.0, "transcript_sha256": "b" * 64},
+                "inference": {"audio_seconds": 60.0, "transcript_sha256": "b" * 64},
                 "source_window": {
                     "start_seconds": 540.0,
-                    "duration_seconds": 180.0,
+                    "duration_seconds": 60.0,
                     "energy_dbfs": -21.5,
                 },
             }
@@ -99,12 +99,12 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
         "physical_gate_ready",
     ]
     assert progress_events[2][1]["track_count"] == 1
-    assert progress_events[3][1]["audio_window_seconds"] == 180
+    assert progress_events[3][1]["audio_window_seconds"] == 60
     assert value == {
         "ready": True,
         "profile_id": "qwen-quality",
         "gpu_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
-        "audio_seconds": 180.0,
+        "audio_seconds": 60.0,
         "window_start_seconds": 540.0,
         "window_energy_dbfs": -21.5,
         "runtime_cuda": "13.2",
