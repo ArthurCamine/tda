@@ -190,32 +190,46 @@ def test_reader_invalidates_legacy_short_gate(tmp_path: Path):
     assert ready_qwen_profiles(state, runtime, models) == []
 
 
-def test_gate_is_invalidated_when_worker_or_model_content_changes(tmp_path: Path):
+
+def test_gate_fast_path_trusts_receipt_and_full_revalidation_detects_tamper(tmp_path: Path):
     state, runtime, models = _prepared(tmp_path)
     record_qwen_physical_gate(state, runtime, models, _receipt(), profile_id="qwen-fast")
 
     worker = runtime / "qwen" / MIN_COMPATIBLE_QWEN_RUNTIME_VERSION / "TDAQwenWorker.exe"
     worker.write_bytes(b"tampered")
-    stale = inspect_qwen_physical_gate(state, runtime, models, profile_id="qwen-fast")
-    assert stale["ready"] is False
-    assert stale["status"] == "stale"
+    # Normal job dispatch is intentionally metadata-only after the physical gate.
+    assert inspect_qwen_physical_gate(
+        state, runtime, models, profile_id="qwen-fast"
+    )["ready"] is True
+    verified_worker = inspect_qwen_physical_gate(
+        state,
+        runtime,
+        models,
+        profile_id="qwen-fast",
+        verify_model_content=True,
+    )
+    assert verified_worker["ready"] is False
+    assert verified_worker["status"] == "stale"
+    assert verified_worker["reason"] == "QWEN_GATE_RUNTIME_NOT_READY"
 
     other = tmp_path / "other"
     state2, runtime2, models2 = _prepared(other)
     record_qwen_physical_gate(state2, runtime2, models2, _receipt(), profile_id="qwen-fast")
     model = model_path(models2, "qwen-fast") / "model.safetensors"
     model.write_bytes(b"changed-after-acceptance")
-    assert inspect_qwen_physical_gate(state2, runtime2, models2, profile_id="qwen-fast")["ready"] is True
-    verified = inspect_qwen_physical_gate(
+    assert inspect_qwen_physical_gate(
+        state2, runtime2, models2, profile_id="qwen-fast"
+    )["ready"] is True
+    verified_model = inspect_qwen_physical_gate(
         state2,
         runtime2,
         models2,
         profile_id="qwen-fast",
         verify_model_content=True,
     )
-    assert verified["ready"] is False
-    assert verified["reason"] == "QWEN_GATE_MODEL_NOT_READY"
-
+    assert verified_model["ready"] is False
+    assert verified_model["status"] == "stale"
+    assert verified_model["reason"] == "QWEN_GATE_MODEL_NOT_READY"
 
 def test_gate_is_per_profile_and_rejects_receipts_with_private_payload(tmp_path: Path):
     state, runtime, models = _prepared(tmp_path)
