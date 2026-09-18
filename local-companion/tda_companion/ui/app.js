@@ -314,7 +314,7 @@
       ? rows.slice(-8)
       : rows.filter((row) => {
           if (!query) return true;
-          return `${row.code || ""} ${row.component || ""} ${row.message || ""}`
+          return `${row.code || ""} ${row.component || ""} ${row.message || ""} ${formatLogContext(row.context)}`
             .toLocaleLowerCase("pt-BR")
             .includes(query);
         });
@@ -340,9 +340,30 @@
       const component = document.createElement("span");
       component.className = "log-component";
       component.textContent = row.component || "agent";
-      const message = document.createElement("span");
+
+      const message = document.createElement("div");
       message.className = "log-message";
-      message.textContent = row.message || row.code || "Evento";
+      const main = document.createElement("div");
+      main.className = "log-message-main";
+      if (row.code) {
+        const code = document.createElement("span");
+        code.className = "log-code";
+        code.textContent = row.code;
+        main.append(code);
+      }
+      const copy = document.createElement("span");
+      copy.textContent = row.message || row.code || "Evento";
+      main.append(copy);
+      message.append(main);
+
+      const contextText = formatLogContext(row.context);
+      if (contextText) {
+        const context = document.createElement("span");
+        context.className = "log-context";
+        context.textContent = contextText;
+        message.append(context);
+      }
+
       line.append(stamp, level, component, message);
       target.append(line);
     });
