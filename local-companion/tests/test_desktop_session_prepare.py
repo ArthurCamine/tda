@@ -127,6 +127,14 @@ def test_prepare_qwen_installs_runtime_runs_real_gate_then_requires_capability(m
     assert codes[-1] == "PREPARATION_COMPLETE"
 
 
+def test_preparation_tracker_rejects_concurrent_operation(tmp_path: Path):
+    bridge = _bridge(tmp_path)
+    bridge._begin_preparation("qwen-quality", "qwen3")
+
+    with pytest.raises(RuntimeError, match="TRANSCRIPTION_PREPARATION_ALREADY_RUNNING"):
+        bridge._begin_preparation("qwen-fast", "qwen3")
+
+
 def test_prepare_failure_keeps_stage_and_error_for_ui(tmp_path: Path):
     bridge = _bridge(tmp_path)
     source_id = _source_id()
