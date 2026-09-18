@@ -1,5 +1,6 @@
 import { beginInteractiveGlobalLoading } from "../../../components/global-loading/events";
 import { LocalBridge } from "./bridge";
+import { supportsTerminalJobDelete } from "./compatibility";
 import {
 	BridgeError,
 	type BridgeErrorCode,
@@ -185,7 +186,11 @@ export class ProcessingController {
 	};
 
 	deleteJob = async (id: string) => {
-		if (this.#state.connection !== "connected") return;
+		if (
+			this.#state.connection !== "connected" ||
+			!supportsTerminalJobDelete(this.#state.health?.service_version)
+		)
+			return;
 		const job = this.#state.jobs.find((candidate) => candidate.id === id);
 		if (!job || ["queued", "running"].includes(job.status)) return;
 
