@@ -244,6 +244,42 @@ def test_download_update_uses_verified_release_chain(monkeypatch, tmp_path):
     assert not target.with_name(target.name + ".partial").exists()
 
 
+def test_download_update_uses_exact_rc_tag_for_acceptance_channel(monkeypatch, tmp_path):
+    payload = b"candidate-msi"
+    manifest = parse_manifest(
+        _manifest_json(
+            payload,
+            channel="rc",
+            version="0.3.10",
+            tag="companion-rc-v0.3.10-0123456789ab",
+        )
+    )
+    seen: dict[str, object] = {}
+
+    def fake_open(request, *, expected_github_url: str, timeout: float):
+        seen["request_url"] = request.full_url
+        seen["expected_github_url"] = expected_github_url
+        seen["timeout"] = timeout
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr("tda_companion.updates.open_verified_release", fake_open)
+
+    target = download_update(manifest, tmp_path, timeout=9.0, prefer_bits=False)
+
+    assert target.read_bytes() == payload
+    assert seen == {
+        "request_url": (
+            "https://dnd.faysk.dev/api/downloads/companion/windows"
+            "?tag=companion-rc-v0.3.10-0123456789ab"
+        ),
+        "expected_github_url": (
+            "https://github.com/Faysk/tda/releases/download/"
+            "companion-rc-v0.3.10-0123456789ab/TDACompanion-x64.msi"
+        ),
+        "timeout": 9.0,
+    }
+
+
 def test_download_update_maps_rejected_release_chain_to_stable_error(monkeypatch, tmp_path):
     manifest = _manifest(b"fake-msi-payload")
 
