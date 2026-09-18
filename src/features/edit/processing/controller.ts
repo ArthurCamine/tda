@@ -191,6 +191,8 @@ export class ProcessingController {
 
 		await this.run(async (signal) => {
 			await this.bridge.deleteJob(id, signal);
+			if (!signal.aborted && this.#state.result?.jobId === id)
+				this.update({ result: null });
 			await this.read(signal);
 		});
 	};
