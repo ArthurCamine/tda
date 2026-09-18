@@ -159,6 +159,24 @@ class Store:
                 if row["signature"] != signature:
                     raise Conflict("IDEMPOTENCY_CONFLICT")
                 return self.dto(row)
+            if body.get("kind") == "transcription.craig":
+                active = db.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE signature=? AND status IN ('queued','running')
+                    ORDER BY updated DESC
+                    LIMIT 1
+                    """,
+                    (signature,),
+                ).fetchone()
+                if active:
+                    self.event(
+                        db,
+                        active["id"],
+                        "DUPLICATE_SUBMISSION_REUSED",
+                        {"status": active["status"]},
+                    )
+                    return self.dto(active)
             units = body.get("units")
             if isinstance(units, bool) or not isinstance(units, int) or units < 1:
                 raise Conflict("JOB_UNITS_INVALID")
