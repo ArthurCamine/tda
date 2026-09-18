@@ -89,6 +89,11 @@ def probe_qwen_long_track_gate(
         raise QwenDesktopPrepareError("QWEN_RUNTIME_LONG_GATE_REQUIRED")
     if value.get("cuda_available") is not True:
         raise QwenDesktopPrepareError("QWEN_CUDA_UNAVAILABLE")
+    if value.get("cuda_execution_ready") is not True:
+        code = str(value.get("cuda_execution_error") or "QWEN_CUDA_EXECUTION_FAILED")
+        if code not in {"QWEN_CUDA_DRIVER_INCOMPATIBLE", "QWEN_CUDA_EXECUTION_FAILED"}:
+            code = "QWEN_CUDA_EXECUTION_FAILED"
+        raise QwenDesktopPrepareError(code)
     return value
 
 
@@ -118,6 +123,7 @@ def prepare_qwen_profile_from_craig(
         {
             "profile_id": profile_id,
             "runtime_cuda": str(probe.get("torch_cuda") or "unknown"),
+            "driver_version": str(probe.get("driver_version") or "unknown"),
         },
     )
 
@@ -198,6 +204,7 @@ def prepare_qwen_profile_from_craig(
             "window_start_seconds": float(window.get("start_seconds") or 0.0),
             "window_energy_dbfs": window.get("energy_dbfs"),
             "runtime_cuda": probe.get("torch_cuda"),
+            "driver_version": probe.get("driver_version"),
         }
 
     raise QwenDesktopPrepareError(last_retryable or "QWEN_ACCEPTANCE_NO_SUITABLE_TRACK")
