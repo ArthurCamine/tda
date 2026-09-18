@@ -220,6 +220,33 @@ def create_app(
                                 "Worker stage changed",
                                 {"job_id": job_id, "stage": stage},
                             )
+                            return
+                        if message.type == "event":
+                            code = str(message.payload.get("code") or "WORKER_EVENT")[:96]
+                            data = {
+                                key: value
+                                for key, value in message.payload.items()
+                                if key != "code"
+                            }
+                            store.record_worker_event(
+                                job_id,
+                                attempt,
+                                code,
+                                data,
+                            )
+                            if code in {
+                                "MODEL_DOWNLOAD_PROGRESS",
+                                "QWEN_WINDOW_TRANSCRIBED",
+                                "ASR_CHECKPOINT_REUSED",
+                                "ASR_CHECKPOINT_SAVED",
+                            }:
+                                log(
+                                    "info",
+                                    "worker",
+                                    code,
+                                    "Worker reported progress detail",
+                                    {"job_id": job_id, **data},
+                                )
 
                     try:
                         if body["kind"] == "synthetic.fixture":
