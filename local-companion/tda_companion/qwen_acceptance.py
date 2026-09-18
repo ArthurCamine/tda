@@ -20,6 +20,7 @@ from .asr_models import (
     get_profile,
     inspect_model_install,
     model_path,
+    reset_model_install,
     write_install_marker,
 )
 
@@ -293,8 +294,11 @@ def prepare_qwen_model(
     target = model_path(models_root, profile)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise QwenAcceptanceError("QWEN_MODEL_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, profile)
+        except Exception as exc:
+            raise QwenAcceptanceError("QWEN_MODEL_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
@@ -327,8 +331,11 @@ def prepare_qwen_aligner(
     target = model_path(models_root, ALIGNER_PROFILE)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise QwenAcceptanceError("QWEN_ALIGNER_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, ALIGNER_PROFILE)
+        except Exception as exc:
+            raise QwenAcceptanceError("QWEN_ALIGNER_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
