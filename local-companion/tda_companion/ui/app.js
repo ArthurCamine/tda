@@ -10,6 +10,10 @@
   let processBusy = false;
   let submittedJobId = null;
   let lastConnectionState = null;
+  let preparationTimer = null;
+  let preparationPollBusy = false;
+  let preparationLocalStartedAt = null;
+  let lastPreparationStatus = null;
 
   const FRIENDLY_ERRORS = {
     CRAIG_FILE_PICKER_UNAVAILABLE: "O seletor de arquivos do Windows não está disponível.",
@@ -108,6 +112,199 @@
     if (state === "success") pill.classList.add("success");
     if (state === "warning" || state === "busy") pill.classList.add("warning");
     pill.textContent = state === "success" ? "Pronto" : state === "busy" ? "Processando" : state === "warning" ? "Atenção" : "Aguardando sessão";
+  }
+
+  const PREPARATION_STAGES = {
+    whisper: [
+      ["runtime", "Runtime", "Baixar, verificar e instalar"],
+      ["verify", "Verificação", "Confirmar perfil no Agent"],
+      ["complete", "Pronto", "Liberar processamento"],
+    ],
+    qwen3: [
+      ["runtime", "Runtime", "Baixar e verificar dependências"],
+      ["qwen_probe", "GPU e CUDA", "Validar worker e RTX"],
+      ["qwen_audio", "Amostra 180 s", "Escolher áudio local"],
+      ["qwen_model_download", "Modelo Qwen", "Baixar e verificar modelo"],
+      ["qwen_gpu_transcription", "Transcrição teste", "Executar 180 s na GPU"],
+      ["qwen_aligner_download", "Alinhador", "Preparar alinhamento por palavra"],
+      ["qwen_gpu_gate", "Gate físico", "Validar transcrição + alinhamento"],
+      ["verify", "Verificação", "Confirmar perfil no Agent"],
+      ["complete", "Pronto", "Liberar processamento"],
+    ],
+  };
+
+  const PREPARATION_EQUIVALENTS = {
+    starting: "runtime",
+    qwen_gate: "qwen_model_download",
+    failed: "failed",
+  };
+
+  function formatElapsed(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`;
+    if (minutes) return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+    return `${secs}s`;
+  }
+
+  function preparationStageRows(engine) {
+    return PREPARATION_STAGES[engine] || PREPARATION_STAGES.qwen3;
+  }
+
+  function renderPreparationProgress(status) {
+    if (!status) return;
+    lastPreparationStatus = status;
+    const panel = $("preparation-progress");
+    const state = status.state || "running";
+    panel.classList.remove("hidden", "completed", "failed");
+    if (state === "completed") panel.classList.add("completed");
+    if (state === "failed") panel.classList.add("failed");
+
+    $("preparation-title").textContent = status.title || "Preparando perfil…";
+    $("preparation-detail").textContent = status.detail || "A preparação continua localmente.";
+    const elapsed = Number(status.elapsed_seconds);
+    const localElapsed = preparationLocalStartedAt === null
+      ? 0
+      : (performance.now() - preparationLocalStartedAt) / 1000;
+    $("preparation-elapsed").textContent = `Tempo: ${formatElapsed(Number.isFinite(elapsed) ? elapsed : localElapsed)}`;
+
+    const bytes = Number(status.current_bytes);
+    $("preparation-bytes").textContent = Number.isFinite(bytes) && bytes > 0
+      ? `${formatBytes(bytes)} recebidos/preparados nesta etapa · downloads verificados antes do uso.`
+      : state === "running"
+        ? "A etapa atual continua localmente. O tempo pode variar no primeiro uso."
+        : state === "completed"
+          ? "Preparação concluída e registrada nos logs."
+          : status.error_code
+            ? `Falha registrada: ${status.error_code}`
+            : "Detalhes técnicos registrados nos logs.";
+
+    const rows = preparationStageRows(status.engine);
+    const target = $("preparation-stage-list");
+    target.replaceChildren();
+    const normalizedStage = PREPARATION_EQUIVALENTS[status.stage] || status.stage;
+    const failedStage = PREPARATION_EQUIVALENTS[status.failure_stage] || status.failure_stage;
+    let currentIndex = rows.findIndex(([id]) => id === normalizedStage);
+    if (state === "completed") currentIndex = rows.length - 1;
+    if (state === "failed") {
+      const failedIndex = rows.findIndex(([id]) => id === failedStage);
+      if (failedIndex >= 0) currentIndex = failedIndex;
+    }
+
+    rows.forEach(([id, label, description], index) => {
+      const item = document.createElement("li");
+      item.className = "preparation-stage";
+      const done = state === "completed" || (currentIndex >= 0 && index < currentIndex);
+      const active = state === "running" && index === currentIndex;
+      const failed = state === "failed" && index === currentIndex;
+      if (done) item.classList.add("done");
+      if (active) item.classList.add("active");
+      if (failed) item.classList.add("failed");
+      const title = document.createElement("b");
+      title.textContent = label;
+      const detail = document.createElement("span");
+      detail.textContent = done ? "Concluído" : active ? "Em andamento" : failed ? "Falhou aqui" : description;
+      item.append(title, detail);
+      target.append(item);
+    });
+
+    if (state === "running") {
+      setProcessStatus(status.title || "Preparando perfil…", status.detail || "A preparação continua localmente.", "busy");
+    }
+  }
+
+  async function pollPreparationStatus() {
+    if (!api || preparationPollBusy || !processBusy) return;
+    preparationPollBusy = true;
+    try {
+      const status = await api.preparation_status();
+      if (status && status.state !== "idle") renderPreparationProgress(status);
+    } catch {
+      // A chamada principal pode estar ocupando o bridge. O cronômetro visual continua
+      // e a próxima sondagem recupera o estágio sem interromper a preparação.
+    } finally {
+      preparationPollBusy = false;
+    }
+  }
+
+  function startPreparationProgress(profile) {
+    if (preparationTimer) window.clearInterval(preparationTimer);
+    preparationLocalStartedAt = performance.now();
+    renderPreparationProgress({
+      active: true,
+      state: "running",
+      engine: profile?.engine || "qwen3",
+      stage: "starting",
+      title: `Preparando ${profile?.label || profile?.id || "perfil"}…`,
+      detail: "Conferindo runtime, modelos e validações necessárias.",
+      elapsed_seconds: 0,
+    });
+    preparationTimer = window.setInterval(() => {
+      const status = lastPreparationStatus;
+      if (status && status.state === "running" && preparationLocalStartedAt !== null) {
+        renderPreparationProgress({
+          ...status,
+          elapsed_seconds: (performance.now() - preparationLocalStartedAt) / 1000,
+        });
+      }
+      pollPreparationStatus();
+    }, 800);
+    pollPreparationStatus();
+  }
+
+  async function finishPreparationProgress() {
+    if (preparationTimer) {
+      window.clearInterval(preparationTimer);
+      preparationTimer = null;
+    }
+    try {
+      const status = await api.preparation_status();
+      if (status && status.state !== "idle") renderPreparationProgress(status);
+    } catch {
+      // O resultado da chamada de preparação ainda será mostrado pelo fluxo principal.
+    }
+  }
+
+  function resetPreparationProgress() {
+    if (preparationTimer) window.clearInterval(preparationTimer);
+    preparationTimer = null;
+    preparationPollBusy = false;
+    preparationLocalStartedAt = null;
+    lastPreparationStatus = null;
+    $("preparation-progress")?.classList.add("hidden");
+  }
+
+  function formatLogContext(context) {
+    if (!context || typeof context !== "object") return "";
+    const labels = {
+      stage: "etapa",
+      profile_id: "perfil",
+      engine: "engine",
+      runtime_version: "runtime",
+      gpu_name: "GPU",
+      track_number: "faixa",
+      track_count: "faixas",
+      audio_window_seconds: "amostra",
+      downloaded_bytes: "baixado",
+      error_code: "erro",
+      failure_stage: "etapa da falha",
+      sequence: "#",
+    };
+    const parts = [];
+    Object.entries(labels).forEach(([key, label]) => {
+      const value = context[key];
+      if (value === undefined || value === null || value === "") return;
+      if (key === "downloaded_bytes" && typeof value === "number") {
+        parts.push(`${label}=${formatBytes(value)}`);
+      } else if (key === "audio_window_seconds" && typeof value === "number") {
+        parts.push(`${label}=${value}s`);
+      } else {
+        parts.push(`${label}=${String(value).slice(0, 120)}`);
+      }
+    });
+    return parts.join(" · ");
   }
 
   function renderLogRows(target, rows, compact = false) {
