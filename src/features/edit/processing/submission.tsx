@@ -58,6 +58,7 @@ export function ProcessingSubmission() {
 	const [busy, setBusy] = useState(false);
 	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [capabilityError, setCapabilityError] = useState<string | null>(null);
 	const request = useRef<AbortController | null>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const pending = useRef<PendingSubmission | null>(null);
@@ -67,6 +68,7 @@ export function ProcessingSubmission() {
 			request.current?.abort();
 			setCapabilities(null);
 			setProfile("");
+			setCapabilityError(null);
 			return;
 		}
 
@@ -85,10 +87,10 @@ export function ProcessingSubmission() {
 						? current
 						: (value.transcription.profiles[0] ?? ""),
 				);
-				setError(null);
+				setCapabilityError(null);
 			} catch (cause) {
 				if (!stopped && !controller.signal.aborted) {
-					setError(messageFor(cause instanceof BridgeError ? cause.code : "service_error"));
+					setCapabilityError(messageFor(cause instanceof BridgeError ? cause.code : "service_error"));
 				}
 			} finally {
 				reading = false;
@@ -282,6 +284,7 @@ export function ProcessingSubmission() {
 				</p>
 			) : null}
 			{status ? <p className={styles.status} role="status">{status}</p> : null}
+			{capabilityError ? <p className={styles.error} role="alert">{capabilityError}</p> : null}
 			{error ? <p className={styles.error} role="alert">{error}</p> : null}
 		</section>
 	);
