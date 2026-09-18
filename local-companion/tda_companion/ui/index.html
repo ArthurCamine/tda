@@ -153,6 +153,22 @@
               </div>
             </details>
 
+            <div class="preparation-progress hidden" id="preparation-progress" aria-live="polite">
+              <div class="preparation-progress-head">
+                <div>
+                  <span class="preparation-kicker">Preparação do primeiro uso</span>
+                  <strong id="preparation-title">Preparando perfil…</strong>
+                  <p id="preparation-detail">Conferindo o estado local.</p>
+                </div>
+                <span class="preparation-elapsed" id="preparation-elapsed">0 s</span>
+              </div>
+              <ol class="preparation-stage-list" id="preparation-stage-list"></ol>
+              <div class="preparation-progress-foot">
+                <span id="preparation-bytes">Cada etapa aparecerá aqui conforme avançar.</span>
+                <button type="button" class="quiet" id="preparation-open-logs">Ver logs da preparação</button>
+              </div>
+            </div>
+
             <div class="process-action-bar">
               <div class="process-status" aria-live="polite">
                 <strong id="process-status-title">Selecione uma sessão para começar.</strong>
