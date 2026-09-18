@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { StatusPill, type StatusTone } from "@/components/ui/status";
+import { supportsTerminalJobDelete } from "./compatibility";
 import { ProcessingController } from "./controller";
 import {
 	connectionHelp,
@@ -109,6 +110,7 @@ function GpuMetric({ gpu }: { gpu: SystemGpu }) {
 function JobRow({
 	job,
 	busy,
+	canDelete,
 	onCancel,
 	onRetry,
 	onResult,
@@ -116,6 +118,7 @@ function JobRow({
 }: {
 	job: LocalJob;
 	busy: boolean;
+	canDelete: boolean;
 	onCancel: () => void;
 	onRetry: () => void;
 	onResult: () => void;
@@ -163,9 +166,10 @@ function JobRow({
 						Consultar resultado local
 					</Button>
 				) : null}
-				{["succeeded", "failed", "interrupted", "cancelled"].includes(job.status) ? (
+				{canDelete &&
+				["succeeded", "failed", "interrupted", "cancelled"].includes(job.status) ? (
 					<Button size="sm" variant="tertiary" disabled={busy} onClick={onDelete}>
-						Remover
+						Excluir
 					</Button>
 				) : null}
 			</div>
@@ -227,6 +231,7 @@ export function ProcessingPanel() {
 	const observedJob = state.jobs.find((job) => job.id === state.observedJobId) ?? activeJob;
 	const gpu = state.system?.gpus[0] ?? null;
 	const trackContext = eventTrackContext(state.events);
+	const canDeleteJobs = supportsTerminalJobDelete(state.health?.service_version);
 
 	async function confirm() {
 		const choice = confirmation;
@@ -242,6 +247,7 @@ export function ProcessingPanel() {
 			key={job.id}
 			job={job}
 			busy={state.busy}
+			canDelete={canDeleteJobs}
 			onCancel={() => setConfirmation({ id: job.id, action: "cancel" })}
 			onRetry={() => setConfirmation({ id: job.id, action: "retry" })}
 			onResult={() => void controller.result(job.id)}
