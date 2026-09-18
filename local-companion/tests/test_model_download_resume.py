@@ -77,3 +77,37 @@ def test_qwen_network_failure_keeps_partial_and_next_attempt_reuses_it(tmp_path:
     assert seen[0] == seen[1]
     assert target.is_dir()
     assert not list((tmp_path / ".downloads").glob(f"{profile.directory}-*.partial"))
+
+
+def test_whisper_incomplete_target_is_repaired_automatically(tmp_path: Path):
+    profile = get_profile("whisper-turbo")
+    stale = tmp_path / profile.directory
+    stale.mkdir()
+    (stale / "stale.txt").write_text("old", encoding="utf-8")
+
+    def finish(model_id: str, *, output_dir: str, revision: str):
+        root = Path(output_dir)
+        assert not stale.exists()
+        _write_required(root, profile.required_files, "whisper-repaired")
+
+    target = prepare_whisper_model(tmp_path, profile, downloader=finish)
+
+    assert target.is_dir()
+    assert not (target / "stale.txt").exists()
+
+
+def test_qwen_incomplete_target_is_repaired_automatically(tmp_path: Path):
+    profile = get_profile("qwen-fast")
+    stale = tmp_path / profile.directory
+    stale.mkdir()
+    (stale / "stale.txt").write_text("old", encoding="utf-8")
+
+    def finish(*, repo_id: str, revision: str, local_dir: str):
+        root = Path(local_dir)
+        assert not stale.exists()
+        _write_required(root, profile.required_files, "qwen-repaired")
+
+    target = prepare_qwen_model(tmp_path, profile, downloader=finish)
+
+    assert target.is_dir()
+    assert not (target / "stale.txt").exists()
