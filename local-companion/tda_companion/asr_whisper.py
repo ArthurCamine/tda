@@ -192,6 +192,25 @@ def load_whisper_model(path: Path, plan: WhisperPlan):
         return model, plan.fallback_compute_type, True
 
 
+def _resumable_model_staging(downloads: Path, directory: str) -> Path:
+    candidates: list[tuple[float, Path]] = []
+    for candidate in downloads.glob(f"{directory}-*.partial"):
+        if not candidate.is_dir():
+            continue
+        try:
+            modified = candidate.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((modified, candidate))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        chosen = candidates[0][1]
+        for _, stale in candidates[1:]:
+            shutil.rmtree(stale, ignore_errors=True)
+        return chosen
+    return downloads / f"{directory}-{uuid4().hex}.partial"
+
+
 def prepare_whisper_model(
     models_root: Path,
     profile: AsrProfile,
@@ -212,7 +231,7 @@ def prepare_whisper_model(
     report({"type": "stage", "stage": "model_prepare", "profile": profile.id})
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{profile.directory}-{uuid4().hex}.partial"
+    staging = _resumable_model_staging(downloads, profile.directory)
 
     if downloader is None:
         # huggingface_hub reads these values when its constants module is imported.
@@ -279,6 +298,12 @@ def prepare_whisper_model(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except WhisperRuntimeError as exc:
+        # Keep Hugging Face local-dir metadata and partial files after a network
+        # failure so the next preparation attempt can resume the same snapshot.
+        if exc.code != "WHISPER_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
