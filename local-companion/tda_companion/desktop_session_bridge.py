@@ -720,6 +720,8 @@ class SessionDesktopBridge(DesktopBridge):
             self._maintenance_handoff_process = None
 
     def install_update(self) -> dict[str, object]:
+        if self._preparation_public().get("active") is True:
+            raise RuntimeError("MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION")
         self._last_maintenance_operation_id = None
         try:
             result = super().install_update()
@@ -731,6 +733,8 @@ class SessionDesktopBridge(DesktopBridge):
         return result
 
     def uninstall(self, purge: bool = False) -> dict[str, object]:
+        if self._preparation_public().get("active") is True:
+            raise RuntimeError("MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION")
         self._last_maintenance_operation_id = None
         result = super().uninstall(purge)
         operation_id = self._last_maintenance_operation_id
