@@ -104,6 +104,11 @@ export function presentJobEvent(event: JobEvent): PresentedJobEvent {
 	const totalTracks = numberData(event, "total_tracks");
 
 	switch (event.code) {
+		case "DUPLICATE_SUBMISSION_REUSED":
+			return {
+				title: "A mesma transcrição já estava ativa; o TDA reutilizou o trabalho existente.",
+				detail: "Nenhuma cópia extra foi adicionada à fila.",
+			};
 		case "MODEL_DOWNLOAD_PROGRESS": {
 			const downloaded = numberData(event, "downloaded_bytes");
 			return {
