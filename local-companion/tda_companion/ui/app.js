@@ -46,6 +46,7 @@
     QWEN_ASR_CUDA_FAILED: "A execução CUDA do Qwen falhou durante a inferência.",
     QWEN_ASR_RUNTIME_API_FAILED: "O runtime Qwen encontrou uma incompatibilidade de API durante a inferência.",
     QWEN_ASR_INPUT_FAILED: "O runtime Qwen rejeitou o formato ou o tamanho da amostra de áudio.",
+    QWEN_ALIGNMENT_FAILED: "O Qwen transcreveu a amostra, mas o alinhamento por palavra falhou.",
     QWEN_ASR_INFERENCE_FAILED: "A inferência Qwen falhou. Consulte os logs da preparação para o estágio exato.",
     QWEN_ACCEPTANCE_GPU_NAME_MISMATCH: "O gate físico não foi executado na RTX 4070 esperada.",
     WHISPER_RUNTIME_UNAVAILABLE: "O runtime Whisper compatível ainda não está pronto.",
