@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -190,6 +191,21 @@ def _read_marker(path: Path) -> dict[str, object] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def reset_model_install(models_root: Path, profile: AsrProfile | str) -> None:
+    value = get_profile(profile) if isinstance(profile, str) else profile
+    root = models_root.resolve()
+    target = model_path(root, value)
+    if target.parent != root:
+        raise ModelRegistryError("MODEL_TARGET_OUTSIDE_ROOT")
+    try:
+        if target.is_symlink() or target.is_file():
+            target.unlink(missing_ok=True)
+        elif target.is_dir():
+            shutil.rmtree(target)
+    except OSError as exc:
+        raise ModelRegistryError("MODEL_REPAIR_FAILED") from exc
 
 
 def inspect_model_install(
