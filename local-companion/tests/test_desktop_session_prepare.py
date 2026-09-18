@@ -61,6 +61,15 @@ def test_prepare_whisper_installs_runtime_and_defers_model_to_job(tmp_path: Path
         "runtime_version": "1.1.0",
         "model_prepare_on_job": True,
     }
+    status = bridge.preparation_status()
+    assert status["state"] == "completed"
+    assert status["stage"] == "complete"
+    rows = bridge._preparation_log.tail(component="preparation", limit=20)
+    assert [row["code"] for row in rows][-3:] == [
+        "PREPARATION_STARTED",
+        "PREPARATION_VERIFY",
+        "PREPARATION_COMPLETE",
+    ]
 
 
 def test_prepare_qwen_installs_runtime_runs_real_gate_then_requires_capability(monkeypatch, tmp_path: Path):
@@ -82,6 +91,12 @@ def test_prepare_qwen_installs_runtime_runs_real_gate_then_requires_capability(m
 
     def fake_prepare(**kwargs):
         seen.update(kwargs)
+        progress = kwargs["progress"]
+        progress("runtime_probe", {"profile_id": "qwen-quality"})
+        progress("runtime_probe_ready", {"profile_id": "qwen-quality", "runtime_cuda": "12.8"})
+        progress("selecting_audio", {"profile_id": "qwen-quality", "track_count": 4})
+        progress("physical_gate", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 180})
+        progress("physical_gate_ready", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 180})
         return {
             "ready": True,
             "profile_id": "qwen-quality",
@@ -99,6 +114,42 @@ def test_prepare_qwen_installs_runtime_runs_real_gate_then_requires_capability(m
     assert seen["source_id"] == source_id
     assert seen["profile_id"] == "qwen-quality"
     assert seen["models_root"] == tmp_path / "Models"
+    assert callable(seen["progress"])
+    status = bridge.preparation_status()
+    assert status["state"] == "completed"
+    assert status["stage"] == "complete"
+    rows = bridge._preparation_log.tail(component="preparation", limit=50)
+    codes = [row["code"] for row in rows]
+    assert "PREPARATION_QWEN_PROBE" in codes
+    assert "PREPARATION_QWEN_AUDIO" in codes
+    assert "PREPARATION_QWEN_GATE" in codes
+    assert codes[-1] == "PREPARATION_COMPLETE"
+
+
+def test_prepare_failure_keeps_stage_and_error_for_ui(tmp_path: Path):
+    bridge = _bridge(tmp_path)
+    source_id = _source_id()
+    bridge._selected_sources.add(source_id)
+    bridge.transcription_profiles = lambda: {  # type: ignore[method-assign]
+        "profiles": [{"id": "qwen-quality", "ready": False}]
+    }
+
+    def fail_runtime():
+        raise RuntimeError("QWEN_RUNTIME_UNAVAILABLE")
+
+    bridge.install_qwen_runtime = fail_runtime  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="QWEN_RUNTIME_UNAVAILABLE"):
+        bridge.prepare_transcription_profile(source_id, "qwen-quality")
+
+    status = bridge.preparation_status()
+    assert status["state"] == "failed"
+    assert status["stage"] == "failed"
+    assert status["failure_stage"] == "runtime"
+    assert status["error_code"] == "QWEN_RUNTIME_UNAVAILABLE"
+    rows = bridge._preparation_log.tail(component="preparation", limit=20)
+    assert rows[-1]["level"] == "error"
+    assert rows[-1]["context"]["failure_stage"] == "runtime"
 
 
 def test_prepare_blocks_while_transcription_is_running(tmp_path: Path):
