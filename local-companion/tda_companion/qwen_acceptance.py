@@ -15,6 +15,7 @@ from uuid import uuid4
 from .asr_acceptance import NvmlPeakMonitor
 from .asr_models import (
     AsrProfile,
+    ModelRegistryError,
     QWEN_FORCED_ALIGNER_MODEL_ID,
     QWEN_FORCED_ALIGNER_REVISION,
     get_profile,
@@ -297,7 +298,7 @@ def prepare_qwen_model(
     if target.exists() or target.is_symlink():
         try:
             reset_model_install(models_root, profile)
-        except Exception as exc:
+        except ModelRegistryError as exc:
             raise QwenAcceptanceError("QWEN_MODEL_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
@@ -334,7 +335,7 @@ def prepare_qwen_aligner(
     if target.exists() or target.is_symlink():
         try:
             reset_model_install(models_root, ALIGNER_PROFILE)
-        except Exception as exc:
+        except ModelRegistryError as exc:
             raise QwenAcceptanceError("QWEN_ALIGNER_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
