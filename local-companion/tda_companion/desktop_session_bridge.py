@@ -243,12 +243,16 @@ class SessionDesktopBridge(DesktopBridge):
         if error_code:
             with self._preparation_lock:
                 self._preparation_state["error_code"] = error_code
+                self._preparation_state["failure_stage"] = self._preparation_state.get("stage")
             self._set_preparation_stage(
                 "failed",
                 "A preparação encontrou um problema.",
                 f"Código: {error_code}",
                 state="failed",
-                context={"error_code": error_code},
+                context={
+                    "error_code": error_code,
+                    "failure_stage": self._preparation_state.get("failure_stage"),
+                },
                 force_log=True,
             )
             return
