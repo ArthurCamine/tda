@@ -250,8 +250,8 @@ def _download_snapshot(
     if downloader is None:
         # Keep individual Hugging Face network reads finite. The full snapshot may
         # legitimately take much longer and remains resumable on the next attempt.
-        os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
-        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+        os.environ["HF_HUB_ETAG_TIMEOUT"] = "15"
+        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
         try:
             from huggingface_hub import snapshot_download
         except ImportError as exc:
