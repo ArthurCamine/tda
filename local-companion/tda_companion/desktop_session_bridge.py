@@ -23,6 +23,7 @@ from .runtime_rc_updates import install_published_runtime_rc
 from .settings import SettingsStore
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
+from .whisper_desktop_prepare import WhisperDesktopPrepareError, prepare_whisper_profile
 
 _QWEN_ALIGNER_DIRECTORY = "qwen3-forced-aligner-0.6b-hf"
 _PREPARATION_COMPONENT = "preparation"
@@ -270,6 +271,36 @@ class SessionDesktopBridge(DesktopBridge):
         root = self.paths.cache_root.resolve() / "runtime-rc" / family
         return self._safe_tree_bytes(root)
 
+    def _whisper_download_state(self, profile_id: str) -> tuple[str, str, str, int | None]:
+        profile = get_profile(profile_id)
+        downloads = self.paths.models_root.resolve() / ".downloads"
+        partial = next(
+            iter(sorted(downloads.glob(f"{profile.directory}-*.partial"))),
+            None,
+        ) if downloads.is_dir() else None
+        if partial is not None:
+            return (
+                "whisper_model",
+                "Baixando modelo Whisper…",
+                "Recebendo e verificando os arquivos do modelo antes de criar o trabalho.",
+                self._safe_tree_bytes(partial),
+            )
+
+        target = self.paths.models_root.resolve() / profile.directory
+        if target.is_dir():
+            return (
+                "verify",
+                "Modelo Whisper baixado.",
+                "Verificando integridade e confirmando o perfil no Agent.",
+                self._safe_tree_bytes(target),
+            )
+        return (
+            "whisper_model",
+            "Preparando modelo Whisper…",
+            "Conectando ao repositório do modelo e iniciando o download verificado.",
+            None,
+        )
+
     def _qwen_download_state(self, profile_id: str) -> tuple[str, str, str, int | None]:
         profile = get_profile(profile_id)
         downloads = self.paths.models_root.resolve() / ".downloads"
@@ -353,6 +384,16 @@ class SessionDesktopBridge(DesktopBridge):
                     str(current.get("detail") or ""),
                     current_bytes=downloaded,
                 )
+        elif engine == "whisper" and stage == "whisper_model":
+            inferred, title, detail, downloaded = self._whisper_download_state(
+                str(current.get("profile_id") or "")
+            )
+            self._set_preparation_stage(
+                inferred,
+                title,
+                detail,
+                current_bytes=downloaded,
+            )
         elif engine == "qwen3" and stage.startswith("qwen"):
             inferred, title, detail, downloaded = self._qwen_download_state(
                 str(current.get("profile_id") or "")
@@ -778,9 +819,24 @@ class SessionDesktopBridge(DesktopBridge):
             if profile.engine == "whisper":
                 runtime = self.install_whisper_runtime()
                 self._set_preparation_stage(
+                    "whisper_model",
+                    "Preparando modelo Whisper…",
+                    "O perfil só ficará pronto depois que o modelo for baixado e verificado.",
+                    context={"runtime_version": runtime.get("version")},
+                )
+                try:
+                    model = prepare_whisper_profile(
+                        models_root=self.paths.models_root,
+                        runtime_root=self.paths.runtime_root,
+                        profile_id=profile_id,
+                    )
+                except WhisperDesktopPrepareError as exc:
+                    raise RuntimeError(exc.code) from None
+
+                self._set_preparation_stage(
                     "verify",
-                    "Runtime Whisper pronto.",
-                    "Confirmando que o Agent já anuncia o perfil selecionado.",
+                    "Modelo Whisper pronto.",
+                    "Confirmando que o Agent já anuncia o perfil selecionado como executável.",
                     context={"runtime_version": runtime.get("version")},
                 )
                 refreshed = self.transcription_profiles()
@@ -789,13 +845,14 @@ class SessionDesktopBridge(DesktopBridge):
                     None,
                 )
                 if not isinstance(ready, dict) or ready.get("ready") is not True:
-                    raise RuntimeError("WHISPER_RUNTIME_UNAVAILABLE")
+                    raise RuntimeError("WHISPER_MODEL_PREPARATION_NOT_VISIBLE")
                 value = {
                     "ready": True,
                     "profile_id": profile_id,
-                    "prepared": bool(runtime.get("accepted")),
+                    "prepared": bool(runtime.get("accepted")) or bool(model.get("prepared")),
                     "runtime_version": runtime.get("version"),
-                    "model_prepare_on_job": True,
+                    "model_content_sha256": model.get("model_content_sha256"),
+                    "model_prepare_on_job": False,
                 }
                 self._finish_preparation()
                 return value
