@@ -573,6 +573,20 @@ def create_app(
                 )
                 if gate.get("ready") is not True:
                     raise Conflict("QWEN_PHYSICAL_ACCEPTANCE_REQUIRED")
+            elif body.profile_id.startswith("whisper-"):
+                whisper = inspect_whisper_runtime(
+                    resolved_runtime_root,
+                    verify_worker=True,
+                )
+                if whisper.get("status") != "ready":
+                    raise Conflict("WHISPER_RUNTIME_UNAVAILABLE")
+                model = inspect_model_install(
+                    resolved_models_root,
+                    get_profile(body.profile_id),
+                    verify_hash=False,
+                )
+                if model.get("status") != "ready":
+                    raise Conflict("WHISPER_MODEL_PREPARATION_REQUIRED")
             try:
                 _, package = staged_package(body.source_id, verify_tracks=False)
             except CraigPackageError as exc:
