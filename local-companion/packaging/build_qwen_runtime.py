@@ -216,6 +216,8 @@ def main() -> int:
             "accelerate",
             "--hidden-import",
             "huggingface_hub",
+            "--copy-metadata",
+            "nvidia-ml-py",
             "--hidden-import",
             "pynvml",
             "--hidden-import",
@@ -238,6 +240,10 @@ def main() -> int:
             raise RuntimeError("QWEN_RUNTIME_PACKAGED_TORCH_VERSION_MISMATCH")
         if str(probe.get("torch_cuda")) != str(config["torch"]["cuda_family"]):
             raise RuntimeError("QWEN_RUNTIME_PACKAGED_CUDA_FAMILY_MISMATCH")
+        expected_nvml = str(config["packages"]["nvidia-ml-py"])
+        observed_nvml = str(probe.get("python_packages", {}).get("nvidia_ml_py", ""))
+        if observed_nvml != expected_nvml:
+            raise RuntimeError("QWEN_RUNTIME_PACKAGED_NVML_VERSION_MISMATCH")
 
         metadata = {
             "schema": "tda_qwen_runtime_artifact_v1",
