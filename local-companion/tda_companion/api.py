@@ -562,6 +562,11 @@ def create_app(
     async def submit(body: JobRequest, idempotency_key: str = Header(pattern=_ID_PATTERN)):
         payload = body.model_dump()
         if body.kind == "transcription.craig":
+            try:
+                _, package = staged_package(body.source_id, verify_tracks=False)
+            except CraigPackageError as exc:
+                raise Conflict(str(exc)) from None
+
             if body.profile_id.startswith("qwen-"):
                 if body.cpu:
                     raise Conflict("QWEN_CPU_UNSUPPORTED")
@@ -587,10 +592,6 @@ def create_app(
                 )
                 if model.get("status") != "ready":
                     raise Conflict("WHISPER_MODEL_PREPARATION_REQUIRED")
-            try:
-                _, package = staged_package(body.source_id, verify_tracks=False)
-            except CraigPackageError as exc:
-                raise Conflict(str(exc)) from None
             payload["units"] = len(package.tracks)
         value = store.submit(idempotency_key, payload)
         worker_wake.set()
