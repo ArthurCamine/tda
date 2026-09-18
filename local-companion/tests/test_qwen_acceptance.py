@@ -209,6 +209,8 @@ def test_qwen_requires_cuda_capability_and_expected_gpu(tmp_path: Path):
         ),
         (RuntimeError("CUDA out of memory"), "QWEN_ASR_GPU_MEMORY_EXHAUSTED"),
         (RuntimeError("CUBLAS_STATUS_EXECUTION_FAILED"), "QWEN_ASR_CUDA_FAILED"),
+        (ImportError("librosa is required to load audio"), "QWEN_ASR_AUDIO_BACKEND_MISSING"),
+        (RuntimeError("torchcodec audio backend is unavailable"), "QWEN_ASR_AUDIO_BACKEND_MISSING"),
         (AttributeError("processor has no attribute"), "QWEN_ASR_RUNTIME_API_FAILED"),
         (ValueError("invalid audio shape"), "QWEN_ASR_INPUT_FAILED"),
         (RuntimeError("unknown backend failure"), "QWEN_ASR_INFERENCE_FAILED"),
