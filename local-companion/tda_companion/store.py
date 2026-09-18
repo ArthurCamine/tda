@@ -76,6 +76,44 @@ class Store:
             (job_id, code, utc_now(), level, payload),
         )
 
+    def record_worker_event(
+        self,
+        job_id,
+        attempt,
+        code,
+        data=None,
+        *,
+        level="info",
+    ):
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,96}", code):
+            raise Conflict("WORKER_EVENT_CODE_INVALID")
+        if level not in {"info", "warning", "error"}:
+            raise Conflict("WORKER_EVENT_LEVEL_INVALID")
+        payload = data if isinstance(data, dict) else {}
+        if len(payload) > 32:
+            raise Conflict("WORKER_EVENT_DATA_INVALID")
+        clean = {}
+        for key, value in payload.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key):
+                raise Conflict("WORKER_EVENT_DATA_INVALID")
+            if value is None or isinstance(value, (bool, int, float)):
+                clean[key] = value
+            elif isinstance(value, str) and len(value) <= 256:
+                clean[key] = value
+            else:
+                raise Conflict("WORKER_EVENT_DATA_INVALID")
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT status,attempt FROM jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] != "running" or row["attempt"] != attempt:
+                return False
+            self.event(db, job_id, code, clean, level=level)
+            return True
+
     def recover(self):
         with self.tx() as db:
             for row in db.execute("SELECT id FROM jobs WHERE status='running'").fetchall():
