@@ -241,8 +241,8 @@ def prepare_whisper_model(
         # huggingface_hub reads these values when its constants module is imported.
         # Keep each network request finite; the overall model preparation may still
         # run for a long time on a slow connection and is supervised separately.
-        os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
-        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+        os.environ["HF_HUB_ETAG_TIMEOUT"] = "15"
+        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
         try:
             from faster_whisper.utils import download_model
         except ImportError as exc:
