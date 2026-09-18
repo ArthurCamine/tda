@@ -262,6 +262,25 @@ def _download_snapshot(
     shutil.rmtree(target / ".cache", ignore_errors=True)
 
 
+def _resumable_model_staging(downloads: Path, directory: str) -> Path:
+    candidates: list[tuple[float, Path]] = []
+    for candidate in downloads.glob(f"{directory}-*.partial"):
+        if not candidate.is_dir():
+            continue
+        try:
+            modified = candidate.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((modified, candidate))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        chosen = candidates[0][1]
+        for _, stale in candidates[1:]:
+            shutil.rmtree(stale, ignore_errors=True)
+        return chosen
+    return downloads / f"{directory}-{uuid4().hex}.partial"
+
+
 def prepare_qwen_model(
     models_root: Path,
     profile: AsrProfile,
@@ -279,8 +298,8 @@ def prepare_qwen_model(
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{profile.directory}-{uuid4().hex}.partial"
-    staging.mkdir(parents=False, exist_ok=False)
+    staging = _resumable_model_staging(downloads, profile.directory)
+    staging.mkdir(parents=False, exist_ok=True)
     try:
         _download_snapshot(profile, staging, downloader=downloader)
         missing = [name for name in profile.required_files if not (staging / name).is_file()]
@@ -290,6 +309,10 @@ def prepare_qwen_model(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except QwenAcceptanceError as exc:
+        if exc.code != "QWEN_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -309,8 +332,8 @@ def prepare_qwen_aligner(
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{ALIGNER_DIRECTORY}-{uuid4().hex}.partial"
-    staging.mkdir(parents=False, exist_ok=False)
+    staging = _resumable_model_staging(downloads, ALIGNER_DIRECTORY)
+    staging.mkdir(parents=False, exist_ok=True)
     try:
         _download_snapshot(ALIGNER_PROFILE, staging, downloader=downloader)
         missing = [name for name in ALIGNER_PROFILE.required_files if not (staging / name).is_file()]
@@ -320,6 +343,10 @@ def prepare_qwen_aligner(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except QwenAcceptanceError as exc:
+        if exc.code != "QWEN_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
