@@ -118,6 +118,7 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
                 {
                     "schema": "tda_qwen_runtime_probe_v1",
                     "ready": True,
+                    "audio_decode_ready": True,
                     "cuda_available": True,
                     "cuda_execution_ready": True,
                     "cuda_execution_error": None,
