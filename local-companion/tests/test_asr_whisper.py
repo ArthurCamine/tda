@@ -80,7 +80,11 @@ def test_model_prepare_uses_tda_marker_and_no_fake_percent(tmp_path: Path):
     result = prepare_whisper_model(tmp_path, profile, downloader=downloader, report=reports.append)
     assert result == model_path(tmp_path, profile)
     assert (result / ".tda-model.json").is_file()
-    assert reports == [{"type": "stage", "stage": "model_prepare", "profile": profile.id}]
+    assert reports[0] == {"type": "stage", "stage": "model_prepare", "profile": profile.id}
+    download = next(item for item in reports if item.get("code") == "MODEL_DOWNLOAD_PROGRESS")
+    assert download["stage"] == "model_prepare"
+    assert download["profile"] == profile.id
+    assert int(download["downloaded_bytes"]) > 0
     assert all("percent" not in item for item in reports)
 
 
