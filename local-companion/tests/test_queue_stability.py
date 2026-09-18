@@ -156,6 +156,37 @@ def test_same_active_asr_work_with_different_destination_is_rejected(tmp_path):
     )
 
 
+def test_retry_cannot_reactivate_work_already_owned_by_another_job(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'retry-old',
+        'source_id': 'craig-' + 'd' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 2,
+    }
+    old = store.submit('old-job', body)
+    old_claim = store.claim()
+    assert old_claim is not None
+    store.fail(*old_claim, 'WORKER_EXECUTION_FAILED')
+
+    replacement = store.submit(
+        'replacement-job',
+        {**body, 'campaign_id': 'web-campaign', 'session_id': 'replacement'},
+    )
+    assert replacement['status'] == 'queued'
+
+    with pytest.raises(Conflict, match='TRANSCRIPTION_WORK_ALREADY_ACTIVE'):
+        store.action(old['id'], 'retry')
+
+    assert store.get(old['id'])['status'] == 'failed'
+    assert store.get(replacement['id'])['status'] == 'queued'
+
+
 def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
     store = Store(tmp_path)
     body = {
