@@ -562,12 +562,9 @@ def create_app(
     async def submit(body: JobRequest, idempotency_key: str = Header(pattern=_ID_PATTERN)):
         payload = body.model_dump()
         if body.kind == "transcription.craig":
-            try:
-                _, package = staged_package(body.source_id, verify_tracks=False)
-            except CraigPackageError as exc:
-                raise Conflict(str(exc)) from None
-
             if body.profile_id.startswith("qwen-"):
+                # Qwen is fail-closed before consulting the staged source: an
+                # unaccepted GPU/profile must not trigger source filesystem work.
                 if body.cpu:
                     raise Conflict("QWEN_CPU_UNSUPPORTED")
                 gate = inspect_qwen_physical_gate(
@@ -578,7 +575,17 @@ def create_app(
                 )
                 if gate.get("ready") is not True:
                     raise Conflict("QWEN_PHYSICAL_ACCEPTANCE_REQUIRED")
-            elif body.profile_id.startswith("whisper-"):
+                try:
+                    _, package = staged_package(body.source_id, verify_tracks=False)
+                except CraigPackageError as exc:
+                    raise Conflict(str(exc)) from None
+            else:
+                # Whisper keeps source validation first so a missing/invalid Craig
+                # package is reported deterministically even on an unprepared PC.
+                try:
+                    _, package = staged_package(body.source_id, verify_tracks=False)
+                except CraigPackageError as exc:
+                    raise Conflict(str(exc)) from None
                 whisper = inspect_whisper_runtime(
                     resolved_runtime_root,
                     verify_worker=True,
