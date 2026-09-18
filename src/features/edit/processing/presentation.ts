@@ -79,6 +79,13 @@ function numberData(event: JobEvent, key: string): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function eventBytes(value: number): string {
+	const mib = value / 1024 ** 2;
+	if (mib < 1024) return `${mib.toFixed(mib >= 100 ? 0 : 1)} MB`;
+	const gib = mib / 1024;
+	return `${gib.toFixed(gib >= 10 ? 1 : 2)} GB`;
+}
+
 function choose<T>(values: readonly T[], seed: number): T {
 	return values[Math.abs(seed) % values.length];
 }
@@ -97,6 +104,26 @@ export function presentJobEvent(event: JobEvent): PresentedJobEvent {
 	const totalTracks = numberData(event, "total_tracks");
 
 	switch (event.code) {
+		case "MODEL_DOWNLOAD_PROGRESS": {
+			const downloaded = numberData(event, "downloaded_bytes");
+			return {
+				title: downloaded !== null
+					? `Modelo local sendo baixado/verificado · ${eventBytes(downloaded)}.`
+					: "Modelo local sendo baixado/verificado.",
+				detail: "A GPU pode ficar em 0% enquanto os arquivos chegam ao disco.",
+			};
+		}
+		case "QWEN_WINDOW_TRANSCRIBED": {
+			const track = numberData(event, "track");
+			const window = numberData(event, "window");
+			return {
+				title: `Qwen concluiu uma janela de áudio${track !== null ? ` da faixa ${track}` : ""}${window !== null ? ` · janela ${window}` : ""}.`,
+			};
+		}
+		case "ASR_CHECKPOINT_REUSED":
+			return { title: "Checkpoint local reutilizado; esta faixa não precisa ser refeita." };
+		case "ASR_CHECKPOINT_SAVED":
+			return { title: "Checkpoint da faixa salvo com sucesso." };
 		case "QUEUED":
 			return { title: "Trabalho adicionado à fila." };
 		case "RUNNING":
