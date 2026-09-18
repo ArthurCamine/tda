@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from tda_companion.api import create_app
 from tda_companion.asr_runtime import install_whisper_runtime_archive
+from tda_companion.craig import ingest_craig_zip
 from tda_companion.runtime_compat import MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
 
 
@@ -18,6 +19,10 @@ ORIGIN = "https://dnd.faysk.dev"
 def _client(tmp_path: Path) -> TestClient:
     data = tmp_path / "Data"
     data.mkdir(parents=True, exist_ok=True)
+    source = tmp_path / "craig-source.zip"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("1-Alice.flac", b"fLaC-a")
+    ingest_craig_zip(source, data / "staging" / "craig-source")
     app = create_app(
         data,
         TOKEN,
@@ -41,7 +46,7 @@ def _body() -> dict[str, object]:
         "kind": "transcription.craig",
         "campaign_id": "desktop-local",
         "session_id": "local-session",
-        "source_id": "craig-" + "a" * 64,
+        "source_id": "craig-source",
         "profile_id": "whisper-detailed",
         "glossary": "",
         "context": "",
