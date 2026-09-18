@@ -81,6 +81,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 					<main id="conteudo">{children}</main>
 					<footer className="site-footer">
 						Tem Dado Aqui <span>Histórias que ficam com a gente.</span>
+						<Link href="/diario">Diários</Link>
 					</footer>
 				</GlobalLoadingProvider>
 			</body>

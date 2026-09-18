@@ -1,0 +1,81 @@
+.archive {
+	width: min(1000px, calc(100% - 40px));
+	min-height: 65svh;
+	margin: 0 auto;
+	padding: 56px 0 80px;
+}
+.heading {
+	margin-bottom: 32px;
+}
+.eyebrow {
+	color: var(--ds-accent);
+	font: 600 0.75rem / 1.5 var(--ds-font-ui);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+.heading h1 {
+	margin: 8px 0 16px;
+	font: 500 clamp(2rem, 5vw, 3rem) / 1.15 var(--ds-font-display);
+}
+.heading > p:last-child,
+.book p:not(.eyebrow) {
+	color: var(--ds-foreground-muted);
+	line-height: 1.7;
+}
+.books {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	gap: 24px;
+}
+.book {
+	display: flex;
+	gap: 28px;
+	padding: 32px;
+	border: 1px solid var(--ds-border);
+	border-radius: var(--ds-radius-md);
+	background: var(--ds-surface);
+	color: var(--ds-foreground);
+	text-decoration: none;
+}
+.book:hover {
+	background: var(--ds-surface-hover);
+}
+.book:focus-visible {
+	outline: 2px solid var(--ds-accent);
+	outline-offset: 5px;
+}
+.spine {
+	border-right: 1px solid var(--ds-border);
+	padding-right: 18px;
+	writing-mode: vertical-rl;
+	font: 500 0.7rem / 1 var(--ds-font-ui);
+	letter-spacing: 0.14em;
+	color: var(--ds-accent);
+}
+.book h2 {
+	margin: 8px 0;
+	font: 500 1.8rem / 1.2 var(--ds-font-display);
+}
+.book p {
+	margin: 0 0 12px;
+}
+.action {
+	display: inline-block;
+	margin-top: 12px;
+	color: var(--ds-accent);
+	font-family: var(--ds-font-ui);
+}
+@media (max-width: 650px) {
+	.archive {
+		padding-top: 32px;
+	}
+	.book {
+		padding: 24px 20px;
+		gap: 18px;
+	}
+	.book h2 {
+		font-size: 1.5rem;
+	}
+}
