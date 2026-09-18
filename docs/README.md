@@ -84,6 +84,8 @@ O [Roadmap](roadmap.md) é o ponto editorial para dependências entre frentes/ca
 
 ### Features e expansão
 
+- [Diários dos personagens](features/character-diaries.md) — livros independentes em `/diario`, separados das lores.
+
 - [Lores independentes — liberdade visual e catálogo](features/independent-lores.md)
 - [Especificações de features — índice](features/README.md)
 - [Edit Workbench / administração](features/edit-workbench.md)

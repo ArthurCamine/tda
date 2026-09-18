@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
+import diaries from "./src/features/diary/catalog.json";
 
 const standaloneNoindexLores = ["d", "yllith"] as const;
 const canonicalSupabaseOrigin = "https://dmrqnbdvbkfqzctcerbx.supabase.co";
-const canonicalSupabaseWebsocketOrigin = "wss://dmrqnbdvbkfqzctcerbx.supabase.co";
+const canonicalSupabaseWebsocketOrigin =
+	"wss://dmrqnbdvbkfqzctcerbx.supabase.co";
 const canonicalMediaOrigin = "https://media.dnd.faysk.dev";
 
 const contentSecurityPolicyReportOnly = [
@@ -59,10 +61,16 @@ const config: NextConfig = {
 		],
 	},
 	async rewrites() {
-		return standaloneNoindexLores.map((slug) => ({
-			source: `/lore/${slug}`,
-			destination: `/lore/${slug}/index.html`,
-		}));
+		return [
+			...standaloneNoindexLores.map((slug) => ({
+				source: `/lore/${slug}`,
+				destination: `/lore/${slug}/index.html`,
+			})),
+			...diaries.map(({ slug }) => ({
+				source: `/diario/${slug}`,
+				destination: `/diario/${slug}/index.html`,
+			})),
+		];
 	},
 	async headers() {
 		return [

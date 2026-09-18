@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#24251f">
+  <!-- diary:metadata -->
+  <title>Diário de Astel</title>
+  <meta name="description" content="A história de Astel, contada entre as páginas de seu diário.">
+  <meta name="author" content="Astel Nightshade">
+  <link rel="canonical" href="https://dnd.faysk.dev/diario/astel">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:site_name" content="TDA — Tem Dado Aqui">
+  <meta property="og:title" content="Diário de Astel">
+  <meta property="og:description" content="A história de Astel, contada entre as páginas de seu diário.">
+  <meta property="og:url" content="https://dnd.faysk.dev/diario/astel">
+  <meta property="og:image" content="https://dnd.faysk.dev/og/default">
+  <meta property="og:image:alt" content="TDA — Tem Dado Aqui">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Diário de Astel">
+  <meta name="twitter:description" content="A história de Astel, contada entre as páginas de seu diário.">
+  <meta name="twitter:image" content="https://dnd.faysk.dev/og/default">
+  <!-- /diary:metadata -->
+  <link rel="icon" href="/diario/astel/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/diario/astel/styles.css">
+  <script src="/diario/astel/capitulos.js" defer></script>
+  <script src="/diario/astel/script.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <button type="button" class="identity" id="home" aria-label="Voltar à capa"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 27V11m0 10C7 21 5 16 5 12c7 0 11 4 11 9Zm0-6c8 0 11-5 11-10-7 0-11 5-11 10Z"/></svg><span>ASTEL NIGHTSHADE<small>Entre as páginas de uma vida</small></span></button>
+    <nav aria-label="Controles do diário">
+      <button type="button" id="contents" aria-haspopup="dialog"><span aria-hidden="true">☷</span> Sumário</button>
+      <button type="button" id="font-size" aria-label="Aumentar tamanho do texto" title="Tamanho do texto" hidden>Aa</button>
+      <button type="button" id="fullscreen" aria-label="Entrar em tela cheia" title="Tela cheia" hidden>⛶</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="cover-scene" id="cover-scene" aria-label="Capa do diário">
+      <button type="button" class="cover" id="open-book" aria-label="Abrir Diário de Astel">
+        <span class="cover-spine" aria-hidden="true">ASTEL NIGHTSHADE</span>
+        <span class="cover-frame" aria-hidden="true"></span>
+        <span class="cover-top">MEMÓRIAS & VIVÊNCIAS</span>
+        <span class="cover-title">Diário de<br><em>Astel</em></span>
+        <svg class="cover-branch" viewBox="0 0 140 160" aria-hidden="true"><path d="M67 146c-9-34 0-62 7-91 4-15 6-28 3-44M69 109C43 112 29 96 29 79c22 2 38 12 40 30Zm3-28C94 84 113 67 116 47c-22 3-39 16-44 34ZM75 56C55 51 45 34 49 18c19 9 27 21 26 38Zm-9 75c20 3 38-8 44-24-19-1-36 6-44 24Z"/></svg>
+        <span class="cover-author">ASTEL NIGHTSHADE</span>
+        <span class="cover-open">ABRIR O DIÁRIO <span aria-hidden="true">↗</span></span>
+        <span class="ribbon" aria-hidden="true"></span>
+      </button>
+      <div class="cover-note">
+        <span class="eyebrow">AO SUL DE PRYMP</span>
+        <blockquote>“Agora meu mundo cabia entre uma cerca torta, uma casa pequena e três pessoas dormindo lá dentro.”</blockquote>
+        <span class="note-rule" aria-hidden="true"></span>
+        <p>Coisas Pequenas <span>·</span> Capítulo I</p>
+        <button type="button" id="resume" class="resume" hidden>Continuar de onde parei <span aria-hidden="true">→</span></button>
+      </div>
+    </section>
+
+    <section id="reader" class="reader" aria-label="Leitura do diário" hidden>
+      <div class="reader-heading"><span id="chapter-label"></span><span class="eyebrow">DIÁRIO DE ASTEL</span></div>
+      <section class="book" id="book" tabindex="-1" aria-label="Páginas do diário. Use as setas para folhear.">
+        <article class="page page-left" id="left-page"></article>
+        <article class="page page-right" id="right-page"></article>
+        <div id="turning-page" class="turning-page" aria-hidden="true"></div>
+        <button type="button" class="edge edge-left" id="edge-prev" aria-label="Virar para a página anterior"></button>
+        <button type="button" class="edge edge-right" id="edge-next" aria-label="Virar para a próxima página"></button>
+        <span class="book-ribbon" aria-hidden="true"></span>
+      </section>
+      <div class="reader-controls">
+        <button type="button" id="previous"><span aria-hidden="true">←</span> <span>Anterior</span></button>
+        <span id="page-status" role="status" aria-live="polite"></span>
+        <button type="button" id="next"><span>Próxima</span> <span aria-hidden="true">→</span></button>
+      </div>
+      <div class="progress-track" aria-hidden="true"><span id="progress"></span></div>
+      <p class="reading-hint">Um capítulo de cada vez.</p>
+    </section>
+    <p id="reader-error" class="no-script" role="alert" hidden>Não foi possível paginar o diário nesta tela. <a href="/diario/astel/leitura.html">Abrir leitura contínua</a>.</p>
+    <noscript><p class="no-script">Leia o diário completo na <a href="/diario/astel/leitura.html">versão de leitura contínua</a>.</p></noscript>
+  </main>
+
+  <footer class="site-footer"><a href="/diario">Todos os diários</a><a href="/diario/astel/leitura.html">Leitura contínua</a><span id="chapter-count"></span></footer>
+
+  <dialog id="contents-dialog" aria-labelledby="contents-title">
+    <div class="dialog-heading"><span class="eyebrow">DIÁRIO DE ASTEL</span><button type="button" id="close-contents" aria-label="Fechar sumário">×</button></div>
+    <h1 id="contents-title">Entre estas páginas</h1>
+    <p class="contents-subtitle">Sumário</p>
+    <ol id="chapter-list"></ol>
+    <p class="contents-footnote">A história continua.</p>
+  </dialog>
+  <div id="measurement" class="page measurement" aria-hidden="true"></div>
+</body>
+</html>
