@@ -25,6 +25,7 @@
     CRAIG_UPLOAD_SIZE_LIMIT: "A sessão excede o limite local de tamanho.",
     TRANSCRIPTION_PREPARATION_BLOCKED_BY_RUNNING_JOB: "Espere o trabalho atual terminar antes de preparar outro perfil.",
     TRANSCRIPTION_PREPARATION_ALREADY_RUNNING: "Já existe uma preparação de perfil em andamento neste Companion.",
+    TRANSCRIPTION_WORK_ALREADY_ACTIVE: "Esta mesma transcrição já está ativa em outra tela ou sessão. Acompanhe o trabalho existente em vez de criar uma cópia.",
     MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION: "Aguarde a preparação do perfil terminar antes de atualizar ou remover o Companion.",
     RUNTIME_UPDATE_BLOCKED_BY_RUNNING_JOB: "O runtime não pode ser alterado enquanto há um trabalho em execução.",
     QWEN_RUNTIME_UNAVAILABLE: "O runtime Qwen ainda não está disponível.",
