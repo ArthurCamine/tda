@@ -173,6 +173,11 @@ def _validate_acceptance(
     first = devices[0] if devices and isinstance(devices[0], dict) else {}
     if cuda.get("available") is not True or int(cuda.get("device_count") or 0) < 1:
         raise QwenPhysicalGateError("QWEN_GATE_CUDA_REQUIRED")
+    if cuda.get("execution_ready") is not True:
+        code = str(cuda.get("execution_error") or "QWEN_CUDA_EXECUTION_FAILED")
+        if code not in {"QWEN_CUDA_DRIVER_INCOMPATIBLE", "QWEN_CUDA_EXECUTION_FAILED"}:
+            code = "QWEN_CUDA_EXECUTION_FAILED"
+        raise QwenPhysicalGateError(code)
     if _capability_tuple(first.get("compute_capability")) < (8, 0):
         raise QwenPhysicalGateError("QWEN_GATE_GPU_UNSUPPORTED")
 
