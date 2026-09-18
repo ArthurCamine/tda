@@ -585,6 +585,14 @@ def run_qwen_alignment_sample(
     except QwenAcceptanceError:
         raise
     except Exception as exc:
+        code = _qwen_inference_failure_code(exc)
+        if code in {
+            "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+            "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+            "QWEN_ASR_CUDA_FAILED",
+            "QWEN_ASR_RUNTIME_API_FAILED",
+        }:
+            raise QwenAcceptanceError(code) from exc
         raise QwenAcceptanceError("QWEN_ALIGNMENT_FAILED") from exc
     finally:
         model = None
