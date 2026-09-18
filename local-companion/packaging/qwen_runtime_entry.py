@@ -128,7 +128,8 @@ def _probe() -> int:
         json.dumps(
             {
                 "schema": "tda_qwen_runtime_probe_v1",
-                "ready": True,
+                "ready": audio_decode_ready,
+                "error": None if audio_decode_ready else "QWEN_AUDIO_DECODE_RUNTIME_FAILED",
                 "python_packages": {
                     "torch": _version("torch"),
                     "transformers": _version("transformers"),
