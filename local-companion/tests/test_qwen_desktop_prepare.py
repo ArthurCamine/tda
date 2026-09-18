@@ -7,11 +7,18 @@ from types import SimpleNamespace
 import pytest
 
 import tda_companion.qwen_desktop_prepare as prepare
+from tda_companion.asr_qwen import QWEN_WINDOW_SECONDS
+from tda_companion.qwen_acceptance_window import QWEN_GATE_WINDOW_SECONDS
 from tda_companion.qwen_desktop_prepare import QwenDesktopPrepareError, prepare_qwen_profile_from_craig, probe_qwen_long_track_gate
 
 
 def _result(payload: dict, returncode: int = 0):
     return SimpleNamespace(stdout=json.dumps(payload), returncode=returncode)
+
+
+def test_qwen_physical_gate_matches_bounded_operational_window():
+    assert QWEN_WINDOW_SECONDS == 60.0
+    assert QWEN_GATE_WINDOW_SECONDS == QWEN_WINDOW_SECONDS
 
 
 def test_probe_requires_runtime_long_track_gate_feature(monkeypatch, tmp_path: Path):
