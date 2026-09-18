@@ -319,14 +319,14 @@ class SessionDesktopBridge(DesktopBridge):
             return (
                 "qwen_gpu_transcription",
                 "Testando o Qwen na GPU…",
-                "Carregando o modelo e transcrevendo uma janela local real de 180 s.",
+                "Carregando o modelo e transcrevendo uma janela local real de 60 s.",
                 None,
             )
         if not gate.is_file():
             return (
                 "qwen_gpu_gate",
                 "Validando transcrição e alinhamento…",
-                "Executando a amostra real de 180 s na GPU e conferindo o alinhamento por palavra.",
+                "Executando a amostra real de 60 s na GPU e conferindo o alinhamento por palavra.",
                 None,
             )
         return (
@@ -377,21 +377,21 @@ class SessionDesktopBridge(DesktopBridge):
             self._set_preparation_stage(
                 "qwen_audio",
                 "Runtime e GPU reconhecidos.",
-                "Selecionando uma faixa adequada para a validação local de 180 s.",
+                "Selecionando uma faixa adequada para a validação local de 60 s.",
                 context=context,
             )
         elif stage == "selecting_audio":
             self._set_preparation_stage(
                 "qwen_audio",
                 "Selecionando amostra de áudio…",
-                "Procurando uma janela local de 180 s com fala suficiente; nenhum áudio é enviado.",
+                "Procurando uma janela local de 60 s com fala suficiente; nenhum áudio é enviado.",
                 context=context,
             )
         elif stage == "physical_gate":
             self._set_preparation_stage(
                 "qwen_gate",
                 "Executando gate físico do Qwen…",
-                "Preparando modelos, transcrevendo 180 s e validando o alinhamento na GPU.",
+                "Preparando modelos, transcrevendo 60 s e validando o alinhamento na GPU.",
                 context=context,
             )
         elif stage == "physical_gate_ready":
