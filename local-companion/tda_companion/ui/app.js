@@ -23,6 +23,7 @@
     CRAIG_SOURCE_CHANGED: "O arquivo mudou enquanto era lido. Selecione-o novamente.",
     CRAIG_UPLOAD_SIZE_LIMIT: "A sessão excede o limite local de tamanho.",
     TRANSCRIPTION_PREPARATION_BLOCKED_BY_RUNNING_JOB: "Espere o trabalho atual terminar antes de preparar outro perfil.",
+    MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION: "Aguarde a preparação do perfil terminar antes de atualizar ou remover o Companion.",
     RUNTIME_UPDATE_BLOCKED_BY_RUNNING_JOB: "O runtime não pode ser alterado enquanto há um trabalho em execução.",
     QWEN_RUNTIME_UNAVAILABLE: "O runtime Qwen ainda não está disponível.",
     QWEN_RUNTIME_LONG_GATE_REQUIRED: "O runtime Qwen instalado é antigo e precisa ser atualizado.",
