@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import VERSION
+from .asr_models import get_profile, inspect_model_install
 from .asr_runtime import inspect_whisper_runtime
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
@@ -462,7 +463,14 @@ def create_app(
         profiles: list[str] = []
         whisper = inspect_whisper_runtime(resolved_runtime_root, verify_worker=True)
         if whisper.get("status") == "ready":
-            profiles.extend(["whisper-turbo", "whisper-detailed"])
+            for profile_id in ("whisper-turbo", "whisper-detailed"):
+                model = inspect_model_install(
+                    resolved_models_root,
+                    get_profile(profile_id),
+                    verify_hash=False,
+                )
+                if model.get("status") == "ready":
+                    profiles.append(profile_id)
         qwen_profiles = ready_qwen_profiles(
             resolved_state_root,
             resolved_runtime_root,
