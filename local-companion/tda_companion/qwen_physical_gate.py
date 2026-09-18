@@ -90,8 +90,8 @@ def _contains_private_payload(value: object) -> bool:
     return False
 
 
-def _runtime_identity(runtime_root: Path) -> dict[str, str]:
-    state = inspect_qwen_runtime(runtime_root, verify_worker=True)
+def _runtime_identity(runtime_root: Path, *, verify_worker: bool) -> dict[str, str]:
+    state = inspect_qwen_runtime(runtime_root, verify_worker=verify_worker)
     version = state.get("version")
     if state.get("status") != "ready" or not isinstance(version, str):
         raise QwenPhysicalGateError("QWEN_GATE_RUNTIME_NOT_READY")
@@ -234,7 +234,9 @@ def record_qwen_physical_gate(
     required_gpu_name: str = "RTX 4070",
 ) -> dict[str, Any]:
     accepted = _validate_acceptance(receipt, profile_id, required_gpu_name)
-    runtime = _runtime_identity(runtime_root)
+    # Recording a gate is the expensive trust-establishment step: verify every
+    # bound byte before sealing the receipt.
+    runtime = _runtime_identity(runtime_root, verify_worker=True)
     model = _model_identity(models_root, profile_id, verify_hash=True)
     aligner = _aligner_identity(models_root, verify_hash=True)
     binding = _binding_payload(profile_id, runtime, model, aligner)
@@ -283,6 +285,13 @@ def inspect_qwen_physical_gate(
     profile_id: str,
     verify_model_content: bool = False,
 ) -> dict[str, Any]:
+    """Inspect the sealed Qwen gate without re-hashing multi-GB payloads by default.
+
+    Normal dispatch validates identities and hashes already sealed into the
+    install markers and physical-gate receipt. Explicit diagnostics/gate
+    validation can request full-content verification to re-hash the runtime
+    worker, ASR model and aligner bytes.
+    """
     path = _gate_path(state_root, profile_id)
     value = _read_json(path)
     if value is None:
@@ -309,7 +318,7 @@ def inspect_qwen_physical_gate(
         }
 
     try:
-        runtime = _runtime_identity(runtime_root)
+        runtime = _runtime_identity(runtime_root, verify_worker=verify_model_content)
         model = _model_identity(models_root, profile_id, verify_hash=verify_model_content)
         aligner = _aligner_identity(models_root, verify_hash=verify_model_content)
     except QwenPhysicalGateError as exc:

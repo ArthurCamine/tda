@@ -1,6 +1,6 @@
 [project]
 name = "tda-companion"
-version = "0.3.11"
+version = "0.3.12"
 description = "Per-user local processing supervisor for TDA"
 requires-python = ">=3.12,<3.13"
 dependencies = [

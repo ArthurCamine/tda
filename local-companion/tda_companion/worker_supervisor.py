@@ -321,16 +321,21 @@ class WorkerSupervisor:
         elif profile_id.startswith("qwen-"):
             if self.runtime_root is None or self.state_root is None:
                 raise WorkerProcessError("QWEN_RUNTIME_UNCONFIGURED")
+            # The physical gate already performed full byte hashing before it
+            # sealed this runtime/model/aligner binding. Re-hashing gigabytes on
+            # every job made JOB_CLAIMED look hung and added no new trust event.
+            # Normal dispatch validates the sealed identities only; diagnostics
+            # and gate recording retain full-content verification.
             gate = inspect_qwen_physical_gate(
                 self.state_root,
                 self.runtime_root,
                 self.models_root,
                 profile_id=profile_id,
-                verify_model_content=True,
+                verify_model_content=False,
             )
             if gate.get("ready") is not True:
                 raise WorkerProcessError("QWEN_PHYSICAL_ACCEPTANCE_REQUIRED")
-            worker = current_qwen_worker(self.runtime_root)
+            worker = current_qwen_worker(self.runtime_root, verify_worker=False)
             if worker is None:
                 raise WorkerProcessError("QWEN_RUNTIME_UNAVAILABLE")
             runtime_command = [str(worker)]

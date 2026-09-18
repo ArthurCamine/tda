@@ -246,7 +246,7 @@ def install_qwen_runtime_archive(
         raise
 
 
-def current_qwen_worker(runtime_root: Path) -> Path | None:
-    state = inspect_qwen_runtime(runtime_root, verify_worker=True)
+def current_qwen_worker(runtime_root: Path, *, verify_worker: bool = True) -> Path | None:
+    state = inspect_qwen_runtime(runtime_root, verify_worker=verify_worker)
     worker = state.get("worker")
     return Path(worker) if state.get("status") == "ready" and isinstance(worker, str) else None
