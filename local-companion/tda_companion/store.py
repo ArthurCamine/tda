@@ -207,13 +207,6 @@ class Store:
                         candidate_body.get("kind") == "transcription.craig"
                         and self._transcription_work_signature(candidate_body) == requested_work
                     ):
-                        self.event(
-                            db,
-                            candidate["id"],
-                            "DUPLICATE_WORK_REJECTED",
-                            {"status": candidate["status"]},
-                            level="warning",
-                        )
                         raise Conflict("TRANSCRIPTION_WORK_ALREADY_ACTIVE")
             units = body.get("units")
             if isinstance(units, bool) or not isinstance(units, int) or units < 1:
