@@ -324,6 +324,36 @@ def _torch_dtype(torch: Any, name: str) -> Any:
         raise QwenAcceptanceError("QWEN_DTYPE_UNAVAILABLE") from exc
 
 
+def _qwen_inference_failure_code(exc: BaseException) -> str:
+    value = f"{type(exc).__name__}: {exc}".casefold()
+    if any(
+        marker in value
+        for marker in (
+            "out of memory",
+            "cuda_error_out_of_memory",
+            "cublas_status_alloc_failed",
+            "failed to allocate",
+            "not enough memory",
+        )
+    ):
+        return "QWEN_ASR_GPU_MEMORY_EXHAUSTED"
+    if any(
+        marker in value
+        for marker in (
+            "cuda error",
+            "device-side assert",
+            "cublas",
+            "cudnn",
+        )
+    ):
+        return "QWEN_ASR_CUDA_FAILED"
+    if isinstance(exc, (AttributeError, TypeError)):
+        return "QWEN_ASR_RUNTIME_API_FAILED"
+    if isinstance(exc, ValueError):
+        return "QWEN_ASR_INPUT_FAILED"
+    return "QWEN_ASR_INFERENCE_FAILED"
+
+
 def run_qwen_asr_sample(
     model_root: Path,
     audio_path: Path,
@@ -373,7 +403,7 @@ def run_qwen_asr_sample(
     except QwenAcceptanceError:
         raise
     except Exception as exc:
-        raise QwenAcceptanceError("QWEN_ASR_INFERENCE_FAILED") from exc
+        raise QwenAcceptanceError(_qwen_inference_failure_code(exc)) from exc
     finally:
         model = None
         gc.collect()
