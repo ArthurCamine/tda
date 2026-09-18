@@ -20,7 +20,7 @@ from .qwen_runtime import QWEN_RUNTIME_ID, inspect_qwen_runtime, qwen_version_ro
 GATE_SCHEMA = "tda_qwen_physical_gate_v1"
 GATE_DIRECTORY = "qwen-physical-gates"
 QWEN_PROFILES = ("qwen-fast", "qwen-quality")
-MIN_GATE_AUDIO_SECONDS = 180.0
+MIN_GATE_AUDIO_SECONDS = 60.0
 MAX_GATE_BYTES = 128 * 1024
 _SHA256 = set("0123456789abcdef")
 _FORBIDDEN_KEYS = {"text", "words", "transcript", "segments", "audio"}
