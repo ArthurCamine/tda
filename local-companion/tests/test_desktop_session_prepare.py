@@ -96,8 +96,8 @@ def test_prepare_qwen_installs_runtime_runs_real_gate_then_requires_capability(m
         progress("runtime_probe", {"profile_id": "qwen-quality"})
         progress("runtime_probe_ready", {"profile_id": "qwen-quality", "runtime_cuda": "12.8"})
         progress("selecting_audio", {"profile_id": "qwen-quality", "track_count": 4})
-        progress("physical_gate", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 180})
-        progress("physical_gate_ready", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 180})
+        progress("physical_gate", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 60})
+        progress("physical_gate_ready", {"profile_id": "qwen-quality", "track_number": 1, "audio_window_seconds": 60})
         return {
             "ready": True,
             "profile_id": "qwen-quality",
