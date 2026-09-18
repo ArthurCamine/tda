@@ -48,6 +48,8 @@
     QWEN_ASR_INPUT_FAILED: "O runtime Qwen rejeitou o formato ou o tamanho da amostra de áudio.",
     QWEN_ALIGNMENT_FAILED: "O Qwen transcreveu a amostra, mas o alinhamento por palavra falhou.",
     QWEN_ASR_INFERENCE_FAILED: "A inferência Qwen falhou. Consulte os logs da preparação para o estágio exato.",
+    QWEN_ASR_AUDIO_BACKEND_MISSING: "O runtime Qwen não conseguiu abrir o áudio com o backend empacotado.",
+    QWEN_ACCEPTANCE_AUDIO_DECODE_FAILED: "O Qwen não conseguiu decodificar a amostra local de áudio para o gate físico.",
     QWEN_ACCEPTANCE_GPU_NAME_MISMATCH: "O gate físico não foi executado na RTX 4070 esperada.",
     WHISPER_RUNTIME_UNAVAILABLE: "O runtime Whisper compatível ainda não está pronto.",
     WHISPER_MODEL_DOWNLOAD_FAILED: "Não foi possível baixar o modelo Whisper. Verifique a conexão e tente novamente; o download pode ser retomado no próximo preparo.",
