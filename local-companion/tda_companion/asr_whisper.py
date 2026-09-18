@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import os
 import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass
 from importlib import metadata
@@ -38,6 +39,24 @@ class WhisperRuntimeError(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+def _tree_bytes(root: Path, *, max_entries: int = 50_000) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    entries = 0
+    try:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.is_symlink():
+                continue
+            entries += 1
+            if entries > max_entries:
+                return total
+            total += path.stat().st_size
+    except OSError:
+        return total
+    return total
 
 
 @dataclass(frozen=True)
@@ -202,8 +221,44 @@ def prepare_whisper_model(
             raise WhisperRuntimeError("WHISPER_RUNTIME_NOT_INSTALLED") from exc
         downloader = download_model
 
+    stop_monitor = threading.Event()
+    last_reported = {"bytes": -1}
+
+    def monitor_download() -> None:
+        while not stop_monitor.wait(2.0):
+            downloaded = _tree_bytes(staging)
+            if downloaded <= 0 or downloaded == last_reported["bytes"]:
+                continue
+            last_reported["bytes"] = downloaded
+            report(
+                {
+                    "type": "event",
+                    "code": "MODEL_DOWNLOAD_PROGRESS",
+                    "stage": "model_prepare",
+                    "profile": profile.id,
+                    "downloaded_bytes": downloaded,
+                }
+            )
+
+    monitor = threading.Thread(
+        target=monitor_download,
+        name="tda-whisper-download-progress",
+        daemon=True,
+    )
+    monitor.start()
     try:
         downloader(profile.model_id, output_dir=str(staging), revision=profile.revision)
+        downloaded = _tree_bytes(staging)
+        if downloaded > 0:
+            report(
+                {
+                    "type": "event",
+                    "code": "MODEL_DOWNLOAD_PROGRESS",
+                    "stage": "model_prepare",
+                    "profile": profile.id,
+                    "downloaded_bytes": downloaded,
+                }
+            )
         missing = [name for name in profile.required_files if not (staging / name).is_file()]
         if missing:
             raise WhisperRuntimeError("WHISPER_MODEL_DOWNLOAD_INCOMPLETE")
@@ -217,6 +272,9 @@ def prepare_whisper_model(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    finally:
+        stop_monitor.set()
+        monitor.join(timeout=1.0)
 
 
 def _safe_track_path(package_root: Path, track: CraigTrack) -> Path:
