@@ -51,6 +51,7 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
     monkeypatch.setattr(prepare, "load_craig_package", lambda *_args, **_kwargs: package)
 
     calls: list[list[str]] = []
+    progress_events: list[tuple[str, dict[str, object]]] = []
 
     def runner(command, **kwargs):  # noqa: ANN001, ANN003
         calls.append(command)
@@ -87,8 +88,18 @@ def test_prepare_qwen_uses_staged_track_and_returns_only_safe_gate_summary(monke
         source_id=source_id,
         profile_id="qwen-quality",
         runner=runner,
+        progress=lambda stage, context: progress_events.append((stage, context)),
     )
 
+    assert [stage for stage, _ in progress_events] == [
+        "runtime_probe",
+        "runtime_probe_ready",
+        "selecting_audio",
+        "physical_gate",
+        "physical_gate_ready",
+    ]
+    assert progress_events[2][1]["track_count"] == 1
+    assert progress_events[3][1]["audio_window_seconds"] == 180
     assert value == {
         "ready": True,
         "profile_id": "qwen-quality",
