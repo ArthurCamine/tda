@@ -50,7 +50,7 @@ jobs:
           if ($actual -ne $env:TDA_SOURCE_SHA.ToLowerInvariant()) { throw "BUILD_SOURCE_SHA_MISMATCH:$actual" }
       - uses: astral-sh/setup-uv@v10.1.0
         with:
-          version: '0.12.16'
+          version: '0.12.17'
       - name: Build and smoke isolated Whisper runtime
         shell: pwsh
         run: python local-companion/packaging/build_whisper_runtime.py
