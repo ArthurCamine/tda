@@ -582,7 +582,7 @@ export function ProcessingPanel() {
 								: confirmation.action === "cancel"
 									? `O cancelamento será enviado ao trabalho ${confirmation.id}.`
 									: confirmation.action === "delete"
-										? `O trabalho ${confirmation.id} e seus eventos locais serão removidos do histórico. Modelos, sessão Craig e checkpoints não serão apagados.`
+										? `O trabalho ${confirmation.id}, seus eventos e eventual resultado local serão removidos do histórico. Modelos, sessão Craig e checkpoints não serão apagados.`
 										: `Uma nova tentativa será criada para ${confirmation.id}; repetir não promete retomar do ponto exato.`}
 						</p>
 						<div className={styles.dialogActions}>
