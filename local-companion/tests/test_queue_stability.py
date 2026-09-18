@@ -97,6 +97,35 @@ def test_worker_detail_event_is_persisted_only_for_active_attempt(tmp_path):
     ) is False
 
 
+def test_terminal_job_can_be_removed_with_events(tmp_path):
+    store = Store(tmp_path)
+    job = store.submit('delete-terminal', BODY)
+    claim = store.claim()
+    assert claim is not None
+    store.fail(*claim, 'WORKER_EXECUTION_FAILED')
+    assert store.events(job['id'])
+
+    result = store.remove(job['id'])
+
+    assert result == {'deleted': True, 'id': job['id']}
+    assert store.jobs() == []
+    with pytest.raises(KeyError):
+        store.get(job['id'])
+
+
+def test_active_job_cannot_be_removed(tmp_path):
+    store = Store(tmp_path)
+    queued = store.submit('delete-queued', BODY)
+
+    with pytest.raises(Conflict, match='JOB_ACTIVE'):
+        store.remove(queued['id'])
+
+    claim = store.claim()
+    assert claim is not None
+    with pytest.raises(Conflict, match='JOB_ACTIVE'):
+        store.remove(queued['id'])
+
+
 def test_identical_active_transcription_is_reused_across_different_idempotency_keys(tmp_path):
     store = Store(tmp_path)
     body = {
