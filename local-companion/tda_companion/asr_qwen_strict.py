@@ -52,7 +52,7 @@ def iter_audio_windows_overlap(
 ) -> Iterable[AudioWindow]:
     """Decode bounded overlapping windows without materializing the full track.
 
-    A small overlap protects words crossing the old hard 180 s boundary. Alignment
+    A small overlap protects words crossing each bounded ASR window. Alignment
     later assigns each word to exactly one ownership interval, so overlap does not
     become duplicated transcript content.
     """
