@@ -68,6 +68,68 @@ def _read_context(path: Path | None) -> str:
     return value
 
 
+def _prepare_model(args: argparse.Namespace) -> int:
+    from tda_companion.asr_models import get_profile, inspect_model_install
+    from tda_companion.asr_whisper import WhisperRuntimeError, prepare_whisper_model
+
+    schema = "tda_whisper_model_prepare_v1"
+    if args.models_root is None:
+        print(
+            json.dumps(
+                {"schema": schema, "ready": False, "error": "WHISPER_MODELS_ROOT_REQUIRED"},
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        return 64
+
+    try:
+        profile = get_profile(args.profile)
+        if profile.engine != "whisper":
+            raise WhisperRuntimeError("WHISPER_PROFILE_REQUIRED")
+        before = inspect_model_install(args.models_root, profile, verify_hash=False)
+        prepare_whisper_model(args.models_root, profile)
+        state = inspect_model_install(args.models_root, profile, verify_hash=True)
+        digest = state.get("content_sha256")
+        if state.get("status") != "ready" or not isinstance(digest, str) or len(digest) != 64:
+            raise WhisperRuntimeError("WHISPER_MODEL_INTEGRITY_FAILED")
+        print(
+            json.dumps(
+                {
+                    "schema": schema,
+                    "ready": True,
+                    "profile_id": profile.id,
+                    "prepared": before.get("status") != "ready",
+                    "content_sha256": digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        return 0
+    except WhisperRuntimeError as exc:
+        print(
+            json.dumps(
+                {"schema": schema, "ready": False, "error": exc.code},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        return 66
+    except BaseException:
+        print(
+            json.dumps(
+                {"schema": schema, "ready": False, "error": "WHISPER_MODEL_PREPARATION_FAILED"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        return 70
+
+
 def _acceptance(args: argparse.Namespace) -> int:
     from tda_companion.asr_acceptance import ACCEPTANCE_SCHEMA, WhisperAcceptanceError, run_whisper_gpu_acceptance
 
@@ -133,6 +195,7 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--probe", action="store_true")
     mode.add_argument("--acceptance", action="store_true")
+    mode.add_argument("--prepare-model", action="store_true")
     parser.add_argument("--audio", type=Path)
     parser.add_argument("--models-root", type=Path)
     parser.add_argument(
@@ -149,6 +212,8 @@ def main() -> int:
         return _probe()
     if args.acceptance:
         return _acceptance(args)
+    if args.prepare_model:
+        return _prepare_model(args)
 
     from tda_companion.asr_worker import run_worker_stdio
 
