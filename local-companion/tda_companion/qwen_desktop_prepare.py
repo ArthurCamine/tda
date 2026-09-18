@@ -12,6 +12,8 @@ from .qwen_runtime import current_qwen_worker
 
 _MAX_STDOUT_BYTES = 64 * 1024
 _GATE_TIMEOUT_SECONDS = 2 * 60 * 60
+ProgressCallback = Callable[[str, dict[str, object]], None]
+
 _RETRYABLE_TRACK_ERRORS = {
     "QWEN_ACCEPTANCE_AUDIO_TOO_SHORT",
     "QWEN_ACCEPTANCE_AUDIO_INVALID",
@@ -100,13 +102,23 @@ def prepare_qwen_profile_from_craig(
     profile_id: str,
     required_gpu_name: str = "RTX 4070",
     runner: Callable[..., Any] = subprocess.run,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     if profile_id not in {"qwen-fast", "qwen-quality"}:
         raise QwenDesktopPrepareError("QWEN_PROFILE_REQUIRED")
+    report = progress or (lambda _stage, _context: None)
     worker = current_qwen_worker(runtime_root)
     if worker is None:
         raise QwenDesktopPrepareError("QWEN_RUNTIME_UNAVAILABLE")
+    report("runtime_probe", {"profile_id": profile_id})
     probe = probe_qwen_long_track_gate(runtime_root, runner=runner)
+    report(
+        "runtime_probe_ready",
+        {
+            "profile_id": profile_id,
+            "runtime_cuda": str(probe.get("torch_cuda") or "unknown"),
+        },
+    )
 
     package_root = data_root.resolve() / "staging" / source_id
     try:
@@ -115,6 +127,10 @@ def prepare_qwen_profile_from_craig(
         raise QwenDesktopPrepareError(str(exc)) from exc
     if not package.tracks:
         raise QwenDesktopPrepareError("CRAIG_TRACKS_EMPTY")
+    report(
+        "selecting_audio",
+        {"profile_id": profile_id, "track_count": len(package.tracks)},
+    )
 
     scratch = cache_root.resolve() / "qwen-acceptance"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -125,6 +141,14 @@ def prepare_qwen_profile_from_craig(
         if package_root.resolve() not in source.parents or not source.is_file():
             last_retryable = "CRAIG_TRACK_PATH_INVALID"
             continue
+        report(
+            "physical_gate",
+            {
+                "profile_id": profile_id,
+                "track_number": int(track.number),
+                "audio_window_seconds": 180,
+            },
+        )
         command = [
             str(worker),
             "--acceptance",
@@ -154,6 +178,14 @@ def prepare_qwen_profile_from_craig(
                 continue
             raise QwenDesktopPrepareError(code)
 
+        report(
+            "physical_gate_ready",
+            {
+                "profile_id": profile_id,
+                "track_number": int(track.number),
+                "audio_window_seconds": 180,
+            },
+        )
         gpu = value.get("gpu") if isinstance(value.get("gpu"), dict) else {}
         inference = value.get("inference") if isinstance(value.get("inference"), dict) else {}
         window = value.get("source_window") if isinstance(value.get("source_window"), dict) else {}
