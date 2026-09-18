@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import os
 import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass
 from importlib import metadata
@@ -17,6 +18,7 @@ from .asr_models import (
     get_profile,
     inspect_model_install,
     model_path,
+    reset_model_install,
     write_install_marker,
 )
 from .asr_timeline import build_turns, deduplicate_cross_track_segments, flatten_tracks
@@ -38,6 +40,24 @@ class WhisperRuntimeError(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+def _tree_bytes(root: Path, *, max_entries: int = 50_000) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    entries = 0
+    try:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.is_symlink():
+                continue
+            entries += 1
+            if entries > max_entries:
+                return total
+            total += path.stat().st_size
+    except OSError:
+        return total
+    return total
 
 
 @dataclass(frozen=True)
@@ -173,6 +193,25 @@ def load_whisper_model(path: Path, plan: WhisperPlan):
         return model, plan.fallback_compute_type, True
 
 
+def _resumable_model_staging(downloads: Path, directory: str) -> Path:
+    candidates: list[tuple[float, Path]] = []
+    for candidate in downloads.glob(f"{directory}-*.partial"):
+        if not candidate.is_dir():
+            continue
+        try:
+            modified = candidate.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((modified, candidate))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        chosen = candidates[0][1]
+        for _, stale in candidates[1:]:
+            shutil.rmtree(stale, ignore_errors=True)
+        return chosen
+    return downloads / f"{directory}-{uuid4().hex}.partial"
+
+
 def prepare_whisper_model(
     models_root: Path,
     profile: AsrProfile,
@@ -186,24 +225,76 @@ def prepare_whisper_model(
     target = model_path(models_root, profile)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise WhisperRuntimeError("WHISPER_MODEL_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, profile)
+        except ModelRegistryError as exc:
+            raise WhisperRuntimeError("WHISPER_MODEL_REPAIR_FAILED") from exc
 
     report = report or (lambda _: None)
     report({"type": "stage", "stage": "model_prepare", "profile": profile.id})
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{profile.directory}-{uuid4().hex}.partial"
+    staging = _resumable_model_staging(downloads, profile.directory)
 
     if downloader is None:
+        # huggingface_hub reads these values when its constants module is imported.
+        # Keep each network request finite; the overall model preparation may still
+        # run for a long time on a slow connection and is supervised separately.
+        os.environ["HF_HUB_ETAG_TIMEOUT"] = "15"
+        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
         try:
             from faster_whisper.utils import download_model
         except ImportError as exc:
             raise WhisperRuntimeError("WHISPER_RUNTIME_NOT_INSTALLED") from exc
         downloader = download_model
 
+    stop_monitor = threading.Event()
+    last_reported = {"bytes": -1}
+
+    def monitor_download() -> None:
+        while not stop_monitor.wait(2.0):
+            downloaded = _tree_bytes(staging)
+            if downloaded <= 0 or downloaded == last_reported["bytes"]:
+                continue
+            last_reported["bytes"] = downloaded
+            report(
+                {
+                    "type": "event",
+                    "code": "MODEL_DOWNLOAD_PROGRESS",
+                    "stage": "model_prepare",
+                    "profile": profile.id,
+                    "downloaded_bytes": downloaded,
+                }
+            )
+
+    monitor = threading.Thread(
+        target=monitor_download,
+        name="tda-whisper-download-progress",
+        daemon=True,
+    )
+    monitor.start()
     try:
-        downloader(profile.model_id, output_dir=str(staging), revision=profile.revision)
+        try:
+            downloader(profile.model_id, output_dir=str(staging), revision=profile.revision)
+        except WhisperRuntimeError:
+            raise
+        except Exception as exc:
+            raise WhisperRuntimeError("WHISPER_MODEL_DOWNLOAD_FAILED") from exc
+        # Hugging Face local-dir metadata is useful only while downloading.
+        # Do not bind transient resume metadata into the installed model hash.
+        shutil.rmtree(staging / ".cache", ignore_errors=True)
+        downloaded = _tree_bytes(staging)
+        if downloaded > 0:
+            report(
+                {
+                    "type": "event",
+                    "code": "MODEL_DOWNLOAD_PROGRESS",
+                    "stage": "model_prepare",
+                    "profile": profile.id,
+                    "downloaded_bytes": downloaded,
+                }
+            )
         missing = [name for name in profile.required_files if not (staging / name).is_file()]
         if missing:
             raise WhisperRuntimeError("WHISPER_MODEL_DOWNLOAD_INCOMPLETE")
@@ -214,9 +305,18 @@ def prepare_whisper_model(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except WhisperRuntimeError as exc:
+        # Keep Hugging Face local-dir metadata and partial files after a network
+        # failure so the next preparation attempt can resume the same snapshot.
+        if exc.code != "WHISPER_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    finally:
+        stop_monitor.set()
+        monitor.join(timeout=1.0)
 
 
 def _safe_track_path(package_root: Path, track: CraigTrack) -> Path:

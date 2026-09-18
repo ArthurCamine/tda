@@ -58,6 +58,7 @@ export function ProcessingSubmission() {
 	const [busy, setBusy] = useState(false);
 	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [capabilityError, setCapabilityError] = useState<string | null>(null);
 	const request = useRef<AbortController | null>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const pending = useRef<PendingSubmission | null>(null);
@@ -67,25 +68,49 @@ export function ProcessingSubmission() {
 			request.current?.abort();
 			setCapabilities(null);
 			setProfile("");
+			setCapabilityError(null);
 			return;
 		}
+
 		const controller = new AbortController();
-		request.current = controller;
-		void bridge
-			.capabilities(controller.signal)
-			.then((value) => {
+		let reading = false;
+		let stopped = false;
+		const refreshCapabilities = async () => {
+			if (reading || stopped || controller.signal.aborted) return;
+			reading = true;
+			try {
+				const value = await bridge.capabilities(controller.signal);
+				if (stopped || controller.signal.aborted) return;
 				setCapabilities(value);
 				setProfile((current) =>
 					current && value.transcription.profiles.includes(current)
 						? current
 						: (value.transcription.profiles[0] ?? ""),
 				);
-				setError(null);
-			})
-			.catch((cause) => {
-				setError(messageFor(cause instanceof BridgeError ? cause.code : "service_error"));
-			});
-		return () => controller.abort();
+				setCapabilityError(null);
+			} catch (cause) {
+				if (!stopped && !controller.signal.aborted) {
+					setCapabilityError(messageFor(cause instanceof BridgeError ? cause.code : "service_error"));
+				}
+			} finally {
+				reading = false;
+			}
+		};
+
+		void refreshCapabilities();
+		const timer = window.setInterval(() => {
+			if (document.visibilityState === "visible") void refreshCapabilities();
+		}, 3000);
+		const visible = () => {
+			if (document.visibilityState === "visible") void refreshCapabilities();
+		};
+		document.addEventListener("visibilitychange", visible);
+		return () => {
+			stopped = true;
+			window.clearInterval(timer);
+			document.removeEventListener("visibilitychange", visible);
+			controller.abort();
+		};
 	}, [bridge, paired]);
 
 	const canTranscribe = useMemo(
@@ -179,7 +204,7 @@ export function ProcessingSubmission() {
 
 			{!canTranscribe ? (
 				<p className={styles.notice} role="status">
-					Nenhum perfil ASR executável foi anunciado por este Companion. Instale/valide o runtime e, para Qwen, conclua o gate físico antes de usar.
+					Nenhum perfil ASR está pronto ainda. Se a preparação foi iniciada no Companion, acompanhe lá as etapas de runtime, modelo e validação da GPU. Esta tela verifica novamente a cada 3 segundos e libera o formulário automaticamente assim que o perfil ficar pronto.
 				</p>
 			) : (
 				<form className={styles.form} onSubmit={submit}>
@@ -259,6 +284,7 @@ export function ProcessingSubmission() {
 				</p>
 			) : null}
 			{status ? <p className={styles.status} role="status">{status}</p> : null}
+			{capabilityError ? <p className={styles.error} role="alert">{capabilityError}</p> : null}
 			{error ? <p className={styles.error} role="alert">{error}</p> : null}
 		</section>
 	);

@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tda_companion.qwen_acceptance import QwenAcceptanceError, run_qwen_gpu_acceptance
+from tda_companion.qwen_acceptance import (
+    QwenAcceptanceError,
+    _qwen_inference_failure_code,
+    run_qwen_gpu_acceptance,
+)
 
 
 class _Monitor:
@@ -30,7 +34,10 @@ def _cuda() -> dict:
         "available": True,
         "device_count": 1,
         "bf16_supported": True,
-        "torch_cuda": "13.2",
+        "torch_cuda": "12.6",
+        "driver_version": "570.144",
+        "execution_ready": True,
+        "execution_error": None,
         "devices": [
             {
                 "index": 0,
@@ -184,6 +191,71 @@ def test_qwen_requires_cuda_capability_and_expected_gpu(tmp_path: Path):
             glossary="Dandelion",
             required_gpu_name="RTX 3090",
             cuda_status=_cuda(),
+            prepare_model=_prepare_model,
+            prepare_aligner=_prepare_aligner,
+            asr_runner=_asr,
+            aligner_runner=_align,
+            monitor_factory=_Monitor,
+            duration_reader=_duration,
+        )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (
+            RuntimeError("CUDA driver version is insufficient for CUDA runtime version"),
+            "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+        ),
+        (RuntimeError("CUDA out of memory"), "QWEN_ASR_GPU_MEMORY_EXHAUSTED"),
+        (RuntimeError("CUBLAS_STATUS_EXECUTION_FAILED"), "QWEN_ASR_CUDA_FAILED"),
+        (AttributeError("processor has no attribute"), "QWEN_ASR_RUNTIME_API_FAILED"),
+        (ValueError("invalid audio shape"), "QWEN_ASR_INPUT_FAILED"),
+        (RuntimeError("unknown backend failure"), "QWEN_ASR_INFERENCE_FAILED"),
+    ],
+)
+def test_qwen_inference_failure_classifier_keeps_safe_cause_class(
+    error: BaseException,
+    code: str,
+):
+    assert _qwen_inference_failure_code(error) == code
+
+
+def test_qwen_rejects_cuda_status_that_never_proved_execution(tmp_path: Path):
+    audio = tmp_path / "sample.flac"
+    audio.write_bytes(b"fake-audio")
+    unproven = _cuda()
+    unproven.pop("execution_ready", None)
+    unproven.pop("execution_error", None)
+
+    with pytest.raises(QwenAcceptanceError, match="QWEN_CUDA_EXECUTION_FAILED"):
+        run_qwen_gpu_acceptance(
+            audio,
+            tmp_path / "Models",
+            profile_id="qwen-fast",
+            cuda_status=unproven,
+            prepare_model=_prepare_model,
+            prepare_aligner=_prepare_aligner,
+            asr_runner=_asr,
+            aligner_runner=_align,
+            monitor_factory=_Monitor,
+            duration_reader=_duration,
+        )
+
+
+def test_qwen_rejects_discovered_gpu_when_cuda_execution_is_not_compatible(tmp_path: Path):
+    audio = tmp_path / "sample.flac"
+    audio.write_bytes(b"fake-audio")
+    incompatible = _cuda()
+    incompatible["execution_ready"] = False
+    incompatible["execution_error"] = "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+
+    with pytest.raises(QwenAcceptanceError, match="QWEN_CUDA_DRIVER_INCOMPATIBLE"):
+        run_qwen_gpu_acceptance(
+            audio,
+            tmp_path / "Models",
+            profile_id="qwen-fast",
+            cuda_status=incompatible,
             prepare_model=_prepare_model,
             prepare_aligner=_prepare_aligner,
             asr_runner=_asr,

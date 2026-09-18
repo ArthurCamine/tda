@@ -16,6 +16,7 @@ from .craig import CraigPackage, CraigTrack
 from .qwen_acceptance import (
     QwenAcceptanceError,
     QwenPlan,
+    _qwen_inference_failure_code,
     prepare_qwen_aligner,
     prepare_qwen_model,
     resolve_qwen_plan,
@@ -34,9 +35,9 @@ CancelCallback = Callable[[], bool]
 WindowReader = Callable[[Path], Iterable["AudioWindow"]]
 EnergyReader = Callable[["AudioWindow", float, float], float]
 
-QWEN_WINDOW_SECONDS = 180.0
+QWEN_WINDOW_SECONDS = 60.0
 QWEN_SAMPLE_RATE = 16_000
-QWEN_MAX_NEW_TOKENS = 2048
+QWEN_MAX_NEW_TOKENS = 512
 QWEN_SEGMENT_GAP_SECONDS = 1.0
 QWEN_SEGMENT_MAX_SECONDS = 30.0
 
@@ -228,9 +229,17 @@ class QwenAsrSession:
             dtype = _torch_dtype(torch, plan.dtype)
             self.processor = AutoProcessor.from_pretrained(str(model_root), local_files_only=True)
             self.model = AutoModelForMultimodalLM.from_pretrained(
-                str(model_root), dtype=dtype, device_map="auto", local_files_only=True
+                str(model_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
             )
         except Exception as exc:
+            code = _qwen_inference_failure_code(exc)
+            if code in {
+                "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+                "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+                "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
+            }:
+                raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_MODEL_LOAD_FAILED") from exc
         if not _model_is_cuda_only(self.model):
             self.close()
@@ -249,7 +258,7 @@ class QwenAsrSession:
             generated_ids = output_ids[:, inputs["input_ids"].shape[1] :]
             parsed = self.processor.decode(generated_ids, return_format="parsed")[0]
         except Exception as exc:
-            raise QwenRuntimeError("QWEN_ASR_INFERENCE_FAILED") from exc
+            raise QwenRuntimeError(_qwen_inference_failure_code(exc)) from exc
         if not isinstance(parsed, dict):
             raise QwenRuntimeError("QWEN_ASR_OUTPUT_INVALID")
         text = str(parsed.get("transcription") or "").strip()
@@ -280,9 +289,17 @@ class QwenAlignerSession:
             dtype = _torch_dtype(torch, plan.dtype)
             self.processor = AutoProcessor.from_pretrained(str(model_root), local_files_only=True)
             self.model = AutoModelForTokenClassification.from_pretrained(
-                str(model_root), dtype=dtype, device_map="auto", local_files_only=True
+                str(model_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
             )
         except Exception as exc:
+            code = _qwen_inference_failure_code(exc)
+            if code in {
+                "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+                "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+                "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
+            }:
+                raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_ALIGNER_LOAD_FAILED") from exc
         if not _model_is_cuda_only(self.model):
             self.close()
@@ -305,6 +322,14 @@ class QwenAlignerSession:
                 timestamp_token_id=self.model.config.timestamp_token_id,
             )[0]
         except Exception as exc:
+            code = _qwen_inference_failure_code(exc)
+            if code in {
+                "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+                "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+                "QWEN_ASR_CUDA_FAILED",
+                "QWEN_ASR_RUNTIME_API_FAILED",
+            }:
+                raise QwenRuntimeError(code) from exc
             raise QwenRuntimeError("QWEN_ALIGNMENT_FAILED") from exc
         if not isinstance(value, list) or not value:
             raise QwenRuntimeError("QWEN_ALIGNMENT_EMPTY")

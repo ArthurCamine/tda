@@ -12,6 +12,12 @@ $ErrorActionPreference = "Stop"
 $previousVersion = "0.3.4"
 $previousUrl = "https://github.com/Faysk/tda/releases/download/companion-rc-v0.3.4-43307c819877/TDACompanion-x64.msi"
 $previousSha256 = "e96e2f3245184937a22965b71fb216323ad36add3767277f28429b25527e77b6"
+# Exact published Stable immediately preceding 0.3.10. Pinning the digest makes
+# this a reproducible updater-compatibility fixture rather than "whatever that
+# release URL serves today".
+$stableUpdaterVersion = "0.3.9"
+$stableUpdaterUrl = "https://github.com/Faysk/tda/releases/download/companion-v0.3.9/TDACompanion-x64.msi"
+$stableUpdaterSha256 = "67abdb127ae2d1569f3f3200274bad8da2a0a79e8abc45eb6cafca291edfe39c"
 $msi = (Resolve-Path $CurrentMsiPath).Path
 $rollbackProbeMsi = (Resolve-Path $RollbackProbeMsiPath).Path
 if ($CurrentVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "INVALID_CURRENT_VERSION" }
@@ -20,26 +26,49 @@ if (-not $env:LOCALAPPDATA) { throw "LOCALAPPDATA_NOT_FOUND" }
 
 $tdaRoot = Join-Path $env:LOCALAPPDATA "TDA"
 $previousMsi = Join-Path $env:TEMP "TDACompanion-$previousVersion-baseline.msi"
+$stableUpdaterMsi = Join-Path $env:TEMP "TDACompanion-$stableUpdaterVersion-stable-baseline.msi"
 $logsRoot = Join-Path $env:TEMP "tda-lifecycle"
 New-Item -ItemType Directory -Force -Path $logsRoot | Out-Null
 $productKey = "HKCU:\Software\Faysk\TDA Companion"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TDA\TDA Companion.lnk"
 
-function Invoke-Msi([string[]]$Arguments, [string]$LogName) {
+function Invoke-Msi([string[]]$Arguments, [string]$LogName, [int]$TimeoutSeconds = 240) {
     $log = Join-Path $logsRoot $LogName
-    $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @($Arguments + @("/norestart", "/L*v", "`"$log`"")) -Wait -PassThru
+    Write-Host "MSI start: $LogName"
+    $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @($Arguments + @("/norestart", "/L*v", "`"$log`"")) -PassThru
+    if (-not $result.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
+        Write-Host "MSI timeout after $TimeoutSeconds seconds: $LogName"
+        try { $result.Kill($true) } catch {}
+        try { $result.WaitForExit(5000) | Out-Null } catch {}
+        if (Test-Path $log) {
+            Write-Host "--- timed-out MSI trace: $LogName ---"
+            Select-String -Path $log -Pattern "Action start|Action ended|Return value 3|CustomAction|RemoveExistingProducts|InstallFinalize" |
+                Select-Object -Last 120 |
+                ForEach-Object { Write-Host $_.Line }
+            Write-Host "--- timed-out MSI tail: $LogName ---"
+            Get-Content $log -Tail 220 | Write-Host
+        }
+        throw "MSI_TIMEOUT:$LogName"
+    }
     if ($result.ExitCode -notin @(0, 3010)) {
         if (Test-Path $log) { Get-Content $log -Tail 160 | Write-Host }
         throw "MSI_EXIT_CODE:$($result.ExitCode):$LogName"
     }
+    Write-Host "MSI complete: $LogName ($($result.ExitCode))"
 }
 
 function Invoke-RollbackProbe([string]$ProbeMsi, [string]$LogName) {
     $log = Join-Path $logsRoot $LogName
     $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
         "/i", "`"$ProbeMsi`"", "/qn", "/norestart", "/L*v", "`"$log`""
-    ) -Wait -PassThru
+    ) -PassThru
+    if (-not $result.WaitForExit(180000)) {
+        try { $result.Kill($true) } catch {}
+        try { $result.WaitForExit(5000) | Out-Null } catch {}
+        if (Test-Path $log) { Get-Content $log -Tail 220 | Write-Host }
+        throw "ROLLBACK_PROBE_TIMEOUT"
+    }
     if ($result.ExitCode -in @(0, 3010)) {
         throw "ROLLBACK_PROBE_UNEXPECTED_SUCCESS:$($result.ExitCode)"
     }
@@ -288,6 +317,100 @@ try {
     if ($purge.ExitCode -ne 0) { throw "MAINTENANCE_PURGE_FAILED:$($purge.ExitCode)" }
     if (Test-Path $tdaRoot) { throw "PURGE_ROOT_LEFT_BEHIND" }
 
+    # User-path compatibility: install the exact published 0.3.9 Stable, start its
+    # Agent, copy *its* maintenance helper to TEMP exactly like DesktopBridge does,
+    # and let that old helper drive the candidate MSI.
+    Invoke-WebRequest -Uri $stableUpdaterUrl -OutFile $stableUpdaterMsi -UseBasicParsing
+    $stableDownloadedSha = (Get-FileHash -Algorithm SHA256 $stableUpdaterMsi).Hash.ToLowerInvariant()
+    if ($stableDownloadedSha -ne $stableUpdaterSha256) { throw "STABLE_UPDATER_RELEASE_HASH_MISMATCH" }
+
+    Invoke-Msi @("/i", "`"$stableUpdaterMsi`"", "/qn") "05-install-$stableUpdaterVersion-stable.log"
+    $stableMarker = Join-Path $tdaRoot "Companion\current-version.txt"
+    $stableExe = Join-Path $tdaRoot "Companion\versions\$stableUpdaterVersion\TDACompanion.exe"
+    $stableHelper = Join-Path $tdaRoot "Companion\versions\$stableUpdaterVersion\TDACompanionMaintenance.exe"
+    Assert-FileValue $stableMarker $stableUpdaterVersion "STABLE_UPDATER_VERSION_MARKER"
+    if (-not (Test-Path $stableExe -PathType Leaf)) { throw "STABLE_UPDATER_EXECUTABLE_MISSING" }
+    if (-not (Test-Path $stableHelper -PathType Leaf)) { throw "STABLE_UPDATER_HELPER_MISSING" }
+
+    Seed-PersistentRoots "keep-across-old-helper-update"
+    $stableAgentLaunch = $null
+    try {
+        try {
+            $stableAgent = Get-VerifiedAgent $stableUpdaterVersion $stableExe "STABLE_UPDATER_AGENT_NOT_RUNNING"
+        } catch {
+            $stableAgentLaunch = Start-Process -FilePath $stableExe -ArgumentList @("--agent", "--startup") -PassThru -WindowStyle Hidden
+            $stableAgent = Get-VerifiedAgent $stableUpdaterVersion $stableExe "STABLE_UPDATER_AGENT_START_TIMEOUT"
+            if ($stableAgent.Id -ne $stableAgentLaunch.Id) {
+                throw "STABLE_UPDATER_AGENT_PID_MISMATCH:$($stableAgent.Id):$($stableAgentLaunch.Id)"
+            }
+        }
+
+        $operationId = [Guid]::NewGuid().ToString("N")
+        $handoffRoot = Join-Path $env:TEMP "TDACompanionMaintenance\$operationId"
+        New-Item -ItemType Directory -Force -Path $handoffRoot | Out-Null
+        $handoffHelper = Join-Path $handoffRoot "TDACompanionMaintenance.exe"
+        Copy-Item -LiteralPath $stableHelper -Destination $handoffHelper
+        $currentMsiSha256 = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Write-Host "Stable updater helper start: $stableUpdaterVersion -> $CurrentVersion"
+        $update = Start-Process -FilePath $handoffHelper -ArgumentList @(
+            "--install-update",
+            "--root", "`"$tdaRoot`"",
+            "--msi", "`"$msi`"",
+            "--sha256", $currentMsiSha256,
+            "--version", $CurrentVersion,
+            "--parent-pid", "0",
+            "--port", "8765",
+            "--operation-id", $operationId,
+            "--cleanup-self"
+        ) -PassThru
+        if (-not $update.WaitForExit(720000)) {
+            try { $update.Kill($true) } catch {}
+            try { $update.WaitForExit(5000) | Out-Null } catch {}
+            $lastOperation = Join-Path $tdaRoot "Cache\maintenance\last-operation.json"
+            if (Test-Path $lastOperation) { Get-Content -LiteralPath $lastOperation -Raw | Write-Host }
+            throw "STABLE_UPDATER_HELPER_TIMEOUT"
+        }
+        if ($update.ExitCode -ne 0) {
+            $lastOperation = Join-Path $tdaRoot "Cache\maintenance\last-operation.json"
+            if (Test-Path $lastOperation) { Get-Content -LiteralPath $lastOperation -Raw | Write-Host }
+            throw "STABLE_UPDATER_HELPER_UPDATE_FAILED:$($update.ExitCode)"
+        }
+
+        Assert-ProcessExited $stableAgent "STABLE_UPDATER_OLD_AGENT_SURVIVED_UPDATE"
+        Assert-FileValue $stableMarker $CurrentVersion "STABLE_UPDATER_CURRENT_VERSION_MARKER"
+        if (Test-Path $stableExe) { throw "STABLE_UPDATER_OLD_EXECUTABLE_LEFT_AFTER_UPDATE" }
+        if (-not (Test-Path $candidateExe -PathType Leaf)) { throw "STABLE_UPDATER_CANDIDATE_EXECUTABLE_MISSING" }
+        Assert-PersistentRoots "keep-across-old-helper-update"
+        $null = Get-VerifiedAgent $CurrentVersion $candidateExe "STABLE_UPDATER_NEW_AGENT_NOT_READY"
+
+        $receiptPath = Join-Path $tdaRoot "Cache\maintenance\last-update.json"
+        if (-not (Test-Path $receiptPath -PathType Leaf)) { throw "STABLE_UPDATER_RECEIPT_MISSING" }
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        if (
+            [string]$receipt.operation_id -ne $operationId -or
+            [string]$receipt.version -ne $CurrentVersion -or
+            [string]$receipt.sha256 -ne $currentMsiSha256 -or
+            [string]$receipt.status -ne "installed" -or
+            [int]$receipt.msi_exit_code -notin @(0, 3010)
+        ) {
+            throw "STABLE_UPDATER_RECEIPT_INVALID"
+        }
+
+        $currentMaintenance = Current-MaintenanceExe
+        if (-not (Test-Path $currentMaintenance -PathType Leaf)) { throw "STABLE_UPDATER_CURRENT_HELPER_MISSING" }
+        $finalPurge = Start-Process -FilePath $currentMaintenance -ArgumentList @("--uninstall", "--purge", "--parent-pid", "0") -Wait -PassThru
+        if ($finalPurge.ExitCode -ne 0) { throw "STABLE_UPDATER_FINAL_PURGE_FAILED:$($finalPurge.ExitCode)" }
+        if (Test-Path $tdaRoot) { throw "STABLE_UPDATER_FINAL_PURGE_ROOT_LEFT_BEHIND" }
+    } finally {
+        try {
+            if ($stableAgentLaunch -and -not $stableAgentLaunch.HasExited) {
+                Stop-Process -Id $stableAgentLaunch.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+
+    Write-Host "Published Stable $stableUpdaterVersion helper -> candidate $CurrentVersion update smoke: PASS"
     Write-Host "TDA Companion rollback restore, live-Agent MajorUpgrade, metadata cleanup, preserve uninstall and purge smoke: PASS ($CurrentVersion)"
 }
 finally {

@@ -134,6 +134,29 @@ button.quiet { min-height: auto; padding: 5px 8px; font-size: 11px; background: 
 .advanced-grid label { color: var(--fg-soft); font-size: 11px; }
 .advanced-grid textarea { width: 100%; min-height: 86px; margin-top: 6px; resize: vertical; line-height: 1.4; }
 .advanced-grid small { display: block; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+
+.preparation-progress { margin: 14px 18px 0 53px; border: 1px solid rgba(215,170,97,.34); background: rgba(215,170,97,.045); border-radius: 10px; padding: 13px 14px 12px; }
+.preparation-progress.completed { border-color: rgba(77,184,99,.34); background: rgba(48,153,69,.055); }
+.preparation-progress.failed { border-color: rgba(229,147,131,.5); background: rgba(160,54,39,.07); }
+.preparation-progress-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+.preparation-kicker { display: block; color: var(--accent-strong); font-size: 9px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; margin-bottom: 4px; }
+.preparation-progress-head strong { display: block; font-size: 12px; }
+.preparation-progress-head p { margin: 4px 0 0; color: var(--fg-soft); font-size: 10px; line-height: 1.45; max-width: 720px; }
+.preparation-elapsed { color: var(--muted); font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; padding-top: 2px; }
+.preparation-stage-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)); gap: 7px; }
+.preparation-stage { position: relative; min-height: 48px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px 8px 28px; background: rgba(10,12,15,.24); }
+.preparation-stage::before { content: ""; position: absolute; left: 10px; top: 13px; width: 8px; height: 8px; border-radius: 50%; background: #4d555f; box-shadow: 0 0 0 3px rgba(77,85,95,.12); }
+.preparation-stage b { display: block; font-size: 10px; line-height: 1.2; }
+.preparation-stage span { display: block; color: var(--muted); font-size: 9px; line-height: 1.35; margin-top: 3px; }
+.preparation-stage.active { border-color: rgba(215,170,97,.48); background: rgba(215,170,97,.07); }
+.preparation-stage.active::before { background: var(--accent-strong); box-shadow: 0 0 0 3px rgba(215,170,97,.15); }
+.preparation-stage.done::before { background: var(--success); box-shadow: 0 0 0 3px rgba(77,184,99,.12); }
+.preparation-stage.failed { border-color: rgba(229,147,131,.45); }
+.preparation-stage.failed::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(229,147,131,.12); }
+.preparation-progress-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(42,48,56,.68); margin-top: 10px; padding-top: 9px; }
+.preparation-progress-foot > span { color: var(--muted); font-size: 9px; line-height: 1.4; }
+.preparation-progress-foot button { flex: 0 0 auto; }
+
 .process-action-bar { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 15px 18px; background: rgba(10,12,15,.25); }
 .process-status { min-width: 0; }
 .process-status strong { display: block; font-size: 12px; }
@@ -159,7 +182,10 @@ button.quiet { min-height: auto; padding: 5px 8px; font-size: 11px; background: 
 .log-level.warning { color: var(--warning); }
 .log-level.error { color: var(--danger); }
 .log-component { color: var(--fg-soft); }
-.log-message { color: var(--fg); overflow-wrap: anywhere; }
+.log-message { color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
+.log-message-main { display: flex; align-items: baseline; gap: 7px; min-width: 0; flex-wrap: wrap; }
+.log-code { color: #aebdca; border: 1px solid #2d3e4a; background: rgba(58,125,164,.08); border-radius: 5px; padding: 1px 5px; font-size: 9px; font-weight: 700; letter-spacing: .02em; }
+.log-context { display: block; margin-top: 3px; color: #7f8994; font-size: 9px; line-height: 1.35; }
 .notice { margin-top: 9px; border: 1px solid #243744; border-radius: 8px; background: rgba(58,125,164,.08); color: #aebdca; font-size: 10px; padding: 8px 10px; }
 .maintenance-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
@@ -211,6 +237,8 @@ button.quiet { min-height: auto; padding: 5px 8px; font-size: 11px; background: 
   .empty-work { min-height: 190px; }
   .settings-grid { grid-template-columns: 1fr; }
   .process-layout { grid-template-columns: 1fr; }
+  .preparation-stage-list { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .preparation-progress { margin-left: 18px; }
   .process-guide { border-left: 0; border-top: 1px solid var(--border); padding: 16px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .process-guide section + section { border-top: 0; margin-top: 0; padding-top: 0; }
 }

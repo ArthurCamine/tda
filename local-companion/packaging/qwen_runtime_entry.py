@@ -15,6 +15,46 @@ def _version(name: str) -> str:
         return "unavailable"
 
 
+def _driver_version(pynvml) -> str | None:
+    try:
+        pynvml.nvmlInit()
+        try:
+            value = pynvml.nvmlSystemGetDriverVersion()
+        finally:
+            pynvml.nvmlShutdown()
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="replace")
+        text = str(value or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
+def _cuda_execution_probe(torch) -> tuple[bool | None, str | None]:
+    if not bool(torch.cuda.is_available()) or int(torch.cuda.device_count()) < 1:
+        return None, None
+    try:
+        probe = torch.ones((32,), device="cuda:0", dtype=torch.float32)
+        observed = float((probe * 2.0).sum().item())
+        torch.cuda.synchronize()
+        if observed != 64.0:
+            raise RuntimeError("CUDA_EXECUTION_RESULT_INVALID")
+        return True, None
+    except Exception as exc:
+        value = f"{type(exc).__name__}: {exc}".casefold()
+        if any(
+            marker in value
+            for marker in (
+                "driver version is insufficient",
+                "cuda driver version is insufficient",
+                "forward compatibility was attempted",
+                "unsupported display driver",
+            )
+        ):
+            return False, "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+        return False, "QWEN_CUDA_EXECUTION_FAILED"
+
+
 def _probe() -> int:
     try:
         import accelerate  # noqa: F401
@@ -53,6 +93,8 @@ def _probe() -> int:
 
     available = bool(torch.cuda.is_available())
     count = int(torch.cuda.device_count()) if available else 0
+    driver_version = _driver_version(pynvml)
+    cuda_execution_ready, cuda_execution_error = _cuda_execution_probe(torch)
     devices: list[dict[str, object]] = []
     for index in range(count):
         props = torch.cuda.get_device_properties(index)
@@ -82,8 +124,11 @@ def _probe() -> int:
                 },
                 "transformers": transformers.__version__,
                 "torch_cuda": str(torch.version.cuda or "none"),
+                "driver_version": driver_version,
                 "cuda_available": available,
                 "cuda_device_count": count,
+                "cuda_execution_ready": cuda_execution_ready,
+                "cuda_execution_error": cuda_execution_error,
                 "bf16_supported": bool(torch.cuda.is_bf16_supported()) if available else False,
                 "qwen3_asr_native": True,
                 "forced_aligner_native": True,

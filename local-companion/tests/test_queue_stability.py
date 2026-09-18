@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from tda_companion.store import Store
+import pytest
+
+from tda_companion.store import Conflict, Store
 
 
 BODY = dict(
@@ -65,3 +67,151 @@ def test_stale_fail_cannot_overwrite_new_retry_attempt(tmp_path):
         pass
 
     assert store.get(job['id'])['status'] == 'succeeded'
+
+
+def test_worker_detail_event_is_persisted_only_for_active_attempt(tmp_path):
+    store = Store(tmp_path)
+    job = store.submit('worker-event', BODY)
+    claim = store.claim()
+    assert claim is not None
+
+    assert store.record_worker_event(
+        job['id'],
+        claim[1],
+        'MODEL_DOWNLOAD_PROGRESS',
+        {'stage': 'model_prepare', 'downloaded_bytes': 123456},
+    ) is True
+    event = store.events(job['id'])[0]
+    assert event['code'] == 'MODEL_DOWNLOAD_PROGRESS'
+    assert event['data'] == {
+        'stage': 'model_prepare',
+        'downloaded_bytes': 123456,
+    }
+
+    store.action(job['id'], 'cancel')
+    assert store.record_worker_event(
+        job['id'],
+        claim[1],
+        'MODEL_DOWNLOAD_PROGRESS',
+        {'downloaded_bytes': 999999},
+    ) is False
+
+
+def test_identical_active_transcription_is_reused_across_different_idempotency_keys(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'session-1',
+        'source_id': 'craig-' + 'a' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 4,
+    }
+
+    first = store.submit('desktop-first', body)
+    duplicate_queued = store.submit('desktop-second', body)
+    assert duplicate_queued['id'] == first['id']
+    assert len(store.jobs()) == 1
+    assert store.events(first['id'])[0]['code'] == 'DUPLICATE_SUBMISSION_REUSED'
+
+    claim = store.claim()
+    assert claim is not None
+    duplicate_running = store.submit('web-third', body)
+    assert duplicate_running['id'] == first['id']
+    assert duplicate_running['status'] == 'running'
+    assert len(store.jobs()) == 1
+
+
+def test_same_active_asr_work_with_different_destination_is_rejected(tmp_path):
+    store = Store(tmp_path)
+    first_body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'desktop-session',
+        'source_id': 'craig-' + 'c' * 64,
+        'profile_id': 'qwen-quality',
+        'glossary': 'Yuhara',
+        'context': 'mesa principal',
+        'cpu': False,
+        'units': 4,
+    }
+    web_body = {
+        **first_body,
+        'campaign_id': 'campaign-web',
+        'session_id': 'session-web',
+    }
+
+    first = store.submit('desktop-work', first_body)
+    with pytest.raises(Conflict, match='TRANSCRIPTION_WORK_ALREADY_ACTIVE'):
+        store.submit('web-work', web_body)
+
+    assert len(store.jobs()) == 1
+    assert store.get(first['id'])['context']['campaign_id'] == 'desktop-local'
+    assert all(
+        event['code'] != 'DUPLICATE_SUBMISSION_REUSED'
+        for event in store.events(first['id'])
+    )
+
+
+def test_retry_cannot_reactivate_work_already_owned_by_another_job(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'retry-old',
+        'source_id': 'craig-' + 'd' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 2,
+    }
+    old = store.submit('old-job', body)
+    old_claim = store.claim()
+    assert old_claim is not None
+    store.fail(*old_claim, 'WORKER_EXECUTION_FAILED')
+
+    replacement = store.submit(
+        'replacement-job',
+        {**body, 'campaign_id': 'web-campaign', 'session_id': 'replacement'},
+    )
+    assert replacement['status'] == 'queued'
+
+    with pytest.raises(Conflict, match='TRANSCRIPTION_WORK_ALREADY_ACTIVE'):
+        store.action(old['id'], 'retry')
+
+    assert store.get(old['id'])['status'] == 'failed'
+    assert store.get(replacement['id'])['status'] == 'queued'
+
+
+def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
+    store = Store(tmp_path)
+    body = {
+        'kind': 'transcription.craig',
+        'campaign_id': 'desktop-local',
+        'session_id': 'session-2',
+        'source_id': 'craig-' + 'b' * 64,
+        'profile_id': 'whisper-detailed',
+        'glossary': '',
+        'context': '',
+        'cpu': False,
+        'units': 1,
+    }
+    first = store.submit('first-run', body)
+    claim = store.claim()
+    assert claim is not None
+    store.progress(
+        first['id'],
+        claim[1],
+        completed=1,
+        total=1,
+        stage='transcription',
+    )
+    assert store.complete(first['id'], claim[1], {'ok': True}) is True
+
+    second = store.submit('second-run', body)
+    assert second['id'] != first['id']
+    assert len(store.jobs()) == 2

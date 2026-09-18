@@ -55,15 +55,17 @@ Dentro da família CUDA 12.x, usamos os releases estáveis mais recentes de runt
 
 ### Qwen / PyTorch
 
-Qwen3 usa runtime PyTorch/Transformers separado. A baseline candidata usa o wheel oficial PyTorch CUDA 13.2 porque é a versão estável compatível mais recente selecionada para esse runtime.
+Qwen3 usa runtime PyTorch/Transformers separado. O runtime 1.0.5 adota temporariamente o wheel oficial **PyTorch 2.13.0 + CUDA 12.6** como exceção explícita de compatibilidade. O motivo é operacional: CUDA 13.x exige driver NVIDIA da família 580 ou superior para minor-version compatibility, enquanto o Companion não instala nem altera driver NVIDIA automaticamente.
 
-CUDA 13.x requer driver NVIDIA compatível da família 580 ou superior para minor-version compatibility. O Companion não instala nem altera driver NVIDIA automaticamente. A baseline Qwen continua **candidata**, não suportada, até passar inferência real e métricas na RTX 4070 8 GB.
+A exceção fica declarada no próprio manifest Qwen em `dependency_freshness_exceptions` e só é aceita pelo gate quando nome e versão coincidem exatamente com o pin efetivo. Trocar o pin invalida a exceção. O caminho de remoção da exceção é repetir o aceite físico numa baseline de driver compatível com CUDA 13.x e então voltar ao PyTorch estável mais recente.
+
+Além da descoberta da GPU, o runtime Qwen deve executar uma operação CUDA real de smoke antes de qualquer modelo ser aceito. `torch.cuda.is_available()` isoladamente não constitui prova suficiente de compatibilidade driver/runtime.
 
 O fato de Qwen poder usar CUDA 13.x não autoriza migrar o runtime Whisper para CUDA 13 enquanto CTranslate2 não suportar essa família.
 
 ## Exceções
 
-Toda exceção precisa ser explícita e ter justificativa técnica ou legal.
+Toda exceção precisa ser explícita e ter justificativa técnica ou legal. Exceções de dependência runtime devem ser machine-readable no manifest correspondente, vinculadas à versão pinada e rejeitadas automaticamente quando o pin divergir.
 
 ### WiX Toolset
 

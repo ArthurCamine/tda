@@ -72,15 +72,18 @@ def _receipt(profile_id: str = "qwen-fast") -> dict:
         "language": "Portuguese",
         "audio_sha256": "a" * 64,
         "runtime": {
-            "torch": "2.14.0+cu132",
+            "torch": "2.13.0+cu126",
             "transformers": "5.17.0",
-            "torch_cuda": "13.2",
+            "torch_cuda": "12.6",
         },
         "cuda": {
             "available": True,
             "device_count": 1,
             "bf16_supported": True,
-            "torch_cuda": "13.2",
+            "torch_cuda": "12.6",
+            "driver_version": "570.144",
+            "execution_ready": True,
+            "execution_error": None,
             "devices": [
                 {
                     "index": 0,
@@ -145,6 +148,18 @@ def test_physical_gate_binds_runtime_model_aligner_and_contains_no_private_text(
     assert "audio_sha256" not in persisted
     assert "contains_transcript\":false" in persisted
     assert ready_qwen_profiles(state, runtime, models) == ["qwen-fast"]
+
+
+def test_gate_rejects_gpu_discovery_without_executed_cuda(tmp_path: Path):
+    state, runtime, models = _prepared(tmp_path)
+    bad = _receipt()
+    bad["cuda"]["execution_ready"] = False
+    bad["cuda"]["execution_error"] = "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+
+    with pytest.raises(QwenPhysicalGateError, match="QWEN_CUDA_DRIVER_INCOMPATIBLE"):
+        record_qwen_physical_gate(state, runtime, models, bad, profile_id="qwen-fast")
+
+    assert ready_qwen_profiles(state, runtime, models) == []
 
 
 def test_gate_rejects_audio_shorter_than_production_window(tmp_path: Path):

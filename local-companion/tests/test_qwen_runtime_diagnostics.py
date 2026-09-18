@@ -15,7 +15,14 @@ def _completed(value: dict, *, returncode: int = 0):
     return SimpleNamespace(returncode=returncode, stdout=json.dumps(value))
 
 
-def _probe(*, cuda: bool = True, capability: str = "8.9", native: bool = True):
+def _probe(
+    *,
+    cuda: bool = True,
+    capability: str = "8.9",
+    native: bool = True,
+    execution_ready: bool | None = None,
+    execution_error: str | None = None,
+):
     devices = (
         [
             {
@@ -32,10 +39,13 @@ def _probe(*, cuda: bool = True, capability: str = "8.9", native: bool = True):
         "schema": "tda_qwen_runtime_probe_v1",
         "ready": True,
         "python_packages": {
-            "torch": "2.14.0+cu132",
+            "torch": "2.13.0+cu126",
             "transformers": "5.17.0",
         },
-        "torch_cuda": "13.2",
+        "torch_cuda": "12.6",
+        "driver_version": "570.144",
+        "cuda_execution_ready": cuda if execution_ready is None else execution_ready,
+        "cuda_execution_error": execution_error,
         "cuda_available": cuda,
         "cuda_device_count": len(devices),
         "bf16_supported": cuda,
@@ -94,7 +104,7 @@ def test_qwen_diagnostic_warns_when_runtime_is_valid_but_cuda_is_unavailable(mon
     result = diagnostics._qwen_runtime_check(_paths(tmp_path))
     assert result["status"] == "warning"
     assert "CUDA não está disponível" in result["message"]
-    assert "Torch 2.14.0+cu132" in result["detail"]
+    assert "Torch 2.13.0+cu126" in result["detail"]
 
 
 def test_qwen_diagnostic_fails_when_packaged_runtime_lacks_native_qwen_support(monkeypatch, tmp_path: Path):
@@ -115,6 +125,35 @@ def test_qwen_diagnostic_fails_when_packaged_runtime_lacks_native_qwen_support(m
     result = diagnostics._qwen_runtime_check(_paths(tmp_path))
     assert result["status"] == "fail"
     assert "suporte nativo completo" in result["message"]
+
+
+def test_qwen_diagnostic_fails_when_gpu_is_found_but_cuda_cannot_execute(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        diagnostics,
+        "inspect_qwen_runtime",
+        lambda _root, verify_worker: {
+            "status": "ready",
+            "version": "1.0.5",
+            "worker": str(tmp_path / "TDAQwenWorker.exe"),
+        },
+    )
+    monkeypatch.setattr(
+        diagnostics.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed(
+            _probe(
+                execution_ready=False,
+                execution_error="QWEN_CUDA_DRIVER_INCOMPATIBLE",
+            )
+        ),
+    )
+
+    result = diagnostics._qwen_runtime_check(_paths(tmp_path))
+
+    assert result["status"] == "fail"
+    assert "execução CUDA falhou" in result["message"]
+    assert "QWEN_CUDA_DRIVER_INCOMPATIBLE" in result["detail"]
+    assert "driver 570.144" in result["detail"]
 
 
 def test_qwen_diagnostic_warns_for_unsupported_compute_capability(monkeypatch, tmp_path: Path):

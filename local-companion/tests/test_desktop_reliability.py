@@ -124,6 +124,24 @@ def test_background_logs_use_local_fallback_when_agent_is_unavailable(monkeypatc
     assert result["logs"][0]["message"] == "local log remains readable"
 
 
+@pytest.mark.parametrize("action", ["install_update", "uninstall"])
+def test_maintenance_is_blocked_while_first_use_preparation_is_active(
+    tmp_path: Path,
+    action: str,
+):
+    bridge = _bridge(tmp_path)
+    bridge._begin_preparation("qwen-quality", "qwen3")
+
+    with pytest.raises(
+        RuntimeError,
+        match="MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION",
+    ):
+        if action == "install_update":
+            bridge.install_update()
+        else:
+            bridge.uninstall(False)
+
+
 def test_installed_bridge_correlates_maintenance_operation_id(monkeypatch, tmp_path: Path):
     bridge = _bridge(tmp_path)
     seen: dict[str, list[str]] = {}

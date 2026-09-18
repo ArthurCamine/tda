@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -22,6 +23,10 @@ from .runtime_rc_updates import install_published_runtime_rc
 from .settings import SettingsStore
 from .system_log import SystemLog
 from .telemetry import SystemTelemetry
+from .whisper_desktop_prepare import WhisperDesktopPrepareError, prepare_whisper_profile
+
+_QWEN_ALIGNER_DIRECTORY = "qwen3-forced-aligner-0.6b-hf"
+_PREPARATION_COMPONENT = "preparation"
 
 _NETWORK_MESSAGES = {
     "OFFLINE": "Este computador parece estar sem acesso à Internet.",
@@ -85,6 +90,358 @@ class SessionDesktopBridge(DesktopBridge):
         )
         self._last_maintenance_operation_id: str | None = None
         self._maintenance_handoff_process: subprocess.Popen | None = None
+        self._preparation_lock = threading.Lock()
+        self._preparation_log = SystemLog(self.paths.logs_root)
+        self._preparation_started_at: float | None = None
+        self._preparation_stage_started_at: float | None = None
+        self._preparation_state: dict[str, object] = {
+            "active": False,
+            "state": "idle",
+            "operation_id": None,
+            "profile_id": None,
+            "engine": None,
+            "stage": "idle",
+            "title": "Nenhuma preparação em andamento.",
+            "detail": "",
+            "sequence": 0,
+            "current_bytes": None,
+            "error_code": None,
+        }
+
+    @staticmethod
+    def _safe_tree_bytes(root: Path, *, max_entries: int = 50_000) -> int | None:
+        if not root.exists():
+            return 0
+        total = 0
+        entries = 0
+        try:
+            for path in root.rglob("*"):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                entries += 1
+                if entries > max_entries:
+                    return None
+                total += path.stat().st_size
+        except OSError:
+            return None
+        return total
+
+    @staticmethod
+    def _preparation_error_code(exc: BaseException) -> str:
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and code:
+            return code[:96]
+        value = str(exc).strip()
+        if value.endswith("]") and "[" in value:
+            candidate = value.rsplit("[", 1)[-1][:-1].strip()
+            if candidate:
+                return candidate[:96]
+        return (value or type(exc).__name__)[:96]
+
+    def _preparation_public(self) -> dict[str, object]:
+        with self._preparation_lock:
+            value = dict(self._preparation_state)
+            now = time.monotonic()
+            value["elapsed_seconds"] = (
+                round(max(0.0, now - self._preparation_started_at), 1)
+                if self._preparation_started_at is not None
+                else 0.0
+            )
+            value["stage_elapsed_seconds"] = (
+                round(max(0.0, now - self._preparation_stage_started_at), 1)
+                if self._preparation_stage_started_at is not None
+                else 0.0
+            )
+            return value
+
+    def _set_preparation_stage(
+        self,
+        stage: str,
+        title: str,
+        detail: str,
+        *,
+        state: str = "running",
+        current_bytes: int | None = None,
+        context: dict[str, object] | None = None,
+        force_log: bool = False,
+    ) -> None:
+        now = time.monotonic()
+        with self._preparation_lock:
+            previous_stage = str(self._preparation_state.get("stage") or "")
+            previous_state = str(self._preparation_state.get("state") or "")
+            changed = stage != previous_stage or state != previous_state
+            if changed:
+                self._preparation_stage_started_at = now
+                self._preparation_state["sequence"] = int(
+                    self._preparation_state.get("sequence") or 0
+                ) + 1
+            self._preparation_state.update(
+                {
+                    "active": state == "running",
+                    "state": state,
+                    "stage": stage,
+                    "title": title,
+                    "detail": detail,
+                    "current_bytes": current_bytes,
+                }
+            )
+            profile_id = self._preparation_state.get("profile_id")
+            engine = self._preparation_state.get("engine")
+            operation_id = self._preparation_state.get("operation_id")
+            sequence = self._preparation_state.get("sequence")
+
+        if changed or force_log:
+            level = "error" if state == "failed" else "info"
+            code = "PREPARATION_" + "".join(
+                char if char.isalnum() else "_" for char in stage.upper()
+            )[:72]
+            payload: dict[str, object] = {
+                "stage": stage,
+                "profile_id": profile_id,
+                "engine": engine,
+                "operation_id": operation_id,
+                "sequence": sequence,
+            }
+            if current_bytes is not None:
+                payload["downloaded_bytes"] = current_bytes
+            if context:
+                payload.update(context)
+            self._preparation_log.write(
+                level,
+                _PREPARATION_COMPONENT,
+                code,
+                f"{title} {detail}".strip(),
+                payload,
+            )
+
+    def _begin_preparation(self, profile_id: str, engine: str) -> None:
+        now = time.monotonic()
+        with self._preparation_lock:
+            if self._preparation_state.get("active") is True:
+                raise RuntimeError("TRANSCRIPTION_PREPARATION_ALREADY_RUNNING")
+            self._preparation_started_at = now
+            self._preparation_stage_started_at = now
+            self._preparation_state = {
+                "active": True,
+                "state": "running",
+                "operation_id": uuid4().hex,
+                "profile_id": profile_id,
+                "engine": engine,
+                "stage": "starting",
+                "title": "Iniciando preparação…",
+                "detail": "Conferindo o estado local antes de baixar ou executar qualquer modelo.",
+                "sequence": 1,
+                "current_bytes": None,
+                "error_code": None,
+            }
+        self._preparation_log.write(
+            "info",
+            _PREPARATION_COMPONENT,
+            "PREPARATION_STARTED",
+            "Preparação de transcrição iniciada.",
+            {"profile_id": profile_id, "engine": engine},
+        )
+
+    def _finish_preparation(self, *, error_code: str | None = None) -> None:
+        if error_code:
+            with self._preparation_lock:
+                self._preparation_state["error_code"] = error_code
+                self._preparation_state["failure_stage"] = self._preparation_state.get("stage")
+            self._set_preparation_stage(
+                "failed",
+                "A preparação encontrou um problema.",
+                f"Código: {error_code}",
+                state="failed",
+                context={
+                    "error_code": error_code,
+                    "failure_stage": self._preparation_state.get("failure_stage"),
+                },
+                force_log=True,
+            )
+            return
+        self._set_preparation_stage(
+            "complete",
+            "Preparação concluída.",
+            "Runtime, modelos e validações necessárias estão prontos.",
+            state="completed",
+            force_log=True,
+        )
+
+    def _runtime_download_bytes(self, family: str) -> int | None:
+        root = self.paths.cache_root.resolve() / "runtime-rc" / family
+        return self._safe_tree_bytes(root)
+
+    def _whisper_download_state(self, profile_id: str) -> tuple[str, str, str, int | None]:
+        profile = get_profile(profile_id)
+        downloads = self.paths.models_root.resolve() / ".downloads"
+        partial = next(
+            iter(sorted(downloads.glob(f"{profile.directory}-*.partial"))),
+            None,
+        ) if downloads.is_dir() else None
+        if partial is not None:
+            return (
+                "whisper_model",
+                "Baixando modelo Whisper…",
+                "Recebendo e verificando os arquivos do modelo antes de criar o trabalho.",
+                self._safe_tree_bytes(partial),
+            )
+
+        target = self.paths.models_root.resolve() / profile.directory
+        if target.is_dir():
+            return (
+                "verify",
+                "Modelo Whisper baixado.",
+                "Verificando integridade e confirmando o perfil no Agent.",
+                self._safe_tree_bytes(target),
+            )
+        return (
+            "whisper_model",
+            "Preparando modelo Whisper…",
+            "Conectando ao repositório do modelo e iniciando o download verificado.",
+            None,
+        )
+
+    def _qwen_download_state(self, profile_id: str) -> tuple[str, str, str, int | None]:
+        profile = get_profile(profile_id)
+        downloads = self.paths.models_root.resolve() / ".downloads"
+        profile_partial = next(
+            iter(sorted(downloads.glob(f"{profile.directory}-*.partial"))),
+            None,
+        ) if downloads.is_dir() else None
+        aligner_partial = next(
+            iter(sorted(downloads.glob(f"{_QWEN_ALIGNER_DIRECTORY}-*.partial"))),
+            None,
+        ) if downloads.is_dir() else None
+
+        if profile_partial is not None:
+            size = self._safe_tree_bytes(profile_partial)
+            return (
+                "qwen_model_download",
+                "Baixando modelo Qwen…",
+                "Recebendo o modelo de reconhecimento e validando os arquivos locais.",
+                size,
+            )
+
+        model_root = self.paths.models_root.resolve() / profile.directory
+        if not model_root.is_dir():
+            return (
+                "qwen_model_download",
+                "Preparando modelo Qwen…",
+                "Aguardando o download verificado do modelo de reconhecimento.",
+                None,
+            )
+
+        if aligner_partial is not None:
+            size = self._safe_tree_bytes(aligner_partial)
+            return (
+                "qwen_aligner_download",
+                "Baixando alinhador por palavra…",
+                "A transcrição de teste avançou; agora o modelo de alinhamento está sendo preparado.",
+                size,
+            )
+
+        aligner_root = self.paths.models_root.resolve() / _QWEN_ALIGNER_DIRECTORY
+        gate = (
+            self.paths.state_root.resolve()
+            / "qwen-physical-gates"
+            / f"{profile_id}.json"
+        )
+        if not aligner_root.is_dir():
+            return (
+                "qwen_gpu_transcription",
+                "Testando o Qwen na GPU…",
+                "Carregando o modelo e transcrevendo uma janela local real de 60 s.",
+                None,
+            )
+        if not gate.is_file():
+            return (
+                "qwen_gpu_gate",
+                "Validando transcrição e alinhamento…",
+                "Executando a amostra real de 60 s na GPU e conferindo o alinhamento por palavra.",
+                None,
+            )
+        return (
+            "verify",
+            "Gate físico concluído.",
+            "Confirmando que o Agent já reconhece este perfil como pronto.",
+            None,
+        )
+
+    def preparation_status(self) -> dict[str, object]:
+        current = self._preparation_public()
+        if current.get("active") is not True:
+            return current
+
+        engine = current.get("engine")
+        stage = str(current.get("stage") or "")
+        if stage == "runtime":
+            family = "qwen" if engine == "qwen3" else "whisper"
+            downloaded = self._runtime_download_bytes(family)
+            if downloaded:
+                self._set_preparation_stage(
+                    "runtime",
+                    str(current.get("title") or "Preparando runtime…"),
+                    str(current.get("detail") or ""),
+                    current_bytes=downloaded,
+                )
+        elif engine == "whisper" and stage == "whisper_model":
+            inferred, title, detail, downloaded = self._whisper_download_state(
+                str(current.get("profile_id") or "")
+            )
+            self._set_preparation_stage(
+                inferred,
+                title,
+                detail,
+                current_bytes=downloaded,
+            )
+        elif engine == "qwen3" and stage.startswith("qwen"):
+            inferred, title, detail, downloaded = self._qwen_download_state(
+                str(current.get("profile_id") or "")
+            )
+            self._set_preparation_stage(
+                inferred,
+                title,
+                detail,
+                current_bytes=downloaded,
+            )
+        return self._preparation_public()
+
+    def _qwen_prepare_progress(self, stage: str, context: dict[str, object]) -> None:
+        if stage == "runtime_probe":
+            self._set_preparation_stage(
+                "qwen_probe",
+                "Verificando CUDA e runtime…",
+                "Confirmando que o worker Qwen e a GPU suportam o gate físico.",
+                context=context,
+            )
+        elif stage == "runtime_probe_ready":
+            self._set_preparation_stage(
+                "qwen_audio",
+                "Runtime e GPU reconhecidos.",
+                "Selecionando uma faixa adequada para a validação local de 60 s.",
+                context=context,
+            )
+        elif stage == "selecting_audio":
+            self._set_preparation_stage(
+                "qwen_audio",
+                "Selecionando amostra de áudio…",
+                "Procurando uma janela local de 60 s com fala suficiente; nenhum áudio é enviado.",
+                context=context,
+            )
+        elif stage == "physical_gate":
+            self._set_preparation_stage(
+                "qwen_gate",
+                "Executando gate físico do Qwen…",
+                "Preparando modelos, transcrevendo 60 s e validando o alinhamento na GPU.",
+                context=context,
+            )
+        elif stage == "physical_gate_ready":
+            self._set_preparation_stage(
+                "verify",
+                "Gate físico aprovado.",
+                "Confirmando a capacidade do Agent antes de criar o job.",
+                context=context,
+            )
 
     @staticmethod
     def _friendly_network_error(exc: NetworkError) -> RuntimeError:
@@ -406,6 +763,8 @@ class SessionDesktopBridge(DesktopBridge):
             self._maintenance_handoff_process = None
 
     def install_update(self) -> dict[str, object]:
+        if self._preparation_public().get("active") is True:
+            raise RuntimeError("MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION")
         self._last_maintenance_operation_id = None
         try:
             result = super().install_update()
@@ -417,6 +776,8 @@ class SessionDesktopBridge(DesktopBridge):
         return result
 
     def uninstall(self, purge: bool = False) -> dict[str, object]:
+        if self._preparation_public().get("active") is True:
+            raise RuntimeError("MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION")
         self._last_maintenance_operation_id = None
         result = super().uninstall(purge)
         operation_id = self._last_maintenance_operation_id
@@ -443,40 +804,103 @@ class SessionDesktopBridge(DesktopBridge):
             return {"ready": True, "profile_id": profile_id, "prepared": False}
 
         profile = get_profile(profile_id)
-        if profile.engine == "whisper":
-            runtime = self.install_whisper_runtime()
-            refreshed = self.transcription_profiles()
-            ready = next((item for item in refreshed["profiles"] if item["id"] == profile_id), None)
-            if not isinstance(ready, dict) or ready.get("ready") is not True:
-                raise RuntimeError("WHISPER_RUNTIME_UNAVAILABLE")
-            return {
-                "ready": True,
-                "profile_id": profile_id,
-                "prepared": bool(runtime.get("accepted")),
-                "runtime_version": runtime.get("version"),
-                "model_prepare_on_job": True,
-            }
-
-        runtime = self.install_qwen_runtime()
+        self._begin_preparation(profile_id, profile.engine)
         try:
-            result = prepare_qwen_profile_from_craig(
-                data_root=self.paths.data_root,
-                cache_root=self.paths.cache_root,
-                models_root=self.paths.models_root,
-                runtime_root=self.paths.runtime_root,
-                state_root=self.paths.state_root,
-                source_id=source_id,
-                profile_id=profile_id,
+            self._set_preparation_stage(
+                "runtime",
+                "Preparando runtime de transcrição…",
+                (
+                    "Baixando e verificando o runtime Whisper necessário."
+                    if profile.engine == "whisper"
+                    else "Baixando e verificando o runtime Qwen necessário."
+                ),
             )
-        except QwenDesktopPrepareError as exc:
-            raise RuntimeError(exc.code) from None
 
-        refreshed = self.transcription_profiles()
-        ready = next((item for item in refreshed["profiles"] if item["id"] == profile_id), None)
-        if not isinstance(ready, dict) or ready.get("ready") is not True:
-            raise RuntimeError("QWEN_PHYSICAL_ACCEPTANCE_NOT_VISIBLE")
-        return {
-            **result,
-            "prepared": True,
-            "runtime_version": runtime.get("version"),
-        }
+            if profile.engine == "whisper":
+                runtime = self.install_whisper_runtime()
+                self._set_preparation_stage(
+                    "whisper_model",
+                    "Preparando modelo Whisper…",
+                    "O perfil só ficará pronto depois que o modelo for baixado e verificado.",
+                    context={"runtime_version": runtime.get("version")},
+                )
+                try:
+                    model = prepare_whisper_profile(
+                        models_root=self.paths.models_root,
+                        runtime_root=self.paths.runtime_root,
+                        profile_id=profile_id,
+                    )
+                except WhisperDesktopPrepareError as exc:
+                    raise RuntimeError(exc.code) from None
+
+                self._set_preparation_stage(
+                    "verify",
+                    "Modelo Whisper pronto.",
+                    "Confirmando que o Agent já anuncia o perfil selecionado como executável.",
+                    context={"runtime_version": runtime.get("version")},
+                )
+                refreshed = self.transcription_profiles()
+                ready = next(
+                    (item for item in refreshed["profiles"] if item["id"] == profile_id),
+                    None,
+                )
+                if not isinstance(ready, dict) or ready.get("ready") is not True:
+                    raise RuntimeError("WHISPER_MODEL_PREPARATION_NOT_VISIBLE")
+                value = {
+                    "ready": True,
+                    "profile_id": profile_id,
+                    "prepared": bool(runtime.get("accepted")) or bool(model.get("prepared")),
+                    "runtime_version": runtime.get("version"),
+                    "model_content_sha256": model.get("model_content_sha256"),
+                    "model_prepare_on_job": False,
+                }
+                self._finish_preparation()
+                return value
+
+            runtime = self.install_qwen_runtime()
+            self._set_preparation_stage(
+                "qwen_probe",
+                "Runtime Qwen pronto.",
+                "Iniciando a validação de CUDA, modelo e amostra real na GPU.",
+                context={"runtime_version": runtime.get("version")},
+            )
+            try:
+                result = prepare_qwen_profile_from_craig(
+                    data_root=self.paths.data_root,
+                    cache_root=self.paths.cache_root,
+                    models_root=self.paths.models_root,
+                    runtime_root=self.paths.runtime_root,
+                    state_root=self.paths.state_root,
+                    source_id=source_id,
+                    profile_id=profile_id,
+                    progress=self._qwen_prepare_progress,
+                )
+            except QwenDesktopPrepareError as exc:
+                raise RuntimeError(exc.code) from None
+
+            self._set_preparation_stage(
+                "verify",
+                "Verificando perfil no Agent…",
+                "O gate terminou; falta apenas confirmar que o perfil ficou executável.",
+                context={
+                    "runtime_version": runtime.get("version"),
+                    "gpu_name": result.get("gpu_name"),
+                },
+            )
+            refreshed = self.transcription_profiles()
+            ready = next(
+                (item for item in refreshed["profiles"] if item["id"] == profile_id),
+                None,
+            )
+            if not isinstance(ready, dict) or ready.get("ready") is not True:
+                raise RuntimeError("QWEN_PHYSICAL_ACCEPTANCE_NOT_VISIBLE")
+            value = {
+                **result,
+                "prepared": True,
+                "runtime_version": runtime.get("version"),
+            }
+            self._finish_preparation()
+            return value
+        except Exception as exc:
+            self._finish_preparation(error_code=self._preparation_error_code(exc))
+            raise

@@ -15,11 +15,13 @@ from uuid import uuid4
 from .asr_acceptance import NvmlPeakMonitor
 from .asr_models import (
     AsrProfile,
+    ModelRegistryError,
     QWEN_FORCED_ALIGNER_MODEL_ID,
     QWEN_FORCED_ALIGNER_REVISION,
     get_profile,
     inspect_model_install,
     model_path,
+    reset_model_install,
     write_install_marker,
 )
 
@@ -28,6 +30,7 @@ TRANSCRIPT_SCHEMA = "tda_qwen_acceptance_transcript_v1"
 ALIGNER_DIRECTORY = "qwen3-forced-aligner-0.6b-hf"
 MAX_ACCEPTANCE_AUDIO_BYTES = 2 * 1024**3
 MAX_ACCEPTANCE_AUDIO_SECONDS = 240.0
+QWEN_ACCEPTANCE_MAX_NEW_TOKENS = 512
 _COPY_CHUNK = 1024 * 1024
 
 ALIGNER_PROFILE = AsrProfile(
@@ -108,8 +111,47 @@ def _runtime_versions() -> dict[str, str]:
     return values
 
 
+def _nvml_driver_version() -> str | None:
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        try:
+            value = pynvml.nvmlSystemGetDriverVersion()
+        finally:
+            pynvml.nvmlShutdown()
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="replace")
+        text = str(value or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
+def _cuda_execution_failure_code(exc: BaseException) -> str:
+    value = f"{type(exc).__name__}: {exc}".casefold()
+    if any(
+        marker in value
+        for marker in (
+            "driver version is insufficient",
+            "cuda driver version is insufficient",
+            "forward compatibility was attempted",
+            "unsupported display driver",
+        )
+    ):
+        return "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+    return "QWEN_CUDA_EXECUTION_FAILED"
+
+
 def probe_qwen_cuda() -> dict[str, Any]:
-    """Probe PyTorch CUDA without loading any ASR or aligner model."""
+    """Probe both CUDA discovery and an actual kernel execution.
+
+    torch.cuda.is_available() alone is not a sufficient compatibility check: a
+    packaged runtime can discover the GPU while the installed NVIDIA driver is
+    too old for the CUDA family bundled with Torch. The physical gate therefore
+    performs a tiny allocation/kernel/synchronize before any model is loaded.
+    """
+    driver_version = _nvml_driver_version()
     try:
         import torch
 
@@ -127,11 +169,33 @@ def probe_qwen_cuda() -> dict[str, Any]:
                     "total_memory_bytes": int(props.total_memory),
                 }
             )
+
+        execution_ready: bool | None = None
+        execution_error: str | None = None
+        if available and count > 0:
+            try:
+                probe = torch.ones((32,), device="cuda:0", dtype=torch.float32)
+                observed = float((probe * 2.0).sum().item())
+                torch.cuda.synchronize()
+                if observed != 64.0:
+                    raise RuntimeError("CUDA_EXECUTION_RESULT_INVALID")
+                execution_ready = True
+            except Exception as exc:
+                execution_ready = False
+                execution_error = _cuda_execution_failure_code(exc)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
         return {
             "available": available,
             "device_count": count,
             "bf16_supported": bool(torch.cuda.is_bf16_supported()) if available else False,
             "torch_cuda": str(torch.version.cuda or "none"),
+            "driver_version": driver_version,
+            "execution_ready": execution_ready,
+            "execution_error": execution_error,
             "devices": devices,
         }
     except Exception:
@@ -140,9 +204,11 @@ def probe_qwen_cuda() -> dict[str, Any]:
             "device_count": 0,
             "bf16_supported": False,
             "torch_cuda": "unavailable",
+            "driver_version": driver_version,
+            "execution_ready": False,
+            "execution_error": "QWEN_CUDA_EXECUTION_FAILED",
             "devices": [],
         }
-
 
 def _capability_tuple(value: str) -> tuple[int, int]:
     try:
@@ -159,6 +225,11 @@ def resolve_qwen_plan(profile_id: str, *, cuda_status: dict[str, Any] | None = N
     status = cuda_status if cuda_status is not None else probe_qwen_cuda()
     if not status.get("available") or int(status.get("device_count") or 0) < 1:
         raise QwenAcceptanceError("QWEN_CUDA_UNAVAILABLE")
+    if status.get("execution_ready") is not True:
+        code = str(status.get("execution_error") or "QWEN_CUDA_EXECUTION_FAILED")
+        if code not in {"QWEN_CUDA_DRIVER_INCOMPATIBLE", "QWEN_CUDA_EXECUTION_FAILED"}:
+            code = "QWEN_CUDA_EXECUTION_FAILED"
+        raise QwenAcceptanceError(code)
     devices = status.get("devices") or []
     first = devices[0] if isinstance(devices, list) and devices else {}
     capability = str(first.get("compute_capability") or "")
@@ -177,6 +248,10 @@ def _download_snapshot(
     if not profile.revision:
         raise QwenAcceptanceError("QWEN_MODEL_REVISION_REQUIRED")
     if downloader is None:
+        # Keep individual Hugging Face network reads finite. The full snapshot may
+        # legitimately take much longer and remains resumable on the next attempt.
+        os.environ["HF_HUB_ETAG_TIMEOUT"] = "15"
+        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
         try:
             from huggingface_hub import snapshot_download
         except ImportError as exc:
@@ -187,6 +262,25 @@ def _download_snapshot(
     except Exception as exc:
         raise QwenAcceptanceError("QWEN_MODEL_DOWNLOAD_FAILED") from exc
     shutil.rmtree(target / ".cache", ignore_errors=True)
+
+
+def _resumable_model_staging(downloads: Path, directory: str) -> Path:
+    candidates: list[tuple[float, Path]] = []
+    for candidate in downloads.glob(f"{directory}-*.partial"):
+        if not candidate.is_dir():
+            continue
+        try:
+            modified = candidate.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((modified, candidate))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        chosen = candidates[0][1]
+        for _, stale in candidates[1:]:
+            shutil.rmtree(stale, ignore_errors=True)
+        return chosen
+    return downloads / f"{directory}-{uuid4().hex}.partial"
 
 
 def prepare_qwen_model(
@@ -201,13 +295,16 @@ def prepare_qwen_model(
     target = model_path(models_root, profile)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise QwenAcceptanceError("QWEN_MODEL_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, profile)
+        except ModelRegistryError as exc:
+            raise QwenAcceptanceError("QWEN_MODEL_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{profile.directory}-{uuid4().hex}.partial"
-    staging.mkdir(parents=False, exist_ok=False)
+    staging = _resumable_model_staging(downloads, profile.directory)
+    staging.mkdir(parents=False, exist_ok=True)
     try:
         _download_snapshot(profile, staging, downloader=downloader)
         missing = [name for name in profile.required_files if not (staging / name).is_file()]
@@ -217,6 +314,10 @@ def prepare_qwen_model(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except QwenAcceptanceError as exc:
+        if exc.code != "QWEN_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -231,13 +332,16 @@ def prepare_qwen_aligner(
     target = model_path(models_root, ALIGNER_PROFILE)
     if state["status"] == "ready":
         return target
-    if target.exists():
-        raise QwenAcceptanceError("QWEN_ALIGNER_REPAIR_REQUIRED")
+    if target.exists() or target.is_symlink():
+        try:
+            reset_model_install(models_root, ALIGNER_PROFILE)
+        except ModelRegistryError as exc:
+            raise QwenAcceptanceError("QWEN_ALIGNER_REPAIR_FAILED") from exc
 
     downloads = models_root.resolve() / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    staging = downloads / f"{ALIGNER_DIRECTORY}-{uuid4().hex}.partial"
-    staging.mkdir(parents=False, exist_ok=False)
+    staging = _resumable_model_staging(downloads, ALIGNER_DIRECTORY)
+    staging.mkdir(parents=False, exist_ok=True)
     try:
         _download_snapshot(ALIGNER_PROFILE, staging, downloader=downloader)
         missing = [name for name in ALIGNER_PROFILE.required_files if not (staging / name).is_file()]
@@ -247,6 +351,10 @@ def prepare_qwen_aligner(
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, target)
         return target
+    except QwenAcceptanceError as exc:
+        if exc.code != "QWEN_MODEL_DOWNLOAD_FAILED":
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -324,6 +432,46 @@ def _torch_dtype(torch: Any, name: str) -> Any:
         raise QwenAcceptanceError("QWEN_DTYPE_UNAVAILABLE") from exc
 
 
+def _qwen_inference_failure_code(exc: BaseException) -> str:
+    value = f"{type(exc).__name__}: {exc}".casefold()
+    if any(
+        marker in value
+        for marker in (
+            "driver version is insufficient",
+            "cuda driver version is insufficient",
+            "forward compatibility was attempted",
+            "unsupported display driver",
+        )
+    ):
+        return "QWEN_CUDA_DRIVER_INCOMPATIBLE"
+    if any(
+        marker in value
+        for marker in (
+            "out of memory",
+            "cuda_error_out_of_memory",
+            "cublas_status_alloc_failed",
+            "failed to allocate",
+            "not enough memory",
+        )
+    ):
+        return "QWEN_ASR_GPU_MEMORY_EXHAUSTED"
+    if any(
+        marker in value
+        for marker in (
+            "cuda error",
+            "device-side assert",
+            "cublas",
+            "cudnn",
+        )
+    ):
+        return "QWEN_ASR_CUDA_FAILED"
+    if isinstance(exc, (AttributeError, TypeError)):
+        return "QWEN_ASR_RUNTIME_API_FAILED"
+    if isinstance(exc, ValueError):
+        return "QWEN_ASR_INPUT_FAILED"
+    return "QWEN_ASR_INFERENCE_FAILED"
+
+
 def run_qwen_asr_sample(
     model_root: Path,
     audio_path: Path,
@@ -343,7 +491,7 @@ def run_qwen_asr_sample(
         load_started = time.monotonic()
         processor = AutoProcessor.from_pretrained(str(model_root), local_files_only=True)
         model = AutoModelForMultimodalLM.from_pretrained(
-            str(model_root), dtype=dtype, device_map="auto", local_files_only=True
+            str(model_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
         )
         load_seconds = max(time.monotonic() - load_started, 0.0)
         if not _model_is_cuda_only(model):
@@ -355,7 +503,7 @@ def run_qwen_asr_sample(
         )
         inputs = inputs.to(model.device, model.dtype)
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=2048)
+            output_ids = model.generate(**inputs, max_new_tokens=QWEN_ACCEPTANCE_MAX_NEW_TOKENS)
         generated_ids = output_ids[:, inputs["input_ids"].shape[1] :]
         parsed = processor.decode(generated_ids, return_format="parsed")[0]
         inference_seconds = max(time.monotonic() - inference_started, 0.0)
@@ -373,7 +521,7 @@ def run_qwen_asr_sample(
     except QwenAcceptanceError:
         raise
     except Exception as exc:
-        raise QwenAcceptanceError("QWEN_ASR_INFERENCE_FAILED") from exc
+        raise QwenAcceptanceError(_qwen_inference_failure_code(exc)) from exc
     finally:
         model = None
         gc.collect()
@@ -402,7 +550,7 @@ def run_qwen_alignment_sample(
         load_started = time.monotonic()
         processor = AutoProcessor.from_pretrained(str(aligner_root), local_files_only=True)
         model = AutoModelForTokenClassification.from_pretrained(
-            str(aligner_root), dtype=dtype, device_map="auto", local_files_only=True
+            str(aligner_root), dtype=dtype, device_map={"": "cuda:0"}, local_files_only=True
         )
         load_seconds = max(time.monotonic() - load_started, 0.0)
         if not _model_is_cuda_only(model):
@@ -445,6 +593,14 @@ def run_qwen_alignment_sample(
     except QwenAcceptanceError:
         raise
     except Exception as exc:
+        code = _qwen_inference_failure_code(exc)
+        if code in {
+            "QWEN_CUDA_DRIVER_INCOMPATIBLE",
+            "QWEN_ASR_GPU_MEMORY_EXHAUSTED",
+            "QWEN_ASR_CUDA_FAILED",
+            "QWEN_ASR_RUNTIME_API_FAILED",
+        }:
+            raise QwenAcceptanceError(code) from exc
         raise QwenAcceptanceError("QWEN_ALIGNMENT_FAILED") from exc
     finally:
         model = None

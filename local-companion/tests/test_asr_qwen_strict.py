@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tda_companion.asr_models import get_profile
-from tda_companion.asr_qwen import AudioWindow, QwenRuntimeError
+from tda_companion.asr_qwen import AudioWindow, QWEN_WINDOW_SECONDS, QwenRuntimeError
 from tda_companion.asr_qwen_strict import (
     QWEN_WINDOW_OVERLAP_SECONDS,
     _owned_words,
@@ -63,8 +63,9 @@ def _aligner_prepare(_models_root: Path):
 
 
 def _two_windows(_path: Path):
-    yield AudioWindow(index=1, start=0.0, end=180.0, audio="w1")
-    yield AudioWindow(index=2, start=174.0, end=300.0, audio="w2")
+    stride = QWEN_WINDOW_SECONDS - QWEN_WINDOW_OVERLAP_SECONDS
+    yield AudioWindow(index=1, start=0.0, end=QWEN_WINDOW_SECONDS, audio="w1")
+    yield AudioWindow(index=2, start=stride, end=stride + 46.0, audio="w2")
 
 
 def test_strict_qwen_fails_instead_of_publishing_window_fallback(tmp_path: Path):
@@ -100,11 +101,13 @@ def test_strict_qwen_fails_instead_of_publishing_window_fallback(tmp_path: Path)
 
 def test_overlap_ownership_assigns_boundary_words_once():
     overlap = QWEN_WINDOW_OVERLAP_SECONDS
-    first = AudioWindow(index=1, start=0.0, end=180.0, audio=None)
-    second = AudioWindow(index=2, start=174.0, end=300.0, audio=None)
+    stride = QWEN_WINDOW_SECONDS - overlap
+    first = AudioWindow(index=1, start=0.0, end=QWEN_WINDOW_SECONDS, audio=None)
+    second = AudioWindow(index=2, start=stride, end=stride + 46.0, audio=None)
+    boundary = stride + overlap / 2.0
     words = [
-        TranscriptWord(text="left", start=176.0, end=177.0),
-        TranscriptWord(text="right", start=177.5, end=178.5),
+        TranscriptWord(text="left", start=boundary - 1.0, end=boundary - 0.2),
+        TranscriptWord(text="right", start=boundary + 0.2, end=boundary + 1.0),
     ]
 
     owned_first = _owned_words(words, first, first=True, last=False, overlap_seconds=overlap)

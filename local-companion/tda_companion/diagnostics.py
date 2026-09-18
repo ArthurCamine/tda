@@ -317,10 +317,11 @@ def _qwen_runtime_check(paths: CompanionPaths) -> dict[str, Any]:
         first = devices[0] if devices and isinstance(devices[0], dict) else {}
         gpu_name = str(first.get("name") or "—")
         capability = str(first.get("compute_capability") or "—")
+        driver = str(value.get("driver_version") or "—")
         detail = (
             f"v{version} · Torch {packages.get('torch', '—')} · "
             f"Transformers {packages.get('transformers', '—')} · CUDA {value.get('torch_cuda', '—')} · "
-            f"{gpu_name} · CC {capability}"
+            f"driver {driver} · {gpu_name} · CC {capability}"
         )
         if value.get("cuda_available") is not True or not devices:
             return _check(
@@ -328,6 +329,16 @@ def _qwen_runtime_check(paths: CompanionPaths) -> dict[str, Any]:
                 "warning",
                 "Runtime Qwen íntegro, mas CUDA não está disponível",
                 detail,
+            )
+        if value.get("cuda_execution_ready") is not True:
+            execution_error = str(
+                value.get("cuda_execution_error") or "QWEN_CUDA_EXECUTION_FAILED"
+            )
+            return _check(
+                "qwen_runtime",
+                "fail",
+                "Runtime Qwen reconhece a GPU, mas a execução CUDA falhou",
+                f"{detail} · {execution_error}",
             )
         try:
             major, minor = capability.split(".", 1)

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from tda_companion.api import create_app
+from tda_companion.asr_models import get_profile, model_path, write_install_marker
+from tda_companion.asr_runtime import install_whisper_runtime_archive
 from tda_companion.craig import ingest_craig_zip
+from tda_companion.runtime_compat import MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION
 from tda_companion.store import Store
 
 TOKEN = "c" * 43
@@ -27,6 +31,28 @@ def _stage(data_root: Path, source_id: str = "craig-source") -> None:
     ingest_craig_zip(source, data_root / "staging" / source_id)
 
 
+def _prepare_whisper(tmp_path: Path, profile_id: str = "whisper-turbo") -> None:
+    archive = tmp_path / "whisper-runtime.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+        bundle.writestr("TDAWhisperWorker.exe", b"worker")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    install_whisper_runtime_archive(
+        archive,
+        tmp_path / "Runtime",
+        version=MIN_COMPATIBLE_WHISPER_RUNTIME_VERSION,
+        expected_sha256=digest,
+    )
+
+    profile = get_profile(profile_id)
+    target = model_path(tmp_path / "Models", profile)
+    target.mkdir(parents=True, exist_ok=True)
+    for index, name in enumerate(profile.required_files, start=1):
+        file = target / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(f"{profile_id}:{index}".encode())
+    write_install_marker(target, profile)
+
+
 def _body(source_id: str = "craig-source") -> dict:
     return {
         "kind": "transcription.craig",
@@ -44,6 +70,7 @@ def test_api_queues_staged_craig_with_real_track_count_and_redacted_context(tmp_
     data_root = tmp_path / "Data"
     data_root.mkdir()
     _stage(data_root)
+    _prepare_whisper(tmp_path)
     app = create_app(data_root, TOKEN, {ORIGIN}, run_worker=False, models_root=tmp_path / "Models")
 
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
@@ -62,7 +89,7 @@ def test_api_queues_staged_craig_with_real_track_count_and_redacted_context(tmp_
         }
         assert "glossary" not in str(job)
         assert "campanha principal" not in str(job)
-        assert "transcription.craig" not in client.get("/api/v1/capabilities", headers=HEADERS).json()["capabilities"]
+        assert "transcription.craig" in client.get("/api/v1/capabilities", headers=HEADERS).json()["capabilities"]
 
 
 def test_api_rejects_local_paths_unapproved_qwen_and_missing_staged_source(tmp_path: Path):

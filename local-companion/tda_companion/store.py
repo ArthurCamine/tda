@@ -76,6 +76,44 @@ class Store:
             (job_id, code, utc_now(), level, payload),
         )
 
+    def record_worker_event(
+        self,
+        job_id,
+        attempt,
+        code,
+        data=None,
+        *,
+        level="info",
+    ):
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,96}", code):
+            raise Conflict("WORKER_EVENT_CODE_INVALID")
+        if level not in {"info", "warning", "error"}:
+            raise Conflict("WORKER_EVENT_LEVEL_INVALID")
+        payload = data if isinstance(data, dict) else {}
+        if len(payload) > 32:
+            raise Conflict("WORKER_EVENT_DATA_INVALID")
+        clean = {}
+        for key, value in payload.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key):
+                raise Conflict("WORKER_EVENT_DATA_INVALID")
+            if value is None or isinstance(value, (bool, int, float)):
+                clean[key] = value
+            elif isinstance(value, str) and len(value) <= 256:
+                clean[key] = value
+            else:
+                raise Conflict("WORKER_EVENT_DATA_INVALID")
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT status,attempt FROM jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] != "running" or row["attempt"] != attempt:
+                return False
+            self.event(db, job_id, code, clean, level=level)
+            return True
+
     def recover(self):
         with self.tx() as db:
             for row in db.execute("SELECT id FROM jobs WHERE status='running'").fetchall():
@@ -113,6 +151,22 @@ class Store:
             context=context,
         )
 
+    @staticmethod
+    def _transcription_work_signature(body):
+        if body.get("kind") != "transcription.craig":
+            return None
+        return sha256_json(
+            {
+                "kind": "transcription.craig",
+                "source_id": body.get("source_id"),
+                "profile_id": body.get("profile_id"),
+                "glossary": body.get("glossary", ""),
+                "context": body.get("context", ""),
+                "cpu": bool(body.get("cpu", False)),
+                "units": body.get("units"),
+            }
+        )
+
     def submit(self, key, body):
         signature = sha256_json(body)
         with self.tx() as db:
@@ -121,6 +175,39 @@ class Store:
                 if row["signature"] != signature:
                     raise Conflict("IDEMPOTENCY_CONFLICT")
                 return self.dto(row)
+            if body.get("kind") == "transcription.craig":
+                active = db.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE signature=? AND status IN ('queued','running')
+                    ORDER BY updated DESC
+                    LIMIT 1
+                    """,
+                    (signature,),
+                ).fetchone()
+                if active:
+                    self.event(
+                        db,
+                        active["id"],
+                        "DUPLICATE_SUBMISSION_REUSED",
+                        {"status": active["status"]},
+                    )
+                    return self.dto(active)
+
+                requested_work = self._transcription_work_signature(body)
+                for candidate in db.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status IN ('queued','running')
+                    ORDER BY updated DESC
+                    """
+                ).fetchall():
+                    candidate_body = json.loads(candidate["body"])
+                    if (
+                        candidate_body.get("kind") == "transcription.craig"
+                        and self._transcription_work_signature(candidate_body) == requested_work
+                    ):
+                        raise Conflict("TRANSCRIPTION_WORK_ALREADY_ACTIVE")
             units = body.get("units")
             if isinstance(units, bool) or not isinstance(units, int) or units < 1:
                 raise Conflict("JOB_UNITS_INVALID")
@@ -185,6 +272,21 @@ class Store:
             else:
                 if status not in ("failed", "interrupted"):
                     raise Conflict("JOB_NOT_RETRYABLE")
+                if body["kind"] == "transcription.craig":
+                    requested_work = self._transcription_work_signature(body)
+                    for candidate in db.execute(
+                        """
+                        SELECT body FROM jobs
+                        WHERE id<>? AND status IN ('queued','running')
+                        """,
+                        (job_id,),
+                    ).fetchall():
+                        candidate_body = json.loads(candidate["body"])
+                        if (
+                            candidate_body.get("kind") == "transcription.craig"
+                            and self._transcription_work_signature(candidate_body) == requested_work
+                        ):
+                            raise Conflict("TRANSCRIPTION_WORK_ALREADY_ACTIVE")
                 status = "queued"
                 # Real ASR checkpoint reuse is not wired yet. Reset progress instead
                 # of pretending that a partial transcript can resume safely.

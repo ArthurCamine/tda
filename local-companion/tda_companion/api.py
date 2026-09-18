@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import VERSION
+from .asr_models import get_profile, inspect_model_install
 from .asr_runtime import inspect_whisper_runtime
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
@@ -220,6 +221,33 @@ def create_app(
                                 "Worker stage changed",
                                 {"job_id": job_id, "stage": stage},
                             )
+                            return
+                        if message.type == "event":
+                            code = str(message.payload.get("code") or "WORKER_EVENT")[:96]
+                            data = {
+                                key: value
+                                for key, value in message.payload.items()
+                                if key != "code"
+                            }
+                            store.record_worker_event(
+                                job_id,
+                                attempt,
+                                code,
+                                data,
+                            )
+                            if code in {
+                                "MODEL_DOWNLOAD_PROGRESS",
+                                "QWEN_WINDOW_TRANSCRIBED",
+                                "ASR_CHECKPOINT_REUSED",
+                                "ASR_CHECKPOINT_SAVED",
+                            }:
+                                log(
+                                    "info",
+                                    "worker",
+                                    code,
+                                    "Worker reported progress detail",
+                                    {"job_id": job_id, **data},
+                                )
 
                     try:
                         if body["kind"] == "synthetic.fixture":
@@ -435,7 +463,14 @@ def create_app(
         profiles: list[str] = []
         whisper = inspect_whisper_runtime(resolved_runtime_root, verify_worker=True)
         if whisper.get("status") == "ready":
-            profiles.extend(["whisper-turbo", "whisper-detailed"])
+            for profile_id in ("whisper-turbo", "whisper-detailed"):
+                model = inspect_model_install(
+                    resolved_models_root,
+                    get_profile(profile_id),
+                    verify_hash=False,
+                )
+                if model.get("status") == "ready":
+                    profiles.append(profile_id)
         qwen_profiles = ready_qwen_profiles(
             resolved_state_root,
             resolved_runtime_root,
@@ -528,6 +563,8 @@ def create_app(
         payload = body.model_dump()
         if body.kind == "transcription.craig":
             if body.profile_id.startswith("qwen-"):
+                # Qwen is fail-closed before consulting the staged source: an
+                # unaccepted GPU/profile must not trigger source filesystem work.
                 if body.cpu:
                     raise Conflict("QWEN_CPU_UNSUPPORTED")
                 gate = inspect_qwen_physical_gate(
@@ -538,10 +575,30 @@ def create_app(
                 )
                 if gate.get("ready") is not True:
                     raise Conflict("QWEN_PHYSICAL_ACCEPTANCE_REQUIRED")
-            try:
-                _, package = staged_package(body.source_id, verify_tracks=False)
-            except CraigPackageError as exc:
-                raise Conflict(str(exc)) from None
+                try:
+                    _, package = staged_package(body.source_id, verify_tracks=False)
+                except CraigPackageError as exc:
+                    raise Conflict(str(exc)) from None
+            else:
+                # Whisper keeps source validation first so a missing/invalid Craig
+                # package is reported deterministically even on an unprepared PC.
+                try:
+                    _, package = staged_package(body.source_id, verify_tracks=False)
+                except CraigPackageError as exc:
+                    raise Conflict(str(exc)) from None
+                whisper = inspect_whisper_runtime(
+                    resolved_runtime_root,
+                    verify_worker=True,
+                )
+                if whisper.get("status") != "ready":
+                    raise Conflict("WHISPER_RUNTIME_UNAVAILABLE")
+                model = inspect_model_install(
+                    resolved_models_root,
+                    get_profile(body.profile_id),
+                    verify_hash=False,
+                )
+                if model.get("status") != "ready":
+                    raise Conflict("WHISPER_MODEL_PREPARATION_REQUIRED")
             payload["units"] = len(package.tracks)
         value = store.submit(idempotency_key, payload)
         worker_wake.set()

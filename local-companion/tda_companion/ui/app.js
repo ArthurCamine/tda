@@ -9,7 +9,12 @@
   let selectedProfileId = null;
   let processBusy = false;
   let submittedJobId = null;
+  let submittedJobStatus = null;
   let lastConnectionState = null;
+  let preparationTimer = null;
+  let preparationPollBusy = false;
+  let preparationLocalStartedAt = null;
+  let lastPreparationStatus = null;
 
   const FRIENDLY_ERRORS = {
     CRAIG_FILE_PICKER_UNAVAILABLE: "O seletor de arquivos do Windows não está disponível.",
@@ -19,18 +24,39 @@
     CRAIG_SOURCE_CHANGED: "O arquivo mudou enquanto era lido. Selecione-o novamente.",
     CRAIG_UPLOAD_SIZE_LIMIT: "A sessão excede o limite local de tamanho.",
     TRANSCRIPTION_PREPARATION_BLOCKED_BY_RUNNING_JOB: "Espere o trabalho atual terminar antes de preparar outro perfil.",
+    TRANSCRIPTION_PREPARATION_ALREADY_RUNNING: "Já existe uma preparação de perfil em andamento neste Companion.",
+    TRANSCRIPTION_WORK_ALREADY_ACTIVE: "Esta mesma transcrição já está ativa em outra tela ou sessão. Acompanhe o trabalho existente em vez de criar uma cópia.",
+    MAINTENANCE_BLOCKED_BY_TRANSCRIPTION_PREPARATION: "Aguarde a preparação do perfil terminar antes de atualizar ou remover o Companion.",
     RUNTIME_UPDATE_BLOCKED_BY_RUNNING_JOB: "O runtime não pode ser alterado enquanto há um trabalho em execução.",
     QWEN_RUNTIME_UNAVAILABLE: "O runtime Qwen ainda não está disponível.",
     QWEN_RUNTIME_LONG_GATE_REQUIRED: "O runtime Qwen instalado é antigo e precisa ser atualizado.",
     QWEN_CUDA_UNAVAILABLE: "O Qwen não encontrou CUDA disponível nesta máquina.",
-    QWEN_ACCEPTANCE_AUDIO_TOO_SHORT: "Nenhuma faixa possui 180 segundos úteis para validar o Qwen.",
+    QWEN_CUDA_DRIVER_INCOMPATIBLE: "A RTX foi encontrada, mas o driver NVIDIA não consegue executar o runtime CUDA deste Qwen. Atualize o driver NVIDIA e tente novamente.",
+    QWEN_CUDA_EXECUTION_FAILED: "A RTX foi encontrada, mas uma operação CUDA real falhou antes de carregar o modelo.",
+    QWEN_ACCEPTANCE_AUDIO_TOO_SHORT: "Nenhuma faixa possui 60 segundos úteis para validar o Qwen.",
     QWEN_ACCEPTANCE_NO_SPEECH_RECOGNIZED: "A amostra escolhida não teve fala suficiente. Tente outra sessão.",
     QWEN_MODEL_DOWNLOAD_FAILED: "Não foi possível baixar o modelo Qwen.",
     QWEN_MODEL_REPAIR_REQUIRED: "O modelo Qwen local precisa de reparo.",
+    QWEN_MODEL_REPAIR_FAILED: "O Companion não conseguiu substituir automaticamente o modelo Qwen local inválido.",
     QWEN_ALIGNER_REPAIR_REQUIRED: "O alinhador Qwen local precisa de reparo.",
+    QWEN_ALIGNER_REPAIR_FAILED: "O Companion não conseguiu substituir automaticamente o alinhador Qwen local inválido.",
     QWEN_MODEL_NOT_GPU_RESIDENT: "O modelo Qwen não coube integralmente na GPU.",
     QWEN_ALIGNER_NOT_GPU_RESIDENT: "O alinhador Qwen não coube integralmente na GPU.",
+    QWEN_ASR_GPU_MEMORY_EXHAUSTED: "O Qwen ficou sem VRAM durante a inferência. Feche outros usos da GPU ou tente o perfil Qwen equilibrado.",
+    QWEN_ASR_CUDA_FAILED: "A execução CUDA do Qwen falhou durante a inferência.",
+    QWEN_ASR_RUNTIME_API_FAILED: "O runtime Qwen encontrou uma incompatibilidade de API durante a inferência.",
+    QWEN_ASR_INPUT_FAILED: "O runtime Qwen rejeitou o formato ou o tamanho da amostra de áudio.",
+    QWEN_ALIGNMENT_FAILED: "O Qwen transcreveu a amostra, mas o alinhamento por palavra falhou.",
+    QWEN_ASR_INFERENCE_FAILED: "A inferência Qwen falhou. Consulte os logs da preparação para o estágio exato.",
     QWEN_ACCEPTANCE_GPU_NAME_MISMATCH: "O gate físico não foi executado na RTX 4070 esperada.",
+    WHISPER_RUNTIME_UNAVAILABLE: "O runtime Whisper compatível ainda não está pronto.",
+    WHISPER_MODEL_DOWNLOAD_FAILED: "Não foi possível baixar o modelo Whisper. Verifique a conexão e tente novamente; o download pode ser retomado no próximo preparo.",
+    WHISPER_MODEL_DOWNLOAD_INCOMPLETE: "O download do modelo Whisper terminou incompleto e foi rejeitado.",
+    WHISPER_MODEL_INTEGRITY_FAILED: "O modelo Whisper baixado não passou na verificação de integridade.",
+    WHISPER_MODEL_REPAIR_FAILED: "O Companion não conseguiu substituir automaticamente o modelo Whisper local inválido.",
+    WHISPER_MODEL_PREPARATION_TIMEOUT: "A preparação do modelo Whisper excedeu o limite de tempo.",
+    WHISPER_MODEL_PREPARATION_NOT_VISIBLE: "O modelo Whisper foi preparado, mas o Agent ainda não o reconheceu como pronto.",
+    WHISPER_MODEL_PREPARATION_REQUIRED: "O modelo Whisper ainda precisa ser preparado antes de criar o trabalho.",
     AGENT_CONNECTION_REFUSED: "O Agent local não está respondendo.",
     AGENT_CONNECTION_TIMEOUT: "O Agent local demorou demais para responder.",
     AGENT_CONNECTION_FAILED: "Não foi possível conectar ao Agent local.",
@@ -110,6 +136,200 @@
     pill.textContent = state === "success" ? "Pronto" : state === "busy" ? "Processando" : state === "warning" ? "Atenção" : "Aguardando sessão";
   }
 
+  const PREPARATION_STAGES = {
+    whisper: [
+      ["runtime", "Runtime", "Baixar, verificar e instalar"],
+      ["whisper_model", "Modelo Whisper", "Baixar e verificar o modelo selecionado"],
+      ["verify", "Verificação", "Confirmar perfil no Agent"],
+      ["complete", "Pronto", "Liberar processamento"],
+    ],
+    qwen3: [
+      ["runtime", "Runtime", "Baixar e verificar dependências"],
+      ["qwen_probe", "GPU e CUDA", "Validar worker e RTX"],
+      ["qwen_audio", "Amostra 60 s", "Escolher áudio local"],
+      ["qwen_model_download", "Modelo Qwen", "Baixar e verificar modelo"],
+      ["qwen_gpu_transcription", "Transcrição teste", "Executar 60 s na GPU"],
+      ["qwen_aligner_download", "Alinhador", "Preparar alinhamento por palavra"],
+      ["qwen_gpu_gate", "Gate físico", "Validar transcrição + alinhamento"],
+      ["verify", "Verificação", "Confirmar perfil no Agent"],
+      ["complete", "Pronto", "Liberar processamento"],
+    ],
+  };
+
+  const PREPARATION_EQUIVALENTS = {
+    starting: "runtime",
+    qwen_gate: "qwen_model_download",
+    failed: "failed",
+  };
+
+  function formatElapsed(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`;
+    if (minutes) return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+    return `${secs}s`;
+  }
+
+  function preparationStageRows(engine) {
+    return PREPARATION_STAGES[engine] || PREPARATION_STAGES.qwen3;
+  }
+
+  function renderPreparationProgress(status) {
+    if (!status) return;
+    lastPreparationStatus = status;
+    const panel = $("preparation-progress");
+    const state = status.state || "running";
+    panel.classList.remove("hidden", "completed", "failed");
+    if (state === "completed") panel.classList.add("completed");
+    if (state === "failed") panel.classList.add("failed");
+
+    $("preparation-title").textContent = status.title || "Preparando perfil…";
+    $("preparation-detail").textContent = status.detail || "A preparação continua localmente.";
+    const elapsed = Number(status.elapsed_seconds);
+    const localElapsed = preparationLocalStartedAt === null
+      ? 0
+      : (performance.now() - preparationLocalStartedAt) / 1000;
+    $("preparation-elapsed").textContent = `Tempo: ${formatElapsed(Number.isFinite(elapsed) ? elapsed : localElapsed)}`;
+
+    const bytes = Number(status.current_bytes);
+    $("preparation-bytes").textContent = Number.isFinite(bytes) && bytes > 0
+      ? `${formatBytes(bytes)} recebidos/preparados nesta etapa · downloads verificados antes do uso.`
+      : state === "running"
+        ? "A etapa atual continua localmente. O tempo pode variar no primeiro uso."
+        : state === "completed"
+          ? "Preparação concluída e registrada nos logs."
+          : status.error_code
+            ? `Falha registrada: ${status.error_code}`
+            : "Detalhes técnicos registrados nos logs.";
+
+    const rows = preparationStageRows(status.engine);
+    const target = $("preparation-stage-list");
+    target.replaceChildren();
+    const normalizedStage = PREPARATION_EQUIVALENTS[status.stage] || status.stage;
+    const failedStage = PREPARATION_EQUIVALENTS[status.failure_stage] || status.failure_stage;
+    let currentIndex = rows.findIndex(([id]) => id === normalizedStage);
+    if (state === "completed") currentIndex = rows.length - 1;
+    if (state === "failed") {
+      const failedIndex = rows.findIndex(([id]) => id === failedStage);
+      if (failedIndex >= 0) currentIndex = failedIndex;
+    }
+
+    rows.forEach(([id, label, description], index) => {
+      const item = document.createElement("li");
+      item.className = "preparation-stage";
+      const done = state === "completed" || (currentIndex >= 0 && index < currentIndex);
+      const active = state === "running" && index === currentIndex;
+      const failed = state === "failed" && index === currentIndex;
+      if (done) item.classList.add("done");
+      if (active) item.classList.add("active");
+      if (failed) item.classList.add("failed");
+      const title = document.createElement("b");
+      title.textContent = label;
+      const detail = document.createElement("span");
+      detail.textContent = done ? "Concluído" : active ? "Em andamento" : failed ? "Falhou aqui" : description;
+      item.append(title, detail);
+      target.append(item);
+    });
+
+    if (state === "running") {
+      setProcessStatus(status.title || "Preparando perfil…", status.detail || "A preparação continua localmente.", "busy");
+    }
+  }
+
+  async function pollPreparationStatus() {
+    if (!api || preparationPollBusy || !processBusy) return;
+    preparationPollBusy = true;
+    try {
+      const status = await api.preparation_status();
+      if (status && status.state !== "idle") renderPreparationProgress(status);
+    } catch {
+      // A chamada principal pode estar ocupando o bridge. O cronômetro visual continua
+      // e a próxima sondagem recupera o estágio sem interromper a preparação.
+    } finally {
+      preparationPollBusy = false;
+    }
+  }
+
+  function startPreparationProgress(profile) {
+    if (preparationTimer) window.clearInterval(preparationTimer);
+    preparationLocalStartedAt = performance.now();
+    renderPreparationProgress({
+      active: true,
+      state: "running",
+      engine: profile?.engine || "qwen3",
+      stage: "starting",
+      title: `Preparando ${profile?.label || profile?.id || "perfil"}…`,
+      detail: "Conferindo runtime, modelos e validações necessárias.",
+      elapsed_seconds: 0,
+    });
+    preparationTimer = window.setInterval(() => {
+      const status = lastPreparationStatus;
+      if (status && status.state === "running" && preparationLocalStartedAt !== null) {
+        renderPreparationProgress({
+          ...status,
+          elapsed_seconds: (performance.now() - preparationLocalStartedAt) / 1000,
+        });
+      }
+      pollPreparationStatus();
+    }, 800);
+    pollPreparationStatus();
+  }
+
+  async function finishPreparationProgress() {
+    if (preparationTimer) {
+      window.clearInterval(preparationTimer);
+      preparationTimer = null;
+    }
+    try {
+      const status = await api.preparation_status();
+      if (status && status.state !== "idle") renderPreparationProgress(status);
+    } catch {
+      // O resultado da chamada de preparação ainda será mostrado pelo fluxo principal.
+    }
+  }
+
+  function resetPreparationProgress() {
+    if (preparationTimer) window.clearInterval(preparationTimer);
+    preparationTimer = null;
+    preparationPollBusy = false;
+    preparationLocalStartedAt = null;
+    lastPreparationStatus = null;
+    $("preparation-progress")?.classList.add("hidden");
+  }
+
+  function formatLogContext(context) {
+    if (!context || typeof context !== "object") return "";
+    const labels = {
+      stage: "etapa",
+      profile_id: "perfil",
+      engine: "engine",
+      runtime_version: "runtime",
+      gpu_name: "GPU",
+      track_number: "faixa",
+      track_count: "faixas",
+      audio_window_seconds: "amostra",
+      downloaded_bytes: "baixado",
+      error_code: "erro",
+      failure_stage: "etapa da falha",
+      sequence: "#",
+    };
+    const parts = [];
+    Object.entries(labels).forEach(([key, label]) => {
+      const value = context[key];
+      if (value === undefined || value === null || value === "") return;
+      if (key === "downloaded_bytes" && typeof value === "number") {
+        parts.push(`${label}=${formatBytes(value)}`);
+      } else if (key === "audio_window_seconds" && typeof value === "number") {
+        parts.push(`${label}=${value}s`);
+      } else {
+        parts.push(`${label}=${String(value).slice(0, 120)}`);
+      }
+    });
+    return parts.join(" · ");
+  }
+
   function renderLogRows(target, rows, compact = false) {
     target.replaceChildren();
     const query = ($("log-search")?.value || "").trim().toLocaleLowerCase("pt-BR");
@@ -117,7 +337,7 @@
       ? rows.slice(-8)
       : rows.filter((row) => {
           if (!query) return true;
-          return `${row.code || ""} ${row.component || ""} ${row.message || ""}`
+          return `${row.code || ""} ${row.component || ""} ${row.message || ""} ${formatLogContext(row.context)}`
             .toLocaleLowerCase("pt-BR")
             .includes(query);
         });
@@ -143,9 +363,30 @@
       const component = document.createElement("span");
       component.className = "log-component";
       component.textContent = row.component || "agent";
-      const message = document.createElement("span");
+
+      const message = document.createElement("div");
       message.className = "log-message";
-      message.textContent = row.message || row.code || "Evento";
+      const main = document.createElement("div");
+      main.className = "log-message-main";
+      if (row.code) {
+        const code = document.createElement("span");
+        code.className = "log-code";
+        code.textContent = row.code;
+        main.append(code);
+      }
+      const copy = document.createElement("span");
+      copy.textContent = row.message || row.code || "Evento";
+      main.append(copy);
+      message.append(main);
+
+      const contextText = formatLogContext(row.context);
+      if (contextText) {
+        const context = document.createElement("span");
+        context.className = "log-context";
+        context.textContent = contextText;
+        message.append(context);
+      }
+
       line.append(stamp, level, component, message);
       target.append(line);
     });
@@ -234,6 +475,10 @@
 
   function updateProcessControls() {
     const button = $("start-processing");
+    const submittedActive = ["queued", "running"].includes(submittedJobStatus);
+    document.querySelectorAll('input[name="transcription-profile"]').forEach((input) => {
+      input.disabled = processBusy || submittedActive;
+    });
     if (!selectedSession) {
       button.disabled = true;
       button.textContent = "Preparar e processar";
@@ -247,8 +492,12 @@
       if (!processBusy) setProcessStatus("Escolha a qualidade da transcrição.", "O perfil recomendado prioriza precisão para sessões importantes.");
       return;
     }
-    button.disabled = processBusy;
-    button.textContent = profile.ready ? "Processar sessão" : "Preparar e processar";
+    button.disabled = processBusy || submittedActive;
+    button.textContent = submittedActive
+      ? submittedJobStatus === "queued" ? "Sessão na fila" : "Processando sessão"
+      : submittedJobStatus && ["succeeded", "failed", "interrupted", "cancelled"].includes(submittedJobStatus)
+        ? "Processar novamente"
+        : profile.ready ? "Processar sessão" : "Preparar e processar";
     if (!processBusy && !submittedJobId) {
       if (profile.ready) setProcessStatus("Tudo pronto para processar.", `${profile.label} está disponível nesta máquina.`, "success");
       else setProcessStatus("O perfil será preparado no primeiro uso.", "Runtime, modelo e validações necessárias serão executados antes do job.", "warning");
@@ -256,8 +505,10 @@
   }
 
   function renderSession(session) {
+    if (!processBusy) resetPreparationProgress();
     selectedSession = session;
     submittedJobId = null;
+    submittedJobStatus = null;
     const empty = $("source-empty");
     const summary = $("session-summary");
     const tracks = $("track-list");
@@ -342,12 +593,15 @@
       input.value = profile.id;
       input.checked = profile.id === selectedProfileId;
       input.addEventListener("change", () => {
+        if (processBusy) return;
+        resetPreparationProgress();
         selectedProfileId = profile.id;
         document.querySelectorAll(".profile-option").forEach((node) => {
           node.classList.remove("selected");
         });
         label.classList.add("selected");
         submittedJobId = null;
+        submittedJobStatus = null;
         updateProcessControls();
       });
 
@@ -430,8 +684,9 @@
     let profile = profileById(profileId);
     try {
       if (!profile?.ready) {
-        setProcessStatus(`Preparando ${profile?.label || profileId}…`, profile?.engine === "qwen3" ? "O primeiro uso pode baixar vários GB e executará um gate real de 180 s na GPU." : "O runtime será baixado e verificado antes de criar o job.", "busy");
+        startPreparationProgress(profile);
         const prepared = await api.prepare_transcription_profile(selectedSession.source_id, profileId);
+        await finishPreparationProgress();
         const gpuDetail = prepared?.gpu_name ? ` Gate aprovado em ${prepared.gpu_name}.` : "";
         setProcessStatus("Preparação concluída.", `Perfil validado.${gpuDetail}`, "success");
         await refreshProfiles();
@@ -448,6 +703,7 @@
       );
       submittedJobId = result?.id || null;
       const status = result?.status || "queued";
+      submittedJobStatus = status;
       setProcessStatus(
         status === "running" ? "Transcrição iniciada." : "Sessão adicionada à fila.",
         submittedJobId ? `Job ${submittedJobId} · ${profile?.label || profileId}` : `${profile?.label || profileId} · aguardando o Agent`,
@@ -457,9 +713,14 @@
       await refreshSnapshot();
     } catch (error) {
       submittedJobId = null;
+      await finishPreparationProgress();
       setProcessStatus("Não foi possível iniciar o processamento.", errorText(error), "warning");
       toast(`Processamento não iniciado: ${errorText(error)}`, true);
     } finally {
+      if (preparationTimer) {
+        window.clearInterval(preparationTimer);
+        preparationTimer = null;
+      }
       processBusy = false;
       updateProcessControls();
     }
@@ -470,23 +731,46 @@
     const job = (snapshot.jobs || []).find((item) => item.id === submittedJobId);
     if (!job) return;
     const progress = job.progress || {};
+    submittedJobStatus = job.status;
+    updateProcessControls();
     if (job.status === "queued") {
-      setProcessStatus("Sessão na fila local.", "O Agent iniciará assim que o slot de processamento estiver livre.", "busy");
+      setProcessStatus("Sessão na fila local.", "O Agent iniciará assim que o slot de processamento estiver livre. O botão fica bloqueado para não criar uma cópia da mesma sessão.", "busy");
       return;
     }
     if (job.status === "running") {
-      const detail = typeof progress.completed === "number"
+      const stageDetails = {
+        model_prepare: "Baixando ou verificando o modelo local. A GPU pode ficar em 0% nesta etapa.",
+        model_load: "Modelo pronto; carregando na GPU para iniciar a transcrição.",
+        transcription: "Transcrevendo as faixas da sessão na GPU.",
+        alignment: "Alinhando palavras e timestamps.",
+        cross_track_dedup: "Removendo falas duplicadas entre faixas.",
+        merge_timeline: "Montando a linha do tempo única da sessão.",
+        turn_building: "Organizando os turnos de fala.",
+        result_prepare: "Consolidando e gravando o resultado local.",
+      };
+      const stageDetail = stageDetails[job.stage];
+      const progressDetail = typeof progress.completed === "number"
         ? `${progress.completed} de ${progress.total ?? "—"} ${progress.unit || "itens"}`
-        : "O worker está processando as faixas da sessão.";
-      setProcessStatus("Transcrição em andamento.", detail, "busy");
+        : null;
+      setProcessStatus(
+        job.stage === "model_prepare" ? "Preparando modelo de transcrição…" : "Transcrição em andamento.",
+        [stageDetail, progressDetail].filter(Boolean).join(" · ") || "O worker está processando a sessão.",
+        "busy",
+      );
       return;
     }
     if (job.status === "succeeded") {
       setProcessStatus("Transcrição concluída.", "O resultado local está pronto para o fluxo seguinte do TDA.", "success");
+      updateProcessControls();
       return;
     }
-    if (job.status === "failed" || job.status === "interrupted") {
-      setProcessStatus("O processamento precisa de atenção.", job.error?.code || "Consulte os logs técnicos para detalhes.", "warning");
+    if (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") {
+      setProcessStatus(
+        job.status === "cancelled" ? "Processamento cancelado." : "O processamento precisa de atenção.",
+        job.error?.code || (job.status === "cancelled" ? "Você pode iniciar novamente quando quiser." : "Consulte os logs técnicos para detalhes."),
+        "warning",
+      );
+      updateProcessControls();
     }
   }
 
@@ -857,6 +1141,11 @@
       }
     });
     $("refresh-logs").addEventListener("click", () => refreshLogs(true));
+    $("preparation-open-logs").addEventListener("click", () => {
+      showView("logs");
+      $("log-search").value = "preparation";
+      refreshLogs(false);
+    });
     $("log-level").addEventListener("change", () => refreshLogs(true));
     $("log-search").addEventListener("input", () => renderLogRows($("full-logs"), allLogs, false));
     $("setting-startup").addEventListener("change", (event) => updateSetting("start_with_windows", event.target.checked));
@@ -911,5 +1200,6 @@
   window.addEventListener("pywebviewready", boot, { once: true });
   window.addEventListener("beforeunload", () => {
     if (refreshTimer) window.clearInterval(refreshTimer);
+    if (preparationTimer) window.clearInterval(preparationTimer);
   });
 })();
