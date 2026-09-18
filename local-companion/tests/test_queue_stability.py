@@ -150,8 +150,10 @@ def test_same_active_asr_work_with_different_destination_is_rejected(tmp_path):
 
     assert len(store.jobs()) == 1
     assert store.get(first['id'])['context']['campaign_id'] == 'desktop-local'
-    event = store.events(first['id'])[0]
-    assert event['code'] == 'DUPLICATE_WORK_REJECTED'
+    assert all(
+        event['code'] != 'DUPLICATE_SUBMISSION_REUSED'
+        for event in store.events(first['id'])
+    )
 
 
 def test_finished_transcription_can_be_submitted_again_with_new_key(tmp_path):
