@@ -17,6 +17,7 @@ QWEN_RUNTIME = ROOT / "local-companion" / "runtime" / "qwen-windows-x64.json"
 COMPANION_WORKFLOW = ROOT / ".github" / "workflows" / "companion.yml"
 WHISPER_WORKFLOW = ROOT / ".github" / "workflows" / "whisper-runtime.yml"
 QWEN_WORKFLOW = ROOT / ".github" / "workflows" / "qwen-runtime.yml"
+QWEN_PACKAGE_WORKFLOW = ROOT / ".github" / "workflows" / "qwen-runtime-package.yml"
 
 EXACT = re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s]+)$")
 PYTHON_312 = re.compile(r"^3\.12\.(\d+)$")
@@ -188,6 +189,7 @@ def collect() -> tuple[
         "companion.yml": _workflow_uv_pin(COMPANION_WORKFLOW),
         "whisper-runtime.yml": _workflow_uv_pin(WHISPER_WORKFLOW),
         "qwen-runtime.yml": _workflow_uv_pin(QWEN_WORKFLOW),
+        "qwen-runtime-package.yml": _workflow_uv_pin(QWEN_PACKAGE_WORKFLOW),
     }
     uv_versions = set(uv_sources.values())
     if len(uv_versions) != 1:
