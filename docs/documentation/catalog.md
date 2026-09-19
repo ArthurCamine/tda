@@ -109,6 +109,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | Documento | Owner declarado | Estado declarado | Revisão declarada |
 | --- | --- | --- | --- |
 | [Especificações de features](../features/README.md) | produto + domínios | vivo | 2026-09-15 |
+| [Astel e Noah — recebimento e plano de integração](../features/astel-noah-lores.md) | frontend / integrations/media / editorial | candidato implementado e validado localmente; publicação pendente | 2026-09-19 |
 | [Diários dos personagens](../features/character-diaries.md) | narrativa / frontend | implementado em branch local; publicação pendente | 2026-09-18 |
 | [Feature — Personagens e NPCs](../features/characters-and-npcs.md) | entities/narrative-memory | preparado | 2026-09-06 |
 | [TDA Companion v0.3 — Desktop, Agent e ASR](../features/companion-desktop-asr-v0.3.md) | local-companion / processing | especificação aceita para implementação; estabilização R1–R4 em andamento | 2026-09-13 |
@@ -211,4 +212,4 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 
 ## Cobertura
 
-135 páginas inventariadas, além deste catálogo gerado. 14 sem Owner e 23 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.
+136 páginas inventariadas, além deste catálogo gerado. 14 sem Owner e 23 sem Última revisão no cabeçalho. Corrigir durante revisão real; não preencher datas automaticamente.

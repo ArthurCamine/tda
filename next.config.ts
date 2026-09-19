@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import diaries from "./src/features/diary/catalog.json";
+import standaloneLores from "./src/features/lore/standalone-catalog.json";
 
 const standaloneNoindexLores = ["d", "yllith"] as const;
 const canonicalSupabaseOrigin = "https://dmrqnbdvbkfqzctcerbx.supabase.co";
@@ -62,7 +63,10 @@ const config: NextConfig = {
 	},
 	async rewrites() {
 		return [
-			...standaloneNoindexLores.map((slug) => ({
+			...[
+				...standaloneNoindexLores,
+				...standaloneLores.map(({ slug }) => slug),
+			].map((slug) => ({
 				source: `/lore/${slug}`,
 				destination: `/lore/${slug}/index.html`,
 			})),

@@ -11,6 +11,8 @@ PRs abertas podem conter implementação validada e documentação candidata sem
 
 ## Índice
 
+[Astel e Noah — recebimento e plano de integração](astel-noah-lores.md) — pacotes inventariados, listagem solicitada em `/lore`, rotas e ligações necessárias; integração/publicação pendentes.
+
 [Fidelidade dos pacotes de D e Seika](lore-pack-fidelity.md) — contrato visual e aceite da restauração das páginas independentes.
 
 [Transcrição — runs locais, revisão, comparação e publicação versionada](transcript-review-publication.md) — arquitetura aprovada para manter múltiplos resultados ASR, revisar/comparar antes de publicar, versionar publicações e suportar substituição, restore, unpublish e delete sem sobrescrita acidental.

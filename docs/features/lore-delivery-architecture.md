@@ -76,6 +76,7 @@ Nenhuma lore cria uploader, endpoint operacional ou autorização próprios. A r
 | Lore | Delivery | Listada | Campanha principal | Indexação desejada agora |
 | --- | --- | --- | --- | --- |
 | Pipipi | `app` | Sim | Sim, conforme o projeto existente | Preservar política pública atual |
+| Astel / Noah | `standalone` estática, candidato local | Sim, solicitado | Sem novas entidades/relações; ligações editoriais por slug | Canonical próprio; sem copiar o noindex das lores externas |
 | D | `standalone` estática | Não | Não | Não indexar |
 | Seika | Route Handler standalone legado | Não | Não | Não indexar; alinhar runtime em entrega própria se necessário |
 | Yllith | `standalone` estática planejada | Não | Não | Não indexar |
@@ -137,6 +138,8 @@ Campos mínimos esperados:
 ```
 
 Esse registro responde “como esta lore é entregue e qual é seu estado editorial?”. Sua implementação no código é uma tarefa separada desta decisão documental.
+
+O candidato de [Astel e Noah](astel-noah-lores.md) usa `src/features/lore/standalone-catalog.json` para as duas entradas standalone listadas, seus cards e rewrites. Esse catálogo parcial não migra nem altera o estado das lores anteriores.
 
 ## Futuro multi-jogo
 

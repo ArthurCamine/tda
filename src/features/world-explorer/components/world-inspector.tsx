@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { PublicLink } from "@/components/public-link";
+import { standaloneLoreForEntity } from "@/features/lore/standalone-catalog";
 import type { WorldGraphProjection, WorldNodeDTO } from "../model";
 import { relationLabelFor } from "../projection";
 import {
@@ -66,6 +67,9 @@ export function WorldInspectorContent({
 	editing: boolean;
 }) {
 	const [tab, setTab] = useState<InspectorTab>("overview");
+	const standaloneLore = selected.kind === "entity"
+		? standaloneLoreForEntity(selected.entityType, selected.slug)
+		: null;
 	const relation =
 		focus && selected.id !== focus.id
 			? relationLabelFor(projection, selected.id, focus.id)
@@ -261,6 +265,11 @@ export function WorldInspectorContent({
 				</p>
 			) : (
 				<div className={inspectorStyles.actions}>
+					{standaloneLore ? (
+						<a className={styles.focusAction} href={`/lore/${standaloneLore.slug}`}>
+							Ler a história: {standaloneLore.title}
+						</a>
+					) : null}
 					{selected.route ? (
 						<PublicLink className={`${styles.profileAction} ${inspectorStyles.primaryAction}`} href={selected.route}>
 							Abrir perfil de {selected.label}

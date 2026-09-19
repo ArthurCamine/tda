@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "project": "astel-lore",
+  "namespace": "lore/astel",
+  "bucket": "tda-media-public",
+  "publicOrigin": "https://media.dnd.faysk.dev",
+  "assets": [
+    {
+      "file": "01_origem_shadowfell.webp",
+      "source": "media/sources/astel/01_origem_shadowfell.webp",
+      "bytes": 1670162,
+      "sha256": "b2c640c276d20fae051285a3e4b0b6ee746dbdc42769f096efa448b1937c833a",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "02_chegada_chathold.webp",
+      "source": "media/sources/astel/02_chegada_chathold.webp",
+      "bytes": 1676046,
+      "sha256": "81a3afd7cbd9cf56d8e3ddd7fe1bb59d031c4529a2500fe0c0c4e98359cfbcea",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "03_trio_infernal_mercado.webp",
+      "source": "media/sources/astel/03_trio_infernal_mercado.webp",
+      "bytes": 1829678,
+      "sha256": "6c728dc07fac2a584d2ece63a1f84ab3d93959a50f081377aed1458c3cc01ac6",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "04_encontro_orfina_corrigido.webp",
+      "source": "media/sources/astel/04_encontro_orfina_corrigido.webp",
+      "bytes": 1887748,
+      "sha256": "1f203d7f8408d1fa08b4558dfdafe536a29f0ae4287c133c0a543bf61124927e",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "05_rejeicao_pais_orfina.webp",
+      "source": "media/sources/astel/05_rejeicao_pais_orfina.webp",
+      "bytes": 1719390,
+      "sha256": "905767f729a943b60a343951f74ee73f8fd3515c3c8920ec8e1eda320bb71095",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "06_fuga_para_oerth.webp",
+      "source": "media/sources/astel/06_fuga_para_oerth.webp",
+      "bytes": 1924454,
+      "sha256": "7a92caf85d368bdfe638fd8fc25f4bbbc65d50a49a4ba2dc98e445e708a26f06",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "07_familia_na_fazenda.webp",
+      "source": "media/sources/astel/07_familia_na_fazenda.webp",
+      "bytes": 1805932,
+      "sha256": "1a239f825693163bc2235453cdae0ceaaa1820b0d7f464886607d80eb230a9fc",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "08_grande_seca.webp",
+      "source": "media/sources/astel/08_grande_seca.webp",
+      "bytes": 2049320,
+      "sha256": "181f3d3bee67d90d876ca5cb6943d4cdc9692cf0f8ef63861cbb17d87ba9d4db",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "09_cobranca_impostos.webp",
+      "source": "media/sources/astel/09_cobranca_impostos.webp",
+      "bytes": 1929096,
+      "sha256": "806e4085feb7426e41f45e04acfdbf671f7a17c9816f01a6a1dd3e8a64619b7c",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "10_cacadores_ilegais.webp",
+      "source": "media/sources/astel/10_cacadores_ilegais.webp",
+      "bytes": 1462610,
+      "sha256": "bbc6bd0e659c83f9cd22a65967fb4216963a2693dd419eb7d3a6a05e0bb70e6a",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "11_retorno_para_casa.webp",
+      "source": "media/sources/astel/11_retorno_para_casa.webp",
+      "bytes": 1441746,
+      "sha256": "9db577767ad288f41bad82992a3c6d1816140b96d8cc180c051aeb4a6f392fa9",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "12_promessa_nos_tumulos.webp",
+      "source": "media/sources/astel/12_promessa_nos_tumulos.webp",
+      "bytes": 1754806,
+      "sha256": "68e72e3f899d9403caebb71279edbf040a2a6d29fc52701fe0b3b61cba369c7b",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "13_cinco_anos_de_busca.webp",
+      "source": "media/sources/astel/13_cinco_anos_de_busca.webp",
+      "bytes": 1685650,
+      "sha256": "1bb19aae478541d151713ef021063b0938009aee20f0762d2aa4f3cc43c93af6",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "14_pacto_com_a_voz.webp",
+      "source": "media/sources/astel/14_pacto_com_a_voz.webp",
+      "bytes": 1773454,
+      "sha256": "fa23a186e0b48d6687523afbda9d02e9c58b7780bdf6f6b16e87f1e6fab7e465",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "referencia_visual_astel.webp",
+      "source": "media/sources/astel/referencia_visual_astel.webp",
+      "bytes": 1603800,
+      "sha256": "970130679ae2bd7820f63e4a0882807cfaff047d63788ce8b0d459d480257821",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "social.png",
+      "source": "media/sources/astel/social.png",
+      "bytes": 1344051,
+      "sha256": "95c5052c27bfc5c731e8417bd058873105fc47314ecf6ba71e5f121b4ad79cd6",
+      "contentType": "image/png"
+    }
+  ]
+}

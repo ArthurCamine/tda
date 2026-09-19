@@ -7,6 +7,7 @@ import type {
 	LoreProfileDTO,
 } from "../model";
 import { LoreExperience } from "./lore-experience";
+import { standaloneLoreForEntity } from "../standalone-catalog";
 import styles from "./lore-page.module.css";
 
 type LorePageProps = {
@@ -124,6 +125,7 @@ function LoreBlock({ block }: { block: LoreBlockDTO }) {
 }
 
 export function LorePage({ profile }: LorePageProps) {
+	const standaloneLore = standaloneLoreForEntity(profile.identity.entityType, profile.identity.slug);
 	return (
 		<article className={styles.page}>
 			<LoreExperience
@@ -133,8 +135,11 @@ export function LorePage({ profile }: LorePageProps) {
 			/>
 
 			<div className={styles.shell}>
-				{profile.sections.length ? (
+				{profile.sections.length || standaloneLore ? (
 					<nav className={styles.sectionNav} aria-label="Nesta história">
+						{standaloneLore ? (
+							<a href={`/lore/${standaloneLore.slug}`}>Ler a história: {standaloneLore.title}</a>
+						) : null}
 						{profile.sections.map((section) => (
 							<a key={section.id} href={`#${section.id}`}>
 								{section.title}
