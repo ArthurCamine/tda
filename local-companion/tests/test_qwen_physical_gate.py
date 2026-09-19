@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -217,6 +218,36 @@ def test_gate_fast_path_trusts_receipt_and_full_revalidation_detects_tamper(tmp_
     assert lightweight_model["ready"] is False
     assert lightweight_model["status"] == "stale"
     assert lightweight_model["reason"] == "QWEN_GATE_BINDING_CHANGED"
+
+def test_deep_verification_detects_same_metadata_worker_tamper(tmp_path: Path):
+    state, runtime, models = _prepared(tmp_path)
+    record_qwen_physical_gate(state, runtime, models, _receipt(), profile_id="qwen-fast")
+
+    worker = runtime / "qwen" / MIN_COMPATIBLE_QWEN_RUNTIME_VERSION / "TDAQwenWorker.exe"
+    before = worker.stat()
+    original = worker.read_bytes()
+    replacement = b"x" * len(original)
+    assert replacement != original
+    worker.write_bytes(replacement)
+    os.utime(worker, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    # The fast path intentionally does not promise cryptographic detection when
+    # an attacker preserves every sealed metadata field.
+    assert inspect_qwen_physical_gate(
+        state, runtime, models, profile_id="qwen-fast"
+    )["ready"] is True
+
+    deep = inspect_qwen_physical_gate(
+        state,
+        runtime,
+        models,
+        profile_id="qwen-fast",
+        verify_model_content=True,
+    )
+    assert deep["ready"] is False
+    assert deep["status"] == "stale"
+    assert deep["reason"] == "QWEN_GATE_RUNTIME_NOT_READY"
+
 
 def test_gate_is_per_profile_and_rejects_receipts_with_private_payload(tmp_path: Path):
     state, runtime, models = _prepared(tmp_path)
