@@ -22,6 +22,9 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   publish-rc:
@@ -256,6 +259,45 @@ jobs:
             --output dist/TDARuntime-candidate.json)"
           [[ "$RC_TAG" =~ ^companion-(whisper|qwen)-runtime-rc-v[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$ ]] || exit 1
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Reuse verified runtime digests for provenance subjects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          candidate = json.loads(Path("dist/TDARuntime-candidate.json").read_text(encoding="utf-8"))
+          assets = candidate.get("assets")
+          if not isinstance(assets, list) or not assets:
+              raise SystemExit("RUNTIME_ATTESTATION_ASSETS_INVALID")
+          lines = []
+          for asset in assets:
+              name = asset.get("name") if isinstance(asset, dict) else None
+              digest = asset.get("sha256") if isinstance(asset, dict) else None
+              if (
+                  not isinstance(name, str)
+                  or Path(name).name != name
+                  or not isinstance(digest, str)
+                  or len(digest) != 64
+              ):
+                  raise SystemExit("RUNTIME_ATTESTATION_ASSET_INVALID")
+              lines.append(f"{digest}  {name}")
+          Path("dist/TDARuntime-candidate-checksums.txt").write_text(
+              "\n".join(lines) + "\n",
+              encoding="ascii",
+          )
+          PY
+
+      - name: Attest exact runtime asset digests without re-hashing multi-GB archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/TDARuntime-candidate-checksums.txt
+
+      - name: Attest runtime candidate manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/TDARuntime-candidate.json
 
       - name: Publish or verify immutable prerelease
         shell: bash
