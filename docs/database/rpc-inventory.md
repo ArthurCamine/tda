@@ -225,8 +225,10 @@ Invariantes versionadas:
 
 - exige `campaign.content.edit` + lease vigente de `campaign.world.layout.edit`;
 - valida relation types, entities e relations antes do write factual;
-- rejeita IDs cross-campaign, self-edge, tipo ausente, payload inválido e duplicata ativa incompatível;
-- normaliza endpoints de relation simétrica antes de persistir;
+- rejeita IDs cross-campaign, self-edge, tipo ausente e payload inválido;
+- depois de validar lease exclusivo + graph revision, trata o draft salvo como intenção editorial autoritativa;
+- relações anteriores semanticamente equivalentes são preservadas como histórico não ativo (`superseded`) quando uma edição explícita as substitui, em vez de abortar a publicação por ordem intermediária de escrita;
+- normaliza endpoints de relation simétrica antes de persistir e converge o estado final para uma única relação ativa por identidade semântica;
 - usa `world_graph_heads.revision` para optimistic concurrency;
 - publica layout pela RPC de snapshot na mesma transação;
 - grava snapshot append-only em `world_graph_revisions` e `world_graph.publish` no audit apenas quando o conteúdo factual muda;

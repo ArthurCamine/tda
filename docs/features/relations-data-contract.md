@@ -2,7 +2,7 @@
 
 > Status: fundação física aplicada; provenance/review e vocabulário factual continuam em evolução
 > Owner: narrative-memory / database / security
-> Última revisão: 2026-09-10
+> Última revisão: 2026-09-19
 
 Este documento define a semântica de relações usada pelo World Explorer sem moldar o domínio ao React Flow. A fundação física da #119 foi aplicada no Supabase canônico em 2026-09-10; isso **não** significa que relações reais tenham sido publicadas nem que o fluxo de provenance esteja concluído.
 
@@ -196,7 +196,9 @@ A edição factual fica em `draft_graph` privado até publicação explícita. O
 - valida revision do head;
 - valida IDs/endpoints/tipos/status/visibility;
 - normaliza endpoints simétricos antes de persistir;
-- rejeita duplicata ativa incompatível;
+- depois de validar lease exclusivo + graph revision, trata o draft salvo como intenção editorial autoritativa;
+- quando uma edição explícita substitui uma relação semanticamente equivalente, preserva a anterior como histórico não ativo em vez de abortar a publicação por ordem de escrita;
+- converge o estado publicado para no máximo uma relação ativa por identidade semântica;
 - publica facts + layout na mesma transação SQL;
 - cria snapshot append-only quando o grafo factual muda;
 - grava `world_graph.publish` no audit;
@@ -275,7 +277,7 @@ Exemplos possíveis, sujeitos ao vocabulário real:
 
 A UI pode renderizar uma única edge.
 
-Na implementação #119, endpoints simétricos são normalizados no boundary de publish antes da persistência e duplicatas ativas são rejeitadas. Isso precisa continuar coberto por teste; não confiar na ordenação enviada pelo cliente.
+Na implementação atual, endpoints simétricos são normalizados no boundary de publish antes da persistência. O lease exclusivo e a igualdade de graph revision impedem um segundo editor de vencer por corrida; dentro do draft autorizado, uma edição explícita que colide com uma relação ativa anterior prevalece e a anterior é preservada como histórico não ativo. O resultado publicado continua convergindo para uma única relação ativa por identidade semântica, sem depender da ordem de UUID/JSON enviada pelo cliente.
 
 ### `directed`
 

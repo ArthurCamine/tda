@@ -2,7 +2,7 @@
 
 > Status: implementado + transição em andamento
 > Owner: segurança/dados
-> Última revisão: 2026-09-10
+> Última revisão: 2026-09-19
 > Fonte: schema/advisors do Supabase `dmrqnbdvbkfqzctcerbx`
 
 ## Modelo mental
@@ -302,7 +302,8 @@ Boundary físico revalidado:
 - `acquire_world_graph_draft_atomic`, `save_world_graph_draft_atomic` e `publish_world_edit_state_atomic` são `SECURITY INVOKER`, usam `search_path = pg_catalog, public`, não são executáveis por `anon/authenticated` e são executáveis por `service_role`;
 - autoria factual exige `campaign.content.edit` e um lease vigente de `campaign.world.layout.edit` para a mesma identity/profile/campaign;
 - publicação factual e layout compartilham a mesma transação SQL para evitar estado parcialmente publicado;
-- conflito preserva o rascunho; novo holder não herda draft factual privado do holder anterior.
+- conflito de graph revision preserva o rascunho; novo holder não herda draft factual privado do holder anterior;
+- depois que lease exclusivo + graph revision são validados, a RPC trata o draft salvo como intenção autoritativa daquela sessão: uma relação ativa anterior semanticamente substituída é preservada como histórico não ativo, sem abrir espaço para um segundo escritor nem relaxar capability/provenance.
 
 ### Review/provenance
 

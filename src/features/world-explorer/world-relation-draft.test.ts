@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorldGraphDraft } from "./model";
 import {
 	appendWorldDraftRelation,
+	changeWorldDraftRelationType,
 	reconnectWorldDraftRelation,
 } from "./world-relation-draft";
 
@@ -45,6 +46,26 @@ const draft: WorldGraphDraft = {
 	],
 };
 
+function edge(
+	id: string,
+	source: string,
+	target: string,
+	relationType: "friend" | "mentor",
+): WorldGraphDraft["edges"][number] {
+	return {
+		id,
+		source,
+		target,
+		relationType,
+		labelOverride: null,
+		status: "active",
+		visibility: "private_players",
+		colorOverride: null,
+		lineStyleOverride: null,
+		lineWidthOverride: null,
+	};
+}
+
 describe("World relation draft authoring", () => {
 	it("creates a private relation without mutating the input draft", () => {
 		const next = appendWorldDraftRelation(draft, {
@@ -66,7 +87,7 @@ describe("World relation draft authoring", () => {
 		expect(draft.edges).toHaveLength(0);
 	});
 
-	it("blocks self-links and equivalent symmetric duplicates", () => {
+	it("blocks self-links and equivalent symmetric duplicates on create", () => {
 		expect(
 			appendWorldDraftRelation(draft, {
 				id: "self",
@@ -93,42 +114,53 @@ describe("World relation draft authoring", () => {
 		).toBeNull();
 	});
 
-	it("reconnects an existing edge and rejects a duplicate destination", () => {
+	it("lets the explicitly edited relation win when a type change collides", () => {
+		const withRelations: WorldGraphDraft = {
+			...draft,
+			edges: [edge("edge-1", "a", "b", "mentor"), edge("edge-2", "a", "b", "friend")],
+		};
+
+		const next = changeWorldDraftRelationType(withRelations, "edge-1", "friend");
+
+		expect(next?.edges.find((item) => item.id === "edge-1")).toMatchObject({
+			relationType: "friend",
+			status: "active",
+		});
+		expect(next?.edges.find((item) => item.id === "edge-2")).toMatchObject({
+			status: "archived",
+		});
+	});
+
+	it("reconnects an existing edge and archives an equivalent relation it replaces", () => {
 		const withMentors: WorldGraphDraft = {
 			...draft,
-			edges: [
-				{
-					id: "edge-1",
-					source: "a",
-					target: "b",
-					relationType: "mentor",
-					labelOverride: null,
-					status: "active",
-					visibility: "private_players",
-					colorOverride: null,
-					lineStyleOverride: null,
-					lineWidthOverride: null,
-				},
-				{
-					id: "edge-2",
-					source: "a",
-					target: "c",
-					relationType: "mentor",
-					labelOverride: null,
-					status: "active",
-					visibility: "private_players",
-					colorOverride: null,
-					lineStyleOverride: null,
-					lineWidthOverride: null,
-				},
-			],
+			edges: [edge("edge-1", "a", "b", "mentor"), edge("edge-2", "a", "c", "mentor")],
+		};
+
+		const moved = reconnectWorldDraftRelation(withMentors, "edge-1", "a", "c");
+
+		expect(moved?.edges.find((item) => item.id === "edge-1")).toMatchObject({
+			source: "a",
+			target: "c",
+			status: "active",
+		});
+		expect(moved?.edges.find((item) => item.id === "edge-2")).toMatchObject({
+			status: "archived",
+		});
+	});
+
+	it("still reconnects to a non-conflicting destination", () => {
+		const withMentors: WorldGraphDraft = {
+			...draft,
+			edges: [edge("edge-1", "a", "b", "mentor"), edge("edge-2", "a", "c", "mentor")],
 		};
 
 		const moved = reconnectWorldDraftRelation(withMentors, "edge-1", "b", "c");
-		expect(moved?.edges.find((edge) => edge.id === "edge-1")).toMatchObject({
+
+		expect(moved?.edges.find((item) => item.id === "edge-1")).toMatchObject({
 			source: "b",
 			target: "c",
 		});
-		expect(reconnectWorldDraftRelation(withMentors, "edge-1", "a", "c")).toBeNull();
+		expect(moved?.edges.find((item) => item.id === "edge-2")?.status).toBe("active");
 	});
 });

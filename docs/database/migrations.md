@@ -809,3 +809,33 @@ Compatibilidade e rollback lógico:
 - `TDA_WORLD_CANONICAL_ENABLED` permanece desligado;
 - para rollback, retirar primeiro consumidores que dependam do novo invariante e usar migration corretiva explícita para remover trigger/restaurar a definição revisada do publish RPC;
 - não restaurar automaticamente sources invalidadas: elas foram evidência de uma semântica anterior e exigem nova revisão para voltar a existir.
+
+
+## Reconciliação autoritativa de relações no publish do World
+
+### `20260919162000_world_graph_authoritative_relation_reconcile`
+
+**Estado:** migration versionada nesta correção; aplicação no Supabase canônico ocorre somente pelo Production CD após merge autorizado.
+
+Objetivo:
+
+- alinhar o publish ao contrato já existente de lease exclusivo + `world_graph_heads.revision`: depois que ambos são validados, o draft salvo é a intenção editorial autoritativa daquela sessão;
+- impedir que uma relação antiga ainda `active` bloqueie uma substituição legítima apenas por ordem de UUID/JSON;
+- aplicar relações não ativas primeiro, relações ativas inalteradas em seguida e relações novas/semanticamente alteradas por último;
+- quando a relação autoritativa colidir semanticamente com uma row ativa anterior, preservar a anterior como `superseded` e publicar a nova, sem hard delete;
+- manter no máximo uma relação ativa por identidade semântica ao final da transação;
+- preservar os gates existentes de capability, lease, optimistic concurrency, provenance pública, layout atômico, snapshots e audit.
+
+Motivação observada:
+
+- produção registrou repetidamente `duplicate active relation` em `/mundo` durante uma publicação válida de um editor que já possuía o lease exclusivo;
+- o publisher anterior resolvia conflito olhando o estado físico intermediário linha a linha, então uma relação antiga podia ser encontrada ainda ativa antes que o próprio draft a arquivasse/substituísse;
+- esse comportamento contradizia a serialização já fornecida pelo lease e fazia a transação inteira falhar embora não existisse editor concorrente.
+
+Compatibilidade e recuperação:
+
+- nenhuma tabela, coluna, RLS, policy ou capability é criada/alterada;
+- a assinatura, `SECURITY INVOKER`, `search_path` e grants de `publish_world_edit_state_atomic(...)` permanecem os mesmos;
+- relações históricas não são apagadas; substituições usam lifecycle `superseded`;
+- rollback deve ser feito por migration corretiva posterior restaurando a definição anterior da RPC, sem apagar revisions/audit/relations históricas;
+- o teste sintético cobre explicitamente uma edge nova ativa aparecendo antes da predecessora arquivada no JSON, provando que a publicação não depende mais dessa ordem.

@@ -59,7 +59,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Relacionamentos e ownership de dados](../database/relationships.md) | dados + domínios | vigente | 2026-09-06 |
 | [Inventário de RPCs privilegiadas do Supabase](../database/rpc-inventory.md) | segurança/dados | vigente / revisão de hardening em andamento | Não declarado |
 | [Catálogo do schema Supabase](../database/schema-catalog.md) | dados/Supabase | implementado | 2026-09-06 |
-| [Segurança do banco: Auth, RLS, RBAC, RPCs e grants](../database/security.md) | segurança/dados | implementado + transição em andamento | 2026-09-10 |
+| [Segurança do banco: Auth, RLS, RBAC, RPCs e grants](../database/security.md) | segurança/dados | implementado + transição em andamento | 2026-09-19 |
 | [Log de verificações do banco de produção](../database/verification-log.md) | dados/Supabase | vigente / append-only por intenção | Não declarado |
 
 ## docs/delivery
@@ -130,7 +130,7 @@ Datas e estados são extraídos do cabeçalho, não inferidos do Git. `Não decl
 | [Feature — Músicas e performances](../features/music-performances.md) | narrative-memory/media | preparado/em desenho | 2026-09-06 |
 | [Pipipi — lore cinematográfica pioneira](../features/pipipi-lore.md) | narrative-memory / frontend | implementação, QA e publicação em production concluídos | 2026-09-12 |
 | [Feature — Quests e ganchos](../features/quests-hooks.md) | narrative-memory | preparado/em desenho | 2026-09-06 |
-| [Feature — contrato de dados para relações](../features/relations-data-contract.md) | narrative-memory / database / security | fundação física aplicada; provenance/review e vocabulário factual continuam em evolução | 2026-09-10 |
+| [Feature — contrato de dados para relações](../features/relations-data-contract.md) | narrative-memory / database / security | fundação física aplicada; provenance/review e vocabulário factual continuam em evolução | 2026-09-19 |
 | [Feature — Relações entre entidades e grafo](../features/relations-graph.md) | narrative-memory | fundação física e autoria factual implementadas; provenance/review integrado ao fluxo editorial; dataset público real ainda depende de curadoria e ativação deliberada | 2026-09-16 |
 | [Feature — Busca semântica com fontes](../features/semantic-search.md) | search/narrative-memory | em desenho | 2026-09-06 |
 | [Transcrição — runs locais, revisão, comparação e publicação versionada](../features/transcript-review-publication.md) | Edit / processamento local / transcript-sync | arquitetura aprovada; implementação pendente | 2026-09-15 |

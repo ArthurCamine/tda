@@ -413,6 +413,106 @@ end;
 $$;
 reset role;
 
+-- The exclusive draft is authoritative when it replaces an existing semantic
+-- relation. A new active edge may appear before the archived predecessor in the
+-- JSON array; publication must still retire the predecessor first instead of
+-- raising "duplicate active relation". Keep the regression isolated so the
+-- provenance suite that follows still starts from the canonical revision-1 fixture.
+begin;
+set role service_role;
+do $$
+declare
+  result jsonb;
+  token uuid := '21212121-2121-4212-8212-212121212121';
+  draft jsonb;
+begin
+  result := public.acquire_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token
+  );
+  if result->>'status' <> 'acquired' or (result->>'baseRevision')::bigint <> 1 then
+    raise exception 'replacement fixture must acquire layout revision 1: %', result;
+  end if;
+
+  result := public.acquire_world_graph_draft_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token
+  );
+  if result->>'ok' <> 'true' or (result->>'baseRevision')::bigint <> 1 then
+    raise exception 'replacement fixture must acquire graph revision 1: %', result;
+  end if;
+
+  draft := result->'draftGraph';
+  draft := jsonb_set(
+    draft,
+    '{edges}',
+    jsonb_build_array(
+      jsonb_build_object(
+        'id','17181818-1818-4818-8818-181818181818',
+        'source','17171717-1717-4717-8717-171717171717',
+        'target','10101010-1010-4010-8010-101010101010',
+        'relationType','friend_of',
+        'labelOverride','Amizade corrigida',
+        'status','active',
+        'visibility','review_only',
+        'colorOverride',null,
+        'lineStyleOverride',null,
+        'lineWidthOverride',null
+      ),
+      jsonb_build_object(
+        'id','18181818-1818-4818-8818-181818181818',
+        'source','10101010-1010-4010-8010-101010101010',
+        'target','17171717-1717-4717-8717-171717171717',
+        'relationType','friend_of',
+        'labelOverride','Amigos de viagem',
+        'status','archived',
+        'visibility','review_only',
+        'colorOverride','#66bb88',
+        'lineStyleOverride','dashed',
+        'lineWidthOverride',4
+      )
+    ),
+    true
+  );
+
+  result := public.save_world_graph_draft_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token,
+    draft
+  );
+  if result->>'status' <> 'draft_saved' then
+    raise exception 'replacement draft must save: %', result;
+  end if;
+
+  result := public.publish_world_edit_state_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token
+  );
+  if result->>'ok' <> 'true'
+     or result->>'status' <> 'saved'
+     or (result->>'graphRevision')::bigint <> 2
+     or (result->>'layoutRevision')::bigint <> 1 then
+    raise exception 'authoritative relation replacement failed: %', result;
+  end if;
+
+  if (select status from public.entity_relations where id='18181818-1818-4818-8818-181818181818') <> 'archived'
+     or (select status from public.entity_relations where id='17181818-1818-4818-8818-181818181818') <> 'active'
+     or (select count(*) from public.entity_relations where relation_type_slug='friend_of' and status='active') <> 1 then
+    raise exception 'authoritative replacement did not leave exactly one active relation';
+  end if;
+end;
+$$;
+reset role;
+rollback;
+
 -- Recovery keeps a private factual draft for the same editor after lease expiry.
 set role service_role;
 do $$

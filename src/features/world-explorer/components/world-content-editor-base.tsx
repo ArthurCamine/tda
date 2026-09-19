@@ -13,6 +13,10 @@ import {
 	type WorldRelationFamily,
 	type WorldVisibility,
 } from "../model";
+import {
+	appendWorldDraftRelation,
+	changeWorldDraftRelationType,
+} from "../world-relation-draft";
 import styles from "./world-content-editor.module.css";
 import { WorldEntityMediaEditor } from "./world-entity-media-editor";
 
@@ -247,10 +251,15 @@ export function WorldContentEditor({
 						draft={draft}
 						selectedId={selected?.id ?? null}
 						onCreate={(edge) => {
-							onDraftChange(
-								{ ...draft, edges: [...draft.edges, edge] },
-								"Ligação criada no rascunho.",
-							);
+							const next = appendWorldDraftRelation(draft, {
+								id: edge.id,
+								sourceId: edge.source,
+								targetId: edge.target,
+								relationType: edge.relationType,
+								visibility: edge.visibility,
+							});
+							if (!next) return;
+							onDraftChange(next, "Ligação criada no rascunho.");
 							setEditingRelationId(edge.id);
 						}}
 					/>
@@ -693,7 +702,10 @@ function RelationEditor({
 				label="Tipo"
 				value={edge.relationType}
 				options={typeOptions}
-				onChange={(value) => onChange(updateEdge(draft, edge.id, { relationType: value }))}
+				onChange={(value) => {
+					const next = changeWorldDraftRelationType(draft, edge.id, value);
+					if (next) onChange(next, "Tipo da ligação atualizado no rascunho.");
+				}}
 				ariaLabel="Tipo da ligação selecionada"
 			/>
 			<label>
