@@ -15,6 +15,9 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   publish-rc:
@@ -136,6 +139,17 @@ jobs:
             --output dist/TDACompanion-candidate.json)"
           [[ "$RC_TAG" =~ ^companion-rc-v[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$ ]] || exit 1
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Attest exact Companion candidate bytes
+        if: steps.artifact.outputs.available == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/TDACompanion-x64.msi
+            dist/TDACompanion-x64.msi.sha256
+            dist/TDACompanion-*-windows-x64.zip
+            dist/TDACompanion-payload-manifest.json
+            dist/TDACompanion-candidate.json
 
       - name: Detect existing RC
         if: steps.artifact.outputs.available == 'true'
