@@ -167,3 +167,16 @@
 		transition: none;
 	}
 }
+
+/* Keep the entire vertical artwork, including on hover and narrow screens. */
+.card[data-lore="noah"] .cardBackground {
+	object-fit: contain;
+	object-position: right center;
+	transform: none;
+}
+
+@media (max-width: 650px) {
+	.card[data-lore="noah"] .cardBackground {
+		object-position: center top;
+	}
+}

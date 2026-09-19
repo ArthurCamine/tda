@@ -406,7 +406,8 @@
           "encoder": "sharp 0.35.4; webp lossless effort=6",
           "decodedPixelsEqual": true,
           "consumers": [
-            "index.html: src/preload/data-full"
+            "index.html: src/preload/data-full",
+            "catalog: cover (contain, no hover zoom)"
           ]
         },
         {
@@ -441,8 +442,7 @@
           "masterBytes": 2731228,
           "encoder": "sharp 0.35.4; PNG contain 1200x630; no crop",
           "consumers": [
-            "index.html: og:image/twitter:image",
-            "catalog: cover"
+            "index.html: og:image/twitter:image"
           ]
         }
       ]

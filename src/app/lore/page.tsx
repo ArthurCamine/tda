@@ -26,7 +26,7 @@ export default function LoreIndexRoute() {
 
 			<section className={styles.archive} aria-label="Lores publicadas">
 				{standaloneLores.map((lore) => (
-					<article className={styles.card} key={lore.slug}>
+					<article className={styles.card} key={lore.slug} data-lore={lore.slug}>
 						<Image
 							className={styles.cardBackground}
 							src={lore.cover}

@@ -48,6 +48,8 @@ A branch atual passou a incluir o diário em `public/diario/astel`, seu catálog
 
 Por decisão do usuário em 2026-09-19, o título “Notas do DM” foi substituído por “Perguntas sem resposta” nos dois HTMLs locais, removendo o subtítulo “spoilers e perguntas em aberto”. As perguntas e o comportamento de expansão foram preservados. A alteração editorial está aplicada aos pacotes locais; publicação continua pendente.
 
+Revisão após o preview: os títulos de ganchos, que já vieram assim nos originais, foram trocados a pedido do usuário. Astel usa “Algumas perguntas ainda respiram no escuro.”; Noah usa “Algumas respostas ainda mordem.”. O card de Noah passou a consumir a arte vertical WebP já declarada no manifesto, com `contain` e sem zoom no hover, em vez da imagem social horizontal. A imagem social e suas URLs de compartilhamento permanecem próprias; não foi necessário gerar nem publicar novo asset.
+
 ## Fases, evidências e pendências
 
 - [x] Fontes locais preservadas; arquivos, consumidores e âncoras inventariados.
