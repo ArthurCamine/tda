@@ -50,4 +50,6 @@ test("privileged Preview workflow does not execute repository install/build scri
   assert.equal(preview.includes("vercel build"), false);
   assert.match(preview, /persist-credentials:\s*false/);
   assert.match(preview, /repo\.get\("full_name"\) == os\.environ\["GITHUB_REPOSITORY"\]/);
+  assert.match(preview, /PREVIEW_EXACT_SUCCESSFUL_CI_REQUIRED/);
+  assert.match(preview, /head_sha=\$SOURCE_SHA/);
 });

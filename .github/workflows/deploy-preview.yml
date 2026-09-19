@@ -103,6 +103,41 @@ jobs:
           print("deploy=" + ("true" if deploy else "false"))
           PY
 
+      - name: Require successful CI for exact current PR head
+        if: steps.current.outputs.deploy == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          PR_NUMBER: ${{ steps.source.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$SOURCE_SHA&status=completed&per_page=100" > ci-runs.json
+          python - <<'PY'
+          import json, os
+          value = json.load(open("ci-runs.json", encoding="utf-8"))
+          source = os.environ["SOURCE_SHA"]
+          pr_number = int(os.environ["PR_NUMBER"])
+          matches = []
+          for run in value.get("workflow_runs", []):
+              prs = run.get("pull_requests") or []
+              if (
+                  run.get("name") == "CI"
+                  and run.get("event") == "pull_request"
+                  and run.get("head_sha") == source
+                  and run.get("status") == "completed"
+                  and run.get("conclusion") == "success"
+                  and any(int(pr.get("number") or 0) == pr_number for pr in prs)
+              ):
+                  matches.append(run)
+          if not matches:
+              raise SystemExit("PREVIEW_EXACT_SUCCESSFUL_CI_REQUIRED")
+          print(
+              "PREVIEW_CI_PROVEN "
+              f"pr={pr_number} source={source} run={matches[-1].get('id')}"
+          )
+          PY
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: steps.current.outputs.deploy == 'true'
         with:
@@ -185,15 +220,22 @@ jobs:
           RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
-          vercel curl /api/health --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" > health.json
-          vercel curl /api/version --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" > version.json
-          vercel curl / --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
-          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
-          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
+          # VERCEL_TOKEN is a documented global auth environment variable.
+          # Do not append --token after `vercel curl`: curl subcommands use native
+          # curl option parsing and would forward it to curl itself.
+          vercel curl /api/health --deployment "$DEPLOYMENT_URL" > health.json
+          vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
+          vercel curl "/api/downloads/companion/windows/manifest?channel=rc" --deployment "$DEPLOYMENT_URL" > companion-rc.json
+          vercel curl "/api/downloads/companion/windows/manifest?channel=stable" --deployment "$DEPLOYMENT_URL" > companion-stable.json
+          vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           node --input-type=module -e '
             import fs from "node:fs";
             const health = JSON.parse(fs.readFileSync("health.json", "utf8"));
             const version = JSON.parse(fs.readFileSync("version.json", "utf8"));
+            const rc = JSON.parse(fs.readFileSync("companion-rc.json", "utf8"));
+            const stable = JSON.parse(fs.readFileSync("companion-stable.json", "utf8"));
             const expected = process.env.SOURCE_SHA;
             const release = process.env.RELEASE_ID;
             if (health.ok !== true) throw new Error("Preview health is not ok");
@@ -201,6 +243,12 @@ jobs:
             if (health.commit !== expected) throw new Error("Preview health commit mismatch");
             if (version.commit !== expected) throw new Error("Preview version commit mismatch");
             if (version.release !== release) throw new Error("Preview release mismatch");
+            if (rc.channel !== "rc" || !/^companion-rc-v/.test(rc.tag ?? "")) {
+              throw new Error("Preview Companion RC manifest mismatch");
+            }
+            if (stable.channel !== "stable" || !/^companion-v/.test(stable.tag ?? "")) {
+              throw new Error("Preview Companion Stable manifest mismatch");
+            }
           '
 
       - name: Preview summary
