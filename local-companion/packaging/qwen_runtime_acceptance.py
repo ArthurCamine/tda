@@ -29,7 +29,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--audio", help="local audio sample; acceptance is capped at 240 seconds")
     value.add_argument("--models-root", help="TDA Models root")
     value.add_argument("--profile", choices=("qwen-fast", "qwen-quality"), default="qwen-fast")
-    value.add_argument("--require-gpu-name", default="RTX 4070")
+    value.add_argument("--require-gpu-name", default="")
     value.add_argument("--context-file")
     value.add_argument("--glossary-file")
     value.add_argument("--transcript-out")

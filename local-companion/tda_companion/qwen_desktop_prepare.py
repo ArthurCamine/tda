@@ -108,7 +108,7 @@ def prepare_qwen_profile_from_craig(
     state_root: Path,
     source_id: str,
     profile_id: str,
-    required_gpu_name: str = "RTX 4070",
+    required_gpu_name: str = "",
     runner: Callable[..., Any] = subprocess.run,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
@@ -168,8 +168,6 @@ def prepare_qwen_profile_from_craig(
             str(models_root.resolve()),
             "--profile",
             profile_id,
-            "--require-gpu-name",
-            required_gpu_name,
             "--record-gate",
             "--runtime-root",
             str(runtime_root.resolve()),
@@ -178,6 +176,8 @@ def prepare_qwen_profile_from_craig(
             "--scratch-root",
             str(scratch),
         ]
+        if required_gpu_name.strip():
+            command.extend(["--require-gpu-name", required_gpu_name.strip()])
         result = _run(command, timeout=_GATE_TIMEOUT_SECONDS, runner=runner)
         value = _parse_json_stdout(result, schema="tda_qwen_gpu_acceptance_v1")
         if int(getattr(result, "returncode", 1)) != 0 or value.get("pass") is not True:

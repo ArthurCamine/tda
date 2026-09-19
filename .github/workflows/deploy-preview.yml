@@ -1,27 +1,27 @@
 name: Deploy PR Preview
 
 on:
-  workflow_call:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact pull request head SHA to deploy
+        description: Exact current PR head SHA to deploy
         required: true
         type: string
       pr_number:
-        description: Pull request number used for release identity and concurrency
+        description: Pull request number
         required: true
         type: number
-    outputs:
-      deployment_url:
-        description: Immutable Vercel Preview deployment URL
-        value: ${{ jobs.deploy.outputs.url }}
 
 permissions:
   contents: read
+  pull-requests: read
   deployments: write
 
 concurrency:
-  group: tda-preview-pr-${{ inputs.pr_number }}
+  group: tda-trusted-preview-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.workflow_run.id }}
   cancel-in-progress: true
 
 env:
@@ -31,79 +31,134 @@ env:
 
 jobs:
   deploy:
-    name: deploy-preview
+    name: trusted-preview-deployment
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'pull_request'
+        )
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
       name: preview
       url: ${{ steps.deploy.outputs.url }}
-    outputs:
-      url: ${{ steps.deploy.outputs.url }}
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      SOURCE_SHA: ${{ inputs.source_sha }}
-      PR_NUMBER: ${{ inputs.pr_number }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 0
-
-      - name: Verify exact pull request source
+      - name: Resolve trusted CI source
         id: source
         shell: bash
+        env:
+          DISPATCH_SHA: ${{ inputs.source_sha }}
+          DISPATCH_PR: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          if [[ "$ACTUAL_SHA" != "$SOURCE_SHA" ]]; then
-            echo "::error::Expected $SOURCE_SHA, checked out $ACTUAL_SHA."
-            exit 1
-          fi
-          echo "short=${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
-          echo "release=pr-${PR_NUMBER}-${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+              source = os.environ.get("DISPATCH_SHA", "")
+              pr_number = str(os.environ.get("DISPATCH_PR", ""))
+          else:
+              run = event.get("workflow_run") or {}
+              if run.get("name") != "CI" or run.get("event") != "pull_request":
+                  raise SystemExit("PREVIEW_TRIGGER_INVALID")
+              if run.get("status") != "completed" or run.get("conclusion") != "success":
+                  raise SystemExit("PREVIEW_TRIGGER_NOT_SUCCESSFUL")
+              source = str(run.get("head_sha") or "")
+              prs = run.get("pull_requests") or []
+              if len(prs) != 1:
+                  raise SystemExit("PREVIEW_PR_IDENTITY_AMBIGUOUS")
+              pr_number = str(prs[0].get("number") or "")
+          if not re.fullmatch(r"[a-f0-9]{40}", source):
+              raise SystemExit("PREVIEW_SOURCE_SHA_INVALID")
+          if not pr_number.isdigit() or int(pr_number) < 1:
+              raise SystemExit("PREVIEW_PR_NUMBER_INVALID")
+          print(f"source_sha={source}")
+          print(f"pr_number={pr_number}")
+          print(f"release=pr-{pr_number}-{source[:12]}")
+          PY
 
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 12.3.4
-          run_install: false
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-
-      - name: Require Vercel Preview credential
+      - name: Require current same-repository PR head
+        id: current
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          PR_NUMBER: ${{ steps.source.outputs.pr_number }}
         run: |
-          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
-            echo "::error::Missing GitHub Environment secret VERCEL_TOKEN for preview."
-            exit 1
-          fi
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > pr.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          pr = json.load(open("pr.json", encoding="utf-8"))
+          head = pr.get("head") or {}
+          repo = head.get("repo") or {}
+          deploy = (
+              pr.get("state") == "open"
+              and head.get("sha") == os.environ["SOURCE_SHA"]
+              and repo.get("full_name") == os.environ["GITHUB_REPOSITORY"]
+          )
+          print("deploy=" + ("true" if deploy else "false"))
+          PY
 
-      - name: Install pinned Vercel CLI
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          node-version: "24"
+
+      - name: Install pinned Vercel CLI before checking out PR source
+        if: steps.current.outputs.deploy == 'true'
         run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
 
-      - name: Pull Preview configuration
-        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          lfs: false
 
-      - name: Build Preview artifact
-        env:
-          APP_ENV: preview
-          APP_COMMIT_SHA: ${{ inputs.source_sha }}
-          TDA_RELEASE_ID: ${{ steps.source.outputs.release }}
-        run: vercel build --token="$VERCEL_TOKEN"
-
-      - name: Start immutable Preview deployment
-        id: deploy
+      - name: Verify source is inert on the privileged runner
+        if: steps.current.outputs.deploy == 'true'
         shell: bash
         env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if find . -type l -print -quit | grep -q .; then
+            echo "::error::PR Preview source contains symlinks; refusing privileged upload."
+            exit 1
+          fi
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+
+      - name: Require Preview deployment credential
+        if: steps.current.outputs.deploy == 'true'
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+
+      - name: Start immutable remote Preview deployment
+        id: deploy
+        if: steps.current.outputs.deploy == 'true'
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
-          URL="$(vercel deploy --prebuilt --yes --no-wait --token="$VERCEL_TOKEN" \
+          URL="$(vercel deploy --yes --no-wait --token="$VERCEL_TOKEN" \
+            --build-env APP_ENV=preview \
+            --build-env APP_COMMIT_SHA="$SOURCE_SHA" \
+            --build-env TDA_RELEASE_ID="$RELEASE_ID" \
             --env APP_ENV=preview \
             --env APP_COMMIT_SHA="$SOURCE_SHA" \
             --env TDA_RELEASE_ID="$RELEASE_ID" | tail -n 1)"
@@ -112,26 +167,29 @@ jobs:
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Preview deployment started: $URL"
 
       - name: Wait for immutable Preview readiness
+        if: steps.current.outputs.deploy == 'true'
         env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
         run: vercel inspect "$DEPLOYMENT_URL" --wait --timeout=20m --token="$VERCEL_TOKEN"
 
       - name: Smoke exact Preview deployment
+        if: steps.current.outputs.deploy == 'true'
         shell: bash
         env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           RELEASE_ID: ${{ steps.source.outputs.release }}
         run: |
           set -euo pipefail
-          vercel curl /api/health --deployment "$DEPLOYMENT_URL" > health.json
-          vercel curl /api/version --deployment "$DEPLOYMENT_URL" > version.json
-          vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
-          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
-          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
-
+          vercel curl /api/health --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" > health.json
+          vercel curl /api/version --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" > version.json
+          vercel curl / --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
+          vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --token="$VERCEL_TOKEN" --fail --silent --show-error --output /dev/null
           node --input-type=module -e '
             import fs from "node:fs";
             const health = JSON.parse(fs.readFileSync("health.json", "utf8"));
@@ -139,23 +197,30 @@ jobs:
             const expected = process.env.SOURCE_SHA;
             const release = process.env.RELEASE_ID;
             if (health.ok !== true) throw new Error("Preview health is not ok");
-            if (health.environment !== "preview") throw new Error(`Expected preview environment, got ${health.environment}`);
-            if (health.commit !== expected) throw new Error(`Expected commit ${expected}, got ${health.commit}`);
-            if (version.commit !== expected) throw new Error(`Version commit mismatch: ${version.commit}`);
-            if (version.release !== release) throw new Error(`Expected release ${release}, got ${version.release}`);
+            if (health.environment !== "preview") throw new Error("Preview environment mismatch");
+            if (health.commit !== expected) throw new Error("Preview health commit mismatch");
+            if (version.commit !== expected) throw new Error("Preview version commit mismatch");
+            if (version.release !== release) throw new Error("Preview release mismatch");
           '
 
       - name: Preview summary
         shell: bash
         env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          DEPLOY: ${{ steps.current.outputs.deploy }}
+          PR_NUMBER: ${{ steps.source.outputs.pr_number }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           RELEASE_ID: ${{ steps.source.outputs.release }}
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
         run: |
           {
-            echo "## TDA PR Preview"
+            echo "## TDA trusted PR Preview"
             echo "- PR: #$PR_NUMBER"
-            echo "- Source: \`$SOURCE_SHA\`"
-            echo "- Release: \`$RELEASE_ID\`"
-            echo "- Deployment: $DEPLOYMENT_URL"
-            echo "- Smoke: PASS"
+            echo "- Source: `$SOURCE_SHA`"
+            if [[ "$DEPLOY" == "true" ]]; then
+              echo "- Release: `$RELEASE_ID`"
+              echo "- Deployment: $DEPLOYMENT_URL"
+              echo "- Smoke: PASS"
+            else
+              echo "- Deployment skipped because this CI run is no longer the current same-repository PR head."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -59,7 +59,9 @@ Use antes de abrir uma nova superfície, publicar release ou alterar integraçã
 - [ ] env vars corretas;
 - [ ] auto-deploy continua conforme política;
 - [ ] SHA conhecido;
-- [ ] rollback conhecido.
+- [ ] rollback conhecido;
+- [ ] PR Preview privilegiado só recebe credencial de deploy em workflow confiável do default branch;
+- [ ] código do PR não executa `pnpm install`, scripts ou build local no runner que possui `VERCEL_TOKEN`.
 
 ## Companion/API externa
 
@@ -68,7 +70,11 @@ Use antes de abrir uma nova superfície, publicar release ou alterar integraçã
 - [ ] input externo validado;
 - [ ] protocol/schema version validado;
 - [ ] key externa armazenada hashed quando aplicável;
-- [ ] revogação/expiração possível.
+- [ ] revogação/expiração possível;
+- [ ] Actions de terceiros usam SHA imutável de 40 caracteres;
+- [ ] RC distribuído possui attestation de provenance para os bytes publicados;
+- [ ] MSI recebe Authenticode antes da criação do candidate manifest/RC quando o certificado de code signing estiver provisionado;
+- [ ] assinatura nunca é aplicada depois do teste físico, pois isso alteraria os bytes aceitos.
 
 ## Canon e IA
 

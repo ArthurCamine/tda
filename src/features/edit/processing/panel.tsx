@@ -69,6 +69,48 @@ function progressCopy(job: LocalJob): string {
 	return `${job.progress.completed} de ${job.progress.total} ${unit}`;
 }
 
+const preparationStages = new Set([
+	"queued",
+	"preparing",
+	"runtime_validation",
+	"checking_model",
+	"downloading_model",
+	"model_prepare",
+	"model_load",
+	"loading_cpu",
+	"loading_cuda",
+	"loading_cuda_fallback",
+]);
+const processingStages = new Set([
+	"fixture",
+	"transcribing",
+	"transcription",
+	"diarization",
+	"noise_cleanup",
+	"resuming",
+	"alignment",
+]);
+const consolidationStages = new Set([
+	"cross_track_dedup",
+	"merge_timeline",
+	"turn_building",
+	"result_prepare",
+	"consolidating",
+	"complete",
+]);
+
+function pipelineState(
+	stage: string,
+	phase: "preparation" | "processing" | "consolidation",
+): "current" | "done" | "pending" {
+	if (phase === "preparation") return preparationStages.has(stage) ? "current" : "done";
+	if (phase === "processing") {
+		if (processingStages.has(stage)) return "current";
+		return consolidationStages.has(stage) ? "done" : "pending";
+	}
+	return consolidationStages.has(stage) ? "current" : "pending";
+}
+
 function eventTrackContext(events: readonly JobEvent[]) {
 	for (const event of events) {
 		const track = event.data.track;
@@ -415,9 +457,9 @@ export function ProcessingPanel() {
 											<p className={styles.noProgress}>Sem medida de progresso nesta etapa.</p>
 										)}
 										<section className={styles.pipeline} aria-label="Etapa atual do processamento">
-											<span data-state={activeJob.stage === "queued" ? "current" : "done"}>Preparação</span>
-											<span data-state={["fixture", "transcribing", "diarization", "noise_cleanup", "resuming"].includes(activeJob.stage) ? "current" : activeJob.stage === "complete" ? "done" : "pending"}>Processamento</span>
-											<span data-state={activeJob.stage === "complete" ? "current" : "pending"}>Consolidação</span>
+											<span data-state={pipelineState(activeJob.stage, "preparation")}>Preparação</span>
+											<span data-state={pipelineState(activeJob.stage, "processing")}>Processamento</span>
+											<span data-state={pipelineState(activeJob.stage, "consolidation")}>Consolidação</span>
 										</section>
 										<div className={styles.activeActions}>
 											<Button
