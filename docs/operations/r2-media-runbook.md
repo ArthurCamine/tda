@@ -2,11 +2,24 @@
 
 > Status: vigente
 > Owner: integrations/media + operations
-> Última revisão: 2026-09-12
+> Última revisão: 2026-09-19
 
 Fluxo obrigatório: confirmar identidade/role/audience; validar provenance; escolher o master/fonte de maior fidelidade; calcular SHA-256, MIME, bytes e dimensões; decidir se o consumidor precisa do master, de variante dinâmica ou de derivado físico; validar qualidade/resolução; escolher bucket/key; verificar colisão; fazer upload somente quando autorizado; executar read-back; para mídia pública, validar URL HTTPS anônima e decode; registrar evidência; só então promover referência e validar frontend/social.
 
 O [fluxo único de mídia](../integrations/r2/media-pipeline.md) é o contrato dos gates e responsabilidades. A referência é integrada primeiro no candidato e só promovida para produção depois da validação do consumidor. Autorização já dada para o escopo não precisa ser solicitada novamente; não ampliar escopo para apagar arquivos, publicar conteúdo privado ou ativar serviços pagos.
+
+## Acesso de contribuidores
+
+Há dois caminhos distintos e eles não devem ser misturados:
+
+- **contribuição normal de mídia/código:** não precisa de credenciais R2. O contribuidor adiciona a fonte em `media/sources/`, mantém o manifesto em `media/manifests/` e executa `pnpm media:validate`/`pnpm check`. A publicação canônica é responsabilidade da Production CD;
+- **operação R2 local/autorizada:** somente quando a tarefa exige leitura/escrita direta no storage. Nesse caso, usar `.env.local` ignorado pelo Git com credencial própria de desenvolvimento/preview e escopo mínimo. Nunca distribuir o par de Production para destravar uma contribuição comum.
+
+A Production CD usa os secrets `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID` e `R2_SECRET_ACCESS_KEY` protegidos no GitHub Environment `production`; `R2_PUBLIC_BUCKET` é fixado no workflow. O publisher canônico só roda quando o plano de release detecta alteração de mídia e publica os manifests alterados por `tools/ci/publish-production-media.sh`.
+
+Para conteúdo versionado, o contribuidor não deve executar `pnpm media:publish` contra Production a partir da máquina local. O fluxo esperado é PR -> CI -> merge -> Production CD -> publicação/read-back -> smoke. Isso mantém os segredos fora da estação do contribuidor e deixa receipt auditável.
+
+O runtime do World/Edit é outro boundary: credenciais permanecem server-only; o browser recebe apenas presigned PUT curto para uma pending key quando autorizado. Staging usa `tda-media-preview` fora de Production e `tda-media-private` em Production antes da promoção pública.
 
 ## Antes de executar
 
