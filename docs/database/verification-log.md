@@ -10,6 +10,50 @@ Entradas novas devem ser adicionadas no topo, preservando as anteriores.
 
 ---
 
+## 2026-09-19 — publish autoritativo de relações do World (#401)
+
+### Escopo
+
+Verificação pós-release da correção que faz o draft protegido pelo lease exclusivo prevalecer quando uma edição explícita substitui uma relação semanticamente equivalente, sem hard delete da relação anterior.
+
+### Aplicação
+
+- PR: #401;
+- merge em `main`: `b5a72440b08d666b8df915acdd86265699bb3d32`;
+- release canônico observado: `prod-b5a72440b08d`;
+- migration aplicada: `20260919162000 world_graph_authoritative_relation_reconcile`;
+- projeto: `dmrqnbdvbkfqzctcerbx`.
+
+### Invariantes verificadas
+
+Read-back pós-migration confirmou:
+
+- migration history contém `20260919162000 world_graph_authoritative_relation_reconcile`;
+- `publish_world_edit_state_atomic(uuid,uuid,text,uuid)` contém o marker da reconciliação autoritativa;
+- `anon` não possui `EXECUTE`;
+- `authenticated` não possui `EXECUTE`;
+- `service_role` mantém `EXECUTE`;
+- assinatura e boundary server-only foram preservados;
+- CI passou pelo contrato PostgreSQL sintético que força uma relação substituta ativa a aparecer antes da predecessora arquivada no JSON e exige exatamente uma relação ativa ao final;
+- Production CD aplicou/verificou a migration, executou smoke no artefato staged, promoveu e verificou o domínio canônico;
+- `/api/version` canônico respondeu o merge `b5a72440b08d666b8df915acdd86265699bb3d32`.
+
+### Advisors
+
+Advisors de segurança e performance foram executados após a aplicação.
+
+Permanecem classes de findings já conhecidas — incluindo tabelas com RLS sem policy explícita no modelo deny-by-default, alguns `SECURITY DEFINER` autenticados legados e FKs/índices apontados pelo advisor de performance. Esta migration não criou tabela, FK, policy, índice ou nova função exposta; nenhum finding relacionado exigiu ação adicional neste recorte.
+
+### Divergências e decisão
+
+Nenhum drift foi observado para esta migration ou para o grant da RPC alterada. Os findings preexistentes dos advisors não foram modificados cosmeticamente, seguindo o runbook.
+
+### Estado final
+
+Correção aplicada e verificada em produção. O publisher agora usa lease exclusivo + graph revision como serialização e preserva relações substituídas como histórico não ativo, em vez de rejeitar uma edição válida por estado físico intermediário.
+
+---
+
 ## 2026-09-15 — contrato canônico de review de transcrição (#73)
 
 ### Escopo

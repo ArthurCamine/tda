@@ -2,7 +2,7 @@
 
 > Status: vigente
 > Owner: dados/Supabase
-> Última revisão: 2026-09-16
+> Última revisão: 2026-09-19
 > Fonte: migration history do Supabase `dmrqnbdvbkfqzctcerbx`
 
 ## Princípio
@@ -815,7 +815,7 @@ Compatibilidade e rollback lógico:
 
 ### `20260919162000_world_graph_authoritative_relation_reconcile`
 
-**Estado:** migration versionada nesta correção; aplicação no Supabase canônico ocorre somente pelo Production CD após merge autorizado.
+**Estado:** aplicada no Supabase canônico em 2026-09-19 pelo Production CD da PR #401, merge `b5a72440b08d666b8df915acdd86265699bb3d32`; migration history, definição/grants da RPC e `/api/version` canônico foram verificados por read-back pós-release.
 
 Objetivo:
 
