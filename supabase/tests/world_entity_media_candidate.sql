@@ -230,6 +230,19 @@ begin
     raise exception 'successful media publication must consume the lease';
   end if;
   if not exists (
+    select 1
+    from public.world_edit_drafts
+    where campaign_id = '11111111-1111-4111-8111-111111111111'
+      and owner_profile_id = '33333333-3333-4333-8333-333333333333'
+      and lease_token = token
+      and status = 'published'
+      and published_graph_revision is not null
+      and published_layout_revision is not null
+      and last_publish_error is null
+  ) then
+    raise exception 'successful media publication must keep the same atomic durable publish receipt';
+  end if;
+  if not exists (
     select 1 from public.entity_media_bindings b
     where b.campaign_id = '11111111-1111-4111-8111-111111111111'
       and b.entity_id = hero

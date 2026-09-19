@@ -839,3 +839,56 @@ Compatibilidade e recuperação:
 - relações históricas não são apagadas; substituições usam lifecycle `superseded`;
 - rollback deve ser feito por migration corretiva posterior restaurando a definição anterior da RPC, sem apagar revisions/audit/relations históricas;
 - o teste sintético cobre explicitamente uma edge nova ativa aparecendo antes da predecessora arquivada no JSON, provando que a publicação não depende mais dessa ordem.
+
+
+## Recuperação durável de rascunhos do World
+
+### `20260919170000_world_edit_durable_recovery`
+
+**Estado:** migration versionada na PR #403; **ainda não aplicada no Supabase canônico**.
+
+Objetivo:
+
+- separar a exclusividade temporária de edição da durabilidade do trabalho: o lease continua curto e serializa escritores, enquanto `world_edit_drafts` preserva checkpoints do rascunho além da vida da row de lease;
+- fazer backfill dos leases que já existirem no instante do rollout antes de trocar o comportamento, evitando uma janela em que um rascunho pré-migration continue tendo cópia única;
+- impedir perda silenciosa de horas de edição quando a sessão expira, a aba recarrega, ocorre falha de publicação, release comum ou troca posterior de lease;
+- restaurar automaticamente o checkpoint mais recente do mesmo editor quando ele ainda é compatível com as revisions publicadas;
+- detectar recovery obsoleto quando layout/graph publicados avançaram e não aplicar o rascunho automaticamente sobre uma base diferente;
+- diferenciar release comum de descarte explícito: release não apaga o checkpoint; descarte marca uma cópia como `discarded` para recuperação/auditoria e só então encerra o lease;
+- registrar receipt de tentativa de publicação no checkpoint (`last_publish_attempt_at` / `last_publish_error`) e revision confirmada em sucesso;
+- persistir o receipt positivo **na mesma transação SQL da publicação canônica e antes da remoção do lease**, de modo que uma resposta HTTP perdida possa ser reconciliada por token sem inferir o resultado;
+- ao reabrir com o mesmo token depois de uma resposta ambígua, expor a revision já confirmada ao editor;
+- garantir que autosave puramente factual também avance `draft_updated_at`, para que o checkpoint durável seja atualizado mesmo sem mudança de layout.
+
+Segurança e privacidade:
+
+- `world_edit_drafts` possui RLS habilitado e permanece deny-by-default para browser;
+- `anon` e `authenticated` não recebem acesso direto à tabela nem às novas RPCs;
+- `service_role` recebe somente `SELECT/INSERT/UPDATE` necessários para o boundary server-side; não há grant direto de `DELETE` no arquivo durável;
+- a recuperação é restrita por `campaign_id + owner_profile_id`; um editor não recebe automaticamente o rascunho privado de outro;
+- a tomada de lease por outro editor continua começando do estado publicado, enquanto os checkpoints anteriores permanecem preservados como histórico.
+
+UX/contrato operacional:
+
+- falha de autosave é exibida enquanto a condução continua ativa, em vez de desaparecer junto com o modo de edição;
+- falha de publicação informa explicitamente que a publicação não foi confirmada e que o rascunho permanece preservado;
+- sucesso informa a revision confirmada;
+- discard exige confirmação e força um checkpoint final antes de tombstone/release;
+- falha de transporte após a chamada de publish é tratada como **resultado não confirmado**, nunca como certeza de que nada foi publicado; a revision canônica continua sendo a fonte de verdade.
+
+Validação exigida antes de merge:
+
+- contrato PostgreSQL deve provar recovery após expiração e após remoção da row de lease;
+- release comum deve preservar checkpoint ativo;
+- discard explícito deve encerrar o lease e tombstonar o checkpoint;
+- um checkpoint idêntico ao estado publicado deve ser classificado como já publicado, evitando ressuscitar trabalho já integrado;
+- recovery incompatível com revision nova deve ser sinalizado como stale e não aplicado automaticamente;
+- browser roles devem continuar sem `SELECT`/mutation direta sobre o arquivo de drafts;
+- typecheck, unit tests, repository governance, PostgreSQL sintético e build devem permanecer verdes.
+
+Rollback lógico:
+
+- desativar primeiro consumidores do recovery durável;
+- restaurar as definições anteriores das RPCs em migration corretiva posterior;
+- não apagar `world_edit_drafts` para simular rollback: os checkpoints são evidência de trabalho editorial e devem ser retidos até uma política explícita de retenção/expurgo;
+- nenhuma revisão publicada, relação canônica ou layout publicado deve ser reescrito para desfazer este mecanismo.

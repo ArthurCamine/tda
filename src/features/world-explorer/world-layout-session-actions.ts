@@ -26,19 +26,28 @@ export type AcquireWorldLayoutSessionResult =
 			ok: true;
 			status: "acquired" | "resumed" | "recovered";
 			draft: WorldLayoutProjection;
-		expiresAt: string;
+			expiresAt: string;
+			recoverySource?: "lease" | "durable";
+			staleRecovery?: boolean;
+			previousPublishConfirmed?: boolean;
+			previousPublishedGraphRevision?: number;
+			previousPublishedLayoutRevision?: number;
 	  }>
 	| Readonly<{
 			ok: false;
 			reason: "busy";
 			holderLabel: string;
 			sameActor: boolean;
-		expiresAt?: string;
+			expiresAt?: string;
 	  }>
 	| Readonly<{ ok: false; reason: WorldLayoutSessionFailure }>;
 
 export type WorldLayoutSessionResult =
-	| Readonly<{ ok: true; status: "renewed" | "draft_saved" | "released"; expiresAt?: string }>
+	| Readonly<{
+			ok: true;
+			status: "renewed" | "draft_saved" | "released" | "discarded";
+			expiresAt?: string;
+	  }>
 	| Readonly<{ ok: false; reason: WorldLayoutSessionFailure; revision?: number }>;
 
 function safeString(value: unknown): string | undefined {
@@ -115,11 +124,20 @@ export async function acquireWorldLayoutSessionAction(
 			(status === "acquired" || status === "resumed" || status === "recovered") &&
 			revision !== undefined && positions && expiresAt
 		) {
+			const recoverySource =
+				payload.recoverySource === "lease" || payload.recoverySource === "durable"
+					? payload.recoverySource
+					: undefined;
 			return {
 				ok: true,
 				status,
 				expiresAt,
 				draft: { schemaVersion: 1, view: "overview", revision, positions },
+				recoverySource,
+				staleRecovery: payload.staleRecovery === true,
+				previousPublishConfirmed: payload.previousPublishConfirmed === true,
+				previousPublishedGraphRevision: safeRevision(payload.previousPublishedGraphRevision),
+				previousPublishedLayoutRevision: safeRevision(payload.previousPublishedLayoutRevision),
 			};
 		}
 	}
@@ -224,4 +242,33 @@ export async function releaseWorldLayoutSessionAction(
 	return payload.ok === true && payload.status === "released"
 		? { ok: true, status: "released" }
 		: { ok: false, reason: "dependency_unavailable" };
+}
+
+
+export async function discardWorldLayoutSessionAction(
+	leaseToken: string,
+): Promise<WorldLayoutSessionResult> {
+	if (!UUID_PATTERN.test(leaseToken)) return { ok: false, reason: "invalid_payload" };
+	const profile = await verifiedProfile();
+	if (!profile.ok) return { ok: false, reason: profile.reason };
+	const client = editDataClient();
+	if (!client) return { ok: false, reason: "dependency_unavailable" };
+	const { data, error } = await client.rpc("discard_world_edit_lease_atomic", {
+		p_auth_user_id: profile.authUserId,
+		p_actor_profile_id: profile.profileId,
+		p_campaign_slug: CAMPAIGN_SLUG,
+		p_lease_token: leaseToken,
+	});
+	if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+		if (error) console.error("World draft discard failed", error.message);
+		return { ok: false, reason: "dependency_unavailable" };
+	}
+	const payload = data as RpcPayload;
+	if (payload.ok === true && payload.status === "discarded") {
+		return { ok: true, status: "discarded" };
+	}
+	if (payload.reason === "lease_lost" || payload.reason === "forbidden") {
+		return { ok: false, reason: payload.reason };
+	}
+	return { ok: false, reason: "dependency_unavailable" };
 }

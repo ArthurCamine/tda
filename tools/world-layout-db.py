@@ -162,6 +162,7 @@ try:
     run_psql(
         """
         delete from public.world_edit_leases;
+        delete from public.world_edit_drafts;
         delete from public.audit_log where action in ('world_layout.update', 'world_graph.publish');
         delete from public.world_graph_revisions;
         delete from public.world_graph_heads;

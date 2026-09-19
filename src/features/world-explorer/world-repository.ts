@@ -6,6 +6,11 @@ import {
 } from "@/integrations/supabase/server";
 import { evidenceBackedRelationIds } from "./canonical-publication-contract";
 import { DANDELION_WORLD_DEMO } from "./fixtures/dandelion";
+import {
+	type WorldAudience,
+	worldRelationRequiresReviewedProvenance,
+	worldVisibleVisibilities,
+} from "./world-audience";
 import type {
 	WorldDemoDataset,
 	WorldEntityType,
@@ -17,7 +22,6 @@ import type {
 } from "./model";
 import { loadWorldEntityPortraitPresentations } from "./world-entity-media-repository";
 
-type WorldAudience = "public" | "editor";
 
 type EntityRow = {
 	id: string;
@@ -170,8 +174,10 @@ export async function loadWorldDataset(
 		.from("entities")
 		.select("id,name,slug,entity_type,status,visibility,summary,aliases")
 		.eq("campaign_id", campaign.id);
-	if (audience === "public") {
-		entityQuery = entityQuery.eq("status", "active").eq("visibility", "public_web");
+	if (audience !== "editor") {
+		entityQuery = entityQuery
+			.eq("status", "active")
+			.in("visibility", [...worldVisibleVisibilities(audience)]);
 	}
 	const { data: entityData, error: entityError } = await entityQuery.order("name");
 	if (entityError) throw new Error(`World entity lookup failed: ${entityError.message}`);
@@ -223,7 +229,7 @@ export async function loadWorldDataset(
 		.from("relation_types")
 		.select("slug,label,directionality,family,description,is_active")
 		.eq("campaign_id", campaign.id);
-	if (audience === "public") typeQuery = typeQuery.eq("is_active", true);
+	if (audience !== "editor") typeQuery = typeQuery.eq("is_active", true);
 	const [{ data: typeData, error: typeError }, { data: styleData, error: styleError }] =
 		await Promise.all([
 			typeQuery.order("label"),
@@ -248,27 +254,35 @@ export async function loadWorldDataset(
 			"id,source_entity_id,target_entity_id,relation_type_slug,label_override,status,visibility,color_override,line_style_override,line_width_override",
 		)
 		.eq("campaign_id", campaign.id);
-	if (audience === "public") {
-		relationQuery = relationQuery.eq("status", "active").eq("visibility", "public_web");
+	if (audience !== "editor") {
+		relationQuery = relationQuery
+			.eq("status", "active")
+			.in("visibility", [...worldVisibleVisibilities(audience)]);
 	}
 	const { data: relationData, error: relationError } = await relationQuery.order("created_at");
 	if (relationError) throw new Error(`World relation lookup failed: ${relationError.message}`);
 	const relationRows = (relationData ?? []) as RelationRow[];
 
-	let publicBackedRelationIds: Set<string> | null = null;
-	if (audience === "public") {
-		const relationIds = relationRows.map((row) => row.id);
-		let sources: RelationSourceRow[] = [];
-		if (relationIds.length > 0) {
-			const { data: sourceData, error: sourceError } = await client
-				.from("entity_relation_sources")
-				.select("relation_id,canon_entry_id")
-				.in("relation_id", relationIds);
-			if (sourceError) {
-				throw new Error(`World relation provenance lookup failed: ${sourceError.message}`);
-			}
-			sources = (sourceData ?? []) as RelationSourceRow[];
+	let reviewedBackedRelationIds: Set<string> | null = null;
+	const provenanceRows =
+		audience === "editor"
+			? []
+			: relationRows.filter((row) => {
+					const visibility = VISIBILITIES.has(row.visibility as WorldVisibility)
+						? (row.visibility as WorldVisibility)
+						: "private_players";
+					return worldRelationRequiresReviewedProvenance(visibility);
+				});
+	if (provenanceRows.length > 0) {
+		const relationIds = provenanceRows.map((row) => row.id);
+		const { data: sourceData, error: sourceError } = await client
+			.from("entity_relation_sources")
+			.select("relation_id,canon_entry_id")
+			.in("relation_id", relationIds);
+		if (sourceError) {
+			throw new Error(`World relation provenance lookup failed: ${sourceError.message}`);
 		}
+		const sources = (sourceData ?? []) as RelationSourceRow[];
 
 		const referencedCanonEntryIds = [...new Set(sources.map((source) => source.canon_entry_id))];
 		let reviewedCanonEntryIds: string[] = [];
@@ -285,22 +299,28 @@ export async function loadWorldDataset(
 			reviewedCanonEntryIds = ((canonData ?? []) as CanonEntryRow[]).map((entry) => entry.id);
 		}
 
-		publicBackedRelationIds = evidenceBackedRelationIds(
-			relationRows,
+		reviewedBackedRelationIds = evidenceBackedRelationIds(
+			provenanceRows,
 			sources,
 			reviewedCanonEntryIds,
 		);
 	}
 
 	const edges = relationRows.flatMap((row) => {
-		if (publicBackedRelationIds && !publicBackedRelationIds.has(row.id)) return [];
+		const visibility = VISIBILITIES.has(row.visibility as WorldVisibility)
+			? (row.visibility as WorldVisibility)
+			: "private_players";
+		if (
+			audience !== "editor" &&
+			worldRelationRequiresReviewedProvenance(visibility) &&
+			(!reviewedBackedRelationIds || !reviewedBackedRelationIds.has(row.id))
+		) {
+			return [];
+		}
 		const type = typeBySlug.get(row.relation_type_slug);
 		if (!type || !visibleIds.has(row.source_entity_id) || !visibleIds.has(row.target_entity_id)) {
 			return [];
 		}
-		const visibility = VISIBILITIES.has(row.visibility as WorldVisibility)
-			? (row.visibility as WorldVisibility)
-			: "private_players";
 		const lineStyle = LINE_STYLES.has(row.line_style_override as WorldLineStyle)
 			? (row.line_style_override as WorldLineStyle)
 			: type.style.lineStyle;

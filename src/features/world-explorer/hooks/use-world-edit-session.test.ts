@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	worldDraftSaveFailureMessage,
 	worldEditFailureMessage,
 	worldLayoutPositionsEqual,
+	worldPublishFailureMessage,
 } from "./world-edit-session-model";
 
 describe("World edit session helpers", () => {
@@ -20,11 +22,13 @@ describe("World edit session helpers", () => {
 		).toBe(false);
 	});
 
-	it("keeps user-facing failure messages stable", () => {
-		expect(worldEditFailureMessage("lease_lost")).toContain("sessão exclusiva");
-		expect(worldEditFailureMessage("conflict")).toContain("rascunho foi preservado");
-		expect(worldEditFailureMessage("media_pending")).toContain("imagem");
-		expect(worldEditFailureMessage("media_pending")).toContain("foram preservados");
-		expect(worldEditFailureMessage("unknown")).toContain("Nenhuma alteração foi publicada");
+	it("keeps user-facing failure messages explicit about durability and publication", () => {
+		expect(worldEditFailureMessage("lease_lost")).toContain("preservado");
+		expect(worldEditFailureMessage("conflict")).toContain("preservado");
+		expect(worldDraftSaveFailureMessage("dependency_unavailable")).toContain("Mantenha esta aba aberta");
+		expect(worldPublishFailureMessage("media_pending")).toContain("publicação não aconteceu");
+		expect(worldPublishFailureMessage("review_required")).toContain("fonte canônica");
+		expect(worldPublishFailureMessage("dependency_unavailable")).toContain("Não foi possível confirmar");
+		expect(worldPublishFailureMessage("dependency_unavailable")).toContain("rascunho continua preservado");
 	});
 });

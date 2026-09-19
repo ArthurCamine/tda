@@ -170,7 +170,8 @@ A fatia introduziu:
 - `entity_relation_sources` para provenance;
 - `world_relation_styles` para apresentação, sem misturar estilo com verdade narrativa;
 - `world_graph_heads` + `world_graph_revisions` para revision/snapshot;
-- draft factual privado acoplado ao lease exclusivo do World já existente.
+- draft factual privado durante a sessão exclusiva;
+- checkpoint durável server-only separado do lease para que expiração/release/falha de publicação não apaguem trabalho editorial confirmado.
 
 A aplicação preservou os dados existentes e não fabricou conteúdo: as novas tabelas factuais permaneceram vazias, `entities` continuou com 3 rows, `canon_entries` com 0, e não houve `world_graph.publish` durante a validação.
 
@@ -191,7 +192,7 @@ A capability de layout isolada **não** concede autoria factual. O lease é meca
 
 ### Draft e publish
 
-A edição factual fica em `draft_graph` privado até publicação explícita. O publish aplicado:
+A edição factual fica em `draft_graph` privado até publicação explícita. Enquanto a sessão está ativa, cada autosave confirmado também alimenta um checkpoint durável por editor/token; o lease continua sendo apenas a trava de concorrência. O publish aplicado:
 
 - valida revision do head;
 - valida IDs/endpoints/tipos/status/visibility;
@@ -202,6 +203,8 @@ A edição factual fica em `draft_graph` privado até publicação explícita. O
 - publica facts + layout na mesma transação SQL;
 - cria snapshot append-only quando o grafo factual muda;
 - grava `world_graph.publish` no audit;
+- grava o receipt de revision publicada no checkpoint durável na mesma transação antes de consumir o lease, permitindo confirmar um commit mesmo se a resposta de rede se perder;
+- falha/conflito mantém o checkpoint recuperável;
 - não promove candidate/IA automaticamente.
 
 ### Provenance ainda não concluída pela UI desta fatia

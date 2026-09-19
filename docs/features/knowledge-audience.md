@@ -2,7 +2,7 @@
 
 > Status: em desenho
 > Owner: narrative-memory/security
-> Última revisão: 2026-09-06
+> Última revisão: 2026-09-19
 
 ## Valor
 
@@ -43,6 +43,30 @@ Um único campo `visibility` não responde tudo isso.
 - `profiles` para jogadores;
 - visibility em entities/publications/canon;
 - review/candidates/evidence.
+
+## Projection técnica de audience já implementada no World
+
+A semântica ampla de knowledge abaixo continua em desenho. Em paralelo, o World Explorer já precisa aplicar a visibility técnica existente **antes** de montar o payload enviado ao browser.
+
+A projection server-side do World usa quatro audiences operacionais:
+
+| Audience | Visibilities entregues |
+| --- | --- |
+| visitante público | `public_web` |
+| jogador autenticado da campanha | `private_players`, `public_campaign`, `public_web` |
+| mestre autenticado da campanha | `private_master`, `private_players`, `public_campaign`, `public_web` |
+| editor completo autorizado | todas, incluindo `review_only` |
+
+Regras importantes:
+
+- possuir login não basta para receber audience de jogador; a membership da campaign é resolvida server-side;
+- capability editorial completa prevalece sobre a projection de jogador, porque o editor precisa revisar todos os estados;
+- `review_only` não chega ao jogador nem ao mestre apenas por serem membros da campanha;
+- relações `public_campaign`/`public_web` continuam sujeitas ao gate de provenance/review; `private_players` não ganha artificialmente essa exigência;
+- o público anônimo continua separado e pode permanecer no dataset demonstrativo enquanto o gate canônico web estiver desativado;
+- nenhum desses níveis modela crença/conhecimento dentro da ficção; eles apenas controlam audiência técnica do produto.
+
+Essa matriz existe justamente para evitar o erro de persistir `private_players` corretamente e depois servi-lo apenas como `public_web`, que transformaria uma opção de UI em promessa sem consumidor real.
 
 ## Modelo conceitual a decidir
 

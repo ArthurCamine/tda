@@ -1,8 +1,8 @@
 # Feature — World Explorer / Ecos da Jornada
 
-> Status: fundação multi-hub e roteamento implementados; layout editorial preparado; dados reais pendentes
+> Status: multi-hub, autoria canônica, audience de campanha e recuperação durável em implementação integrada
 > Owner: narrative-memory / frontend
-> Última revisão: 2026-09-08
+> Última revisão: 2026-09-19
 
 ## Valor
 
@@ -105,13 +105,22 @@ A UI pode partir de seleção no grafo, mas toda mutation factual precisa revali
 
 Login por si só não concede nenhuma dessas capacidades.
 
-### Conflito e recuperação
+### Conflito, durabilidade e confirmação
 
-- conflito de revision preserva o rascunho e exige refresh/reconciliação; não há retry cego;
-- falha de dependência não deve ser apresentada como alteração salva;
-- cancelar abandona somente o rascunho local ainda não persistido;
-- salvar layout e salvar relação possuem receipts/feedback distintos quando existirem;
-- undo visual de posição não deve sugerir rollback factual.
+O lease exclusivo serializa quem pode escrever, mas **não é o armazenamento durável do trabalho**. O rascunho salvo precisa sobreviver à expiração/remoção do lease, reload da página e falha de publicação.
+
+- autosave de layout ou grafo atualiza um checkpoint server-only separado do lease;
+- além do debounce normal, uma janela máxima de segurança força flush periódico do estado mais recente durante interação contínua, para que atividade sem pausa não adie o checkpoint indefinidamente;
+- release comum encerra o lock, mas não apaga o checkpoint;
+- descarte é uma operação explícita, confirmada pelo usuário, e preserva uma cópia tombstonada para auditoria/recuperação;
+- o mesmo editor recupera automaticamente o último checkpoint compatível quando volta a conduzir;
+- se o estado publicado avançou, o checkpoint antigo permanece preservado e é marcado como recovery obsoleto; ele não é aplicado cegamente sobre a nova revision;
+- conflito de revision nunca destrói o rascunho;
+- publicação só é apresentada como concluída quando existe confirmação de revision;
+- o banco persiste um receipt de publicação no mesmo commit do estado canônico antes de remover o lease, permitindo reconciliar uma resposta HTTP perdida sem adivinhar se o commit ocorreu;
+- erro de transporte é apresentado como resultado **não confirmado**, não como certeza de sucesso ou fracasso;
+- falha de autosave fica visível durante a condução e orienta o editor a manter a aba aberta/reestabelecer a sessão;
+- undo visual de posição não sugere rollback factual.
 
 ### Gate operacional atual
 

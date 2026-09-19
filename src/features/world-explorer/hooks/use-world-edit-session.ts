@@ -11,18 +11,22 @@ import {
 import { publishWorldEditLayoutAction } from "../world-edit-actions";
 import {
 	acquireWorldLayoutSessionAction,
+	discardWorldLayoutSessionAction,
 	releaseWorldLayoutSessionAction,
 	renewWorldLayoutSessionAction,
 	saveWorldLayoutSessionDraftAction,
 } from "../world-layout-session-actions";
 import {
+	worldDraftSaveFailureMessage,
 	worldEditFailureMessage,
 	worldLayoutPositionsEqual,
+	worldPublishFailureMessage,
 } from "./world-edit-session-model";
 
 const WORLD_EDIT_LEASE_STORAGE_KEY = "tda.world.edit.lease.yuhara-main";
 const WORLD_EDIT_HEARTBEAT_MS = 20_000;
 const WORLD_EDIT_DRAFT_DEBOUNCE_MS = 500;
+const WORLD_EDIT_DRAFT_SAFETY_FLUSH_MS = 10_000;
 const WORLD_BUSY_NOTICE_MS = 5_000;
 
 type WorldEditState = "view" | "acquiring" | "editing" | "publishing";
@@ -69,6 +73,7 @@ export function useWorldEditSession({
 	const [busyNotice, setBusyNotice] = useState<string | null>(null);
 	const layoutDraftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const graphDraftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const draftSafetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const busyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const draftSequence = useRef(0);
 	const saveQueue = useRef<Promise<void>>(Promise.resolve());
@@ -81,8 +86,24 @@ export function useWorldEditSession({
 		graphDraftRef.current = graphDraft;
 	}, [graphDraft]);
 
+	useEffect(() => {
+		if (state !== "editing" || !hasChanges) return;
+		const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+			event.preventDefault();
+			event.returnValue = "";
+		};
+		window.addEventListener("beforeunload", warnBeforeLeaving);
+		return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+	}, [hasChanges, state]);
+
 	const markLeaseLost = useCallback((reason: string) => {
 		draftSequence.current += 1;
+		if (layoutDraftTimer.current) clearTimeout(layoutDraftTimer.current);
+		if (graphDraftTimer.current) clearTimeout(graphDraftTimer.current);
+		if (draftSafetyTimer.current) clearTimeout(draftSafetyTimer.current);
+		layoutDraftTimer.current = null;
+		graphDraftTimer.current = null;
+		draftSafetyTimer.current = null;
 		setState("view");
 		setLeaseToken(null);
 		window.sessionStorage.removeItem(WORLD_EDIT_LEASE_STORAGE_KEY);
@@ -112,6 +133,7 @@ export function useWorldEditSession({
 		() => () => {
 			if (layoutDraftTimer.current) clearTimeout(layoutDraftTimer.current);
 			if (graphDraftTimer.current) clearTimeout(graphDraftTimer.current);
+			if (draftSafetyTimer.current) clearTimeout(draftSafetyTimer.current);
 			if (busyTimer.current) clearTimeout(busyTimer.current);
 		},
 		[],
@@ -158,6 +180,46 @@ export function useWorldEditSession({
 		});
 	}
 
+	function scheduleSafetyDraftFlush() {
+		if (state !== "editing" || !leaseToken || draftSafetyTimer.current) return;
+		draftSafetyTimer.current = setTimeout(() => {
+			draftSafetyTimer.current = null;
+			if (state !== "editing") return;
+			const latestGraph = graphDraftRef.current;
+			const layoutCandidate = buildLayoutCandidate(latestGraph);
+			if (!layoutCandidate) {
+				setFeedback(worldDraftSaveFailureMessage("invalid_payload"));
+				return;
+			}
+			const sequence = ++draftSequence.current;
+			void queueLayoutDraftRequest(leaseToken, layoutCandidate).then(async (layoutResult) => {
+				if (sequence !== draftSequence.current) return;
+				if (!layoutResult.ok) {
+					if (layoutResult.reason === "lease_lost" || layoutResult.reason === "forbidden") {
+						markLeaseLost(layoutResult.reason);
+					} else {
+						setFeedback(worldDraftSaveFailureMessage(layoutResult.reason));
+					}
+					return;
+				}
+
+				if (canEditContent && latestGraph) {
+					const graphResult = await queueGraphDraftRequest(leaseToken, latestGraph);
+					if (sequence !== draftSequence.current) return;
+					if (!graphResult.ok) {
+						if (graphResult.reason === "lease_lost" || graphResult.reason === "forbidden") {
+							markLeaseLost(graphResult.reason);
+						} else {
+							setFeedback(worldDraftSaveFailureMessage(graphResult.reason));
+						}
+						return;
+					}
+				}
+				setFeedback("Checkpoint de segurança confirmado. Seu rascunho está preservado.");
+			});
+		}, WORLD_EDIT_DRAFT_SAFETY_FLUSH_MS);
+	}
+
 	function scheduleLayoutDraftSave(
 		candidate: WorldLayoutProjection,
 		pendingMessage = "Alterações locais — salvando rascunho…",
@@ -166,6 +228,7 @@ export function useWorldEditSession({
 		if (layoutDraftTimer.current) clearTimeout(layoutDraftTimer.current);
 		const sequence = ++draftSequence.current;
 		setFeedback(pendingMessage);
+		scheduleSafetyDraftFlush();
 		layoutDraftTimer.current = setTimeout(() => {
 			layoutDraftTimer.current = null;
 			void queueLayoutDraftRequest(leaseToken, candidate).then((result) => {
@@ -182,7 +245,7 @@ export function useWorldEditSession({
 					markLeaseLost(result.reason);
 					return;
 				}
-				setFeedback(worldEditFailureMessage(result.reason));
+				setFeedback(worldDraftSaveFailureMessage(result.reason));
 			});
 		}, WORLD_EDIT_DRAFT_DEBOUNCE_MS);
 	}
@@ -195,6 +258,7 @@ export function useWorldEditSession({
 		if (graphDraftTimer.current) clearTimeout(graphDraftTimer.current);
 		const sequence = ++draftSequence.current;
 		setFeedback(pendingMessage);
+		scheduleSafetyDraftFlush();
 		graphDraftTimer.current = setTimeout(() => {
 			graphDraftTimer.current = null;
 			void queueGraphDraftRequest(leaseToken, draft).then((result) => {
@@ -207,7 +271,7 @@ export function useWorldEditSession({
 					markLeaseLost(result.reason);
 					return;
 				}
-				setFeedback(worldEditFailureMessage(result.reason));
+				setFeedback(worldDraftSaveFailureMessage(result.reason));
 			});
 		}, WORLD_EDIT_DRAFT_DEBOUNCE_MS);
 	}
@@ -278,11 +342,21 @@ export function useWorldEditSession({
 		onEditingStarted?.();
 		setState("editing");
 		setFeedback(
-			result.status === "acquired"
-				? canEditContent
-					? "Edição exclusiva ativa. Crie, conecte, organize e revise o Mundo; só você vê o rascunho até publicar."
-					: "Edição exclusiva ativa. Alterações de posição ficam em rascunho até publicar."
-				: "Rascunho de edição recuperado. Revise antes de publicar.",
+			result.previousPublishConfirmed
+				? result.previousPublishedGraphRevision !== undefined
+					? `A publicação anterior foi confirmada pelo servidor · revisão ${result.previousPublishedGraphRevision}. Esta sessão começou do estado publicado.`
+					: `A publicação anterior foi confirmada pelo servidor · revisão de layout ${result.previousPublishedLayoutRevision ?? result.draft.revision}. Esta sessão começou do estado publicado.`
+				: result.staleRecovery
+					? result.status === "recovered"
+						? "Rascunho anterior recuperado, mas o Mundo publicado mudou desde a base dele. O trabalho foi preservado para revisão; a publicação continuará bloqueada por conflito até essa diferença ser reconciliada."
+						: "Existe um rascunho anterior preservado, mas o Mundo publicado mudou desde então. Ele não foi aplicado automaticamente; esta sessão começou do estado publicado atual."
+					: result.status === "acquired"
+						? canEditContent
+							? "Edição exclusiva ativa. Crie, conecte, organize e revise o Mundo; cada alteração confirmada fica preservada até publicar."
+							: "Edição exclusiva ativa. Cada alteração de posição confirmada fica preservada até publicar."
+						: result.recoverySource === "durable"
+							? "Rascunho durável recuperado de uma sessão anterior. Revise antes de publicar."
+							: "Rascunho de edição recuperado. Revise antes de publicar.",
 		);
 	}
 
@@ -294,6 +368,10 @@ export function useWorldEditSession({
 		if (graphDraftTimer.current) {
 			clearTimeout(graphDraftTimer.current);
 			graphDraftTimer.current = null;
+		}
+		if (draftSafetyTimer.current) {
+			clearTimeout(draftSafetyTimer.current);
+			draftSafetyTimer.current = null;
 		}
 	}
 
@@ -319,7 +397,7 @@ export function useWorldEditSession({
 		const layoutCandidate = buildLayoutCandidate(graphDraftRef.current);
 		if (!layoutCandidate) {
 			setState("editing");
-			setFeedback(worldEditFailureMessage("invalid_payload"));
+			setFeedback(worldPublishFailureMessage("invalid_payload"));
 			return;
 		}
 		const layoutResult = await queueLayoutDraftRequest(leaseToken, layoutCandidate);
@@ -329,7 +407,7 @@ export function useWorldEditSession({
 				markLeaseLost(layoutResult.reason);
 			} else {
 				setState("editing");
-				setFeedback(worldEditFailureMessage(layoutResult.reason));
+				setFeedback(worldPublishFailureMessage(layoutResult.reason));
 			}
 			return;
 		}
@@ -348,7 +426,7 @@ export function useWorldEditSession({
 					markLeaseLost(graphResult.reason);
 				} else {
 					setState("editing");
-					setFeedback(worldEditFailureMessage(graphResult.reason));
+					setFeedback(worldPublishFailureMessage(graphResult.reason));
 				}
 				return;
 			}
@@ -361,14 +439,14 @@ export function useWorldEditSession({
 					markLeaseLost(publishResult.reason);
 				} else {
 					setState("editing");
-					setFeedback(worldEditFailureMessage(publishResult.reason));
+					setFeedback(worldPublishFailureMessage(publishResult.reason));
 				}
 				return;
 			}
 			completePublishedEdit(
 				publishResult.status === "unchanged"
-					? "Nenhuma alteração precisava ser publicada."
-					: "Mundo publicado. Cada pessoa vê somente o que sua visibilidade permite.",
+					? `Publicação confirmada. Nenhuma alteração nova era necessária · revisão ${publishResult.graphRevision}.`
+					: `Mundo publicado com sucesso · revisão ${publishResult.graphRevision}. Cada pessoa vê somente o que sua visibilidade permite.`,
 			);
 			return;
 		}
@@ -381,23 +459,58 @@ export function useWorldEditSession({
 				markLeaseLost(publishResult.reason);
 			} else {
 				setState("editing");
-				setFeedback(worldEditFailureMessage(publishResult.reason));
+				setFeedback(worldPublishFailureMessage(publishResult.reason));
 			}
 			return;
 		}
 		completePublishedEdit(
 			publishResult.status === "unchanged"
-				? "Nenhuma mudança de layout precisava ser publicada."
-				: "Composição publicada para todos.",
+				? `Publicação confirmada. Nenhuma mudança de layout era necessária · revisão ${publishResult.revision}.`
+				: `Composição publicada com sucesso · revisão ${publishResult.revision}.`,
 		);
 	}
 
 	async function release(message: string) {
 		if (!leaseToken || state !== "editing") return;
 		cancelPendingDraftSaves();
-		draftSequence.current += 1;
-		setFeedback("Encerrando a sessão de edição…");
+		const sequence = ++draftSequence.current;
+
+		if (hasChanges) {
+			setFeedback("Salvando um checkpoint final antes de encerrar a edição…");
+			const layoutCandidate = buildLayoutCandidate(graphDraftRef.current);
+			if (!layoutCandidate) {
+				setFeedback(worldDraftSaveFailureMessage("invalid_payload"));
+				return;
+			}
+
+			const layoutResult = await queueLayoutDraftRequest(leaseToken, layoutCandidate);
+			if (sequence !== draftSequence.current) return;
+			if (!layoutResult.ok) {
+				if (layoutResult.reason === "lease_lost" || layoutResult.reason === "forbidden") {
+					markLeaseLost(layoutResult.reason);
+				} else {
+					setFeedback(worldDraftSaveFailureMessage(layoutResult.reason));
+				}
+				return;
+			}
+
+			if (canEditContent && graphDraftRef.current) {
+				const graphResult = await queueGraphDraftRequest(leaseToken, graphDraftRef.current);
+				if (sequence !== draftSequence.current) return;
+				if (!graphResult.ok) {
+					if (graphResult.reason === "lease_lost" || graphResult.reason === "forbidden") {
+						markLeaseLost(graphResult.reason);
+					} else {
+						setFeedback(worldDraftSaveFailureMessage(graphResult.reason));
+					}
+					return;
+				}
+			}
+		}
+
 		await saveQueue.current;
+		if (sequence !== draftSequence.current) return;
+		setFeedback("Encerrando a sessão de edição…");
 		const result = await releaseWorldLayoutSessionAction(leaseToken);
 		if (!result.ok) {
 			setFeedback(worldEditFailureMessage(result.reason));
@@ -415,11 +528,64 @@ export function useWorldEditSession({
 	}
 
 	async function finish() {
-		await release("Edição encerrada sem alterações publicadas.");
+		await release("Edição encerrada sem publicar. O rascunho confirmado foi preservado.");
 	}
 
 	async function discard() {
-		await release("Rascunho descartado. O Mundo publicado foi mantido.");
+		if (!leaseToken || state !== "editing") return;
+		const confirmed = window.confirm(
+			"Descartar este rascunho? O Mundo publicado será mantido. Uma cópia de recuperação ficará registrada para auditoria, mas esta sessão será encerrada.",
+		);
+		if (!confirmed) return;
+
+		cancelPendingDraftSaves();
+		const sequence = ++draftSequence.current;
+		setFeedback("Preservando uma cópia final antes de descartar o rascunho…");
+
+		const layoutCandidate = buildLayoutCandidate(graphDraftRef.current);
+		if (!layoutCandidate) {
+			setFeedback(worldDraftSaveFailureMessage("invalid_payload"));
+			return;
+		}
+		const layoutResult = await queueLayoutDraftRequest(leaseToken, layoutCandidate);
+		if (sequence !== draftSequence.current) return;
+		if (!layoutResult.ok) {
+			if (layoutResult.reason === "lease_lost" || layoutResult.reason === "forbidden") {
+				markLeaseLost(layoutResult.reason);
+			} else {
+				setFeedback(worldDraftSaveFailureMessage(layoutResult.reason));
+			}
+			return;
+		}
+
+		if (canEditContent && graphDraftRef.current) {
+			const graphResult = await queueGraphDraftRequest(leaseToken, graphDraftRef.current);
+			if (sequence !== draftSequence.current) return;
+			if (!graphResult.ok) {
+				if (graphResult.reason === "lease_lost" || graphResult.reason === "forbidden") {
+					markLeaseLost(graphResult.reason);
+				} else {
+					setFeedback(worldDraftSaveFailureMessage(graphResult.reason));
+				}
+				return;
+			}
+		}
+
+		await saveQueue.current;
+		const result = await discardWorldLayoutSessionAction(leaseToken);
+		if (!result.ok) {
+			setFeedback(worldEditFailureMessage(result.reason));
+			return;
+		}
+		window.sessionStorage.removeItem(WORLD_EDIT_LEASE_STORAGE_KEY);
+		setLeaseToken(null);
+		setLayoutDirty(false);
+		setGraphDirty(false);
+		graphDraftRef.current = null;
+		setGraphDraft(null);
+		setState("view");
+		onReleaseLayout();
+		setFeedback("Rascunho descartado. O Mundo publicado foi mantido e uma cópia de recuperação foi preservada.");
 	}
 
 	return {

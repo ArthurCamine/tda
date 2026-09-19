@@ -192,6 +192,23 @@ Não alterar essa semântica silenciosamente: é regra de produto/autorização 
 
 Não revogar em massa sem mapear consumidores.
 
+## Durabilidade server-only do World
+
+A migration candidata `20260919170000_world_edit_durable_recovery` separa o lock temporário da persistência do trabalho editorial:
+
+- `world_edit_leases` continua responsável por exclusividade e expiração curta;
+- `world_edit_drafts` guarda checkpoints privados por campaign/profile/token com RLS habilitado e nenhuma policy/grant de browser;
+- `anon` e `authenticated` não leem nem escrevem checkpoints;
+- `service_role` recebe somente `SELECT/INSERT/UPDATE` no arquivo durável, sem `DELETE`;
+- troca de holder não transfere o conteúdo privado do editor anterior;
+- recovery automático exige o mesmo editor e revisions compatíveis;
+- checkpoint stale é preservado, mas não é aplicado sobre um estado publicado diferente;
+- release comum não equivale a descarte;
+- discard explícito possui RPC própria e mantém tombstone;
+- receipt positivo de publicação é persistido no mesmo commit canônico antes de consumir o lease, permitindo reconciliar perda da resposta HTTP sem confiar no cliente.
+
+Esse boundary não amplia capabilities: autoria factual continua exigindo `campaign.content.edit` e a sessão exclusiva continua exigindo `campaign.world.layout.edit`.
+
 ## `SECURITY INVOKER` server-only do Edit
 
 O arquivo local `20260907115300_edit_transcript_segment_atomic` descreve `public.edit_transcript_segment_atomic(...)`. Em 2026-09-08 a função física foi confirmada no Supabase canônico sob migration history remoto `20260908064257 edit_transcript_segment_atomic`.

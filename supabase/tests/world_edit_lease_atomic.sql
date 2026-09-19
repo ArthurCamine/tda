@@ -22,6 +22,29 @@ begin
     raise exception 'world edit lease table must remain deny-by-default with no browser policy';
   end if;
 
+  if not exists (
+    select 1
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'world_edit_drafts'
+      and c.relrowsecurity
+  ) or exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'world_edit_drafts'
+  ) then
+    raise exception 'durable World drafts must be RLS deny-by-default';
+  end if;
+
+  if has_table_privilege('anon', 'public.world_edit_drafts', 'SELECT')
+     or has_table_privilege('authenticated', 'public.world_edit_drafts', 'SELECT')
+     or not has_table_privilege('service_role', 'public.world_edit_drafts', 'SELECT')
+     or not has_table_privilege('service_role', 'public.world_edit_drafts', 'INSERT')
+     or not has_table_privilege('service_role', 'public.world_edit_drafts', 'UPDATE')
+     or has_table_privilege('service_role', 'public.world_edit_drafts', 'DELETE') then
+    raise exception 'durable World draft grants must stay server-only and append/update oriented';
+  end if;
+
   if has_table_privilege('anon', 'public.world_edit_leases', 'SELECT')
      or has_table_privilege('authenticated', 'public.world_edit_leases', 'SELECT') then
     raise exception 'browser roles must not read world edit leases';
@@ -49,7 +72,9 @@ begin
      or has_function_privilege('anon', 'public.publish_world_edit_layout_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.publish_world_edit_layout_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
      or has_function_privilege('anon', 'public.release_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
-     or has_function_privilege('authenticated', 'public.release_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE') then
+     or has_function_privilege('authenticated', 'public.release_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
+     or has_function_privilege('anon', 'public.discard_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.discard_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE') then
     raise exception 'browser roles must not execute world edit lease RPCs';
   end if;
 
@@ -57,7 +82,8 @@ begin
      or not has_function_privilege('service_role', 'public.renew_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
      or not has_function_privilege('service_role', 'public.save_world_edit_layout_draft_atomic(uuid,uuid,text,uuid,jsonb)', 'EXECUTE')
      or not has_function_privilege('service_role', 'public.publish_world_edit_layout_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
-     or not has_function_privilege('service_role', 'public.release_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE') then
+     or not has_function_privilege('service_role', 'public.release_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE')
+     or not has_function_privilege('service_role', 'public.discard_world_edit_lease_atomic(uuid,uuid,text,uuid)', 'EXECUTE') then
     raise exception 'service_role must execute every world edit lease RPC';
   end if;
 end;
@@ -206,8 +232,17 @@ begin
      or (select revision from public.world_layout_snapshots) <> 3
      or (select positions from public.world_layout_snapshots) <>
         '{"node-a":{"x":260,"y":-40},"node-b":{"x":-300,"y":90}}'::jsonb
-     or (select count(*) from public.audit_log where action = 'world_layout.update') <> 3 then
-    raise exception 'publish must update snapshot/audit and release the lease atomically';
+     or (select count(*) from public.audit_log where action = 'world_layout.update') <> 3
+     or not exists (
+       select 1
+       from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and lease_token = token_a
+         and status = 'published'
+         and published_layout_revision = 3
+         and last_publish_error is null
+     ) then
+    raise exception 'publish must update snapshot/audit, persist its receipt and release the lease atomically';
   end if;
 end;
 $$;
@@ -228,8 +263,11 @@ begin
     'synthetic-campaign',
     token_a
   );
-  if result->>'status' <> 'acquired' or (result->>'baseRevision')::bigint <> 3 then
-    raise exception 'fresh lease must observe revision 3: %', result;
+  if result->>'status' <> 'acquired'
+     or (result->>'baseRevision')::bigint <> 3
+     or result->>'previousPublishConfirmed' <> 'true'
+     or (result->>'previousPublishedLayoutRevision')::bigint <> 3 then
+    raise exception 'fresh lease must observe revision 3 and reconcile the previous publish receipt: %', result;
   end if;
 
   result := public.save_world_edit_layout_draft_atomic(
@@ -258,6 +296,7 @@ set role service_role;
 do $$
 declare
   result jsonb;
+  token_a uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   token_b uuid := 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 begin
   result := public.acquire_world_edit_lease_atomic(
@@ -279,8 +318,48 @@ begin
     token_b
   );
   if result <> '{"ok":true,"status":"released"}'::jsonb
-     or exists (select 1 from public.world_edit_leases) then
-    raise exception 'explicit discard must release the recovered lease: %', result;
+     or exists (select 1 from public.world_edit_leases)
+     or not exists (
+       select 1 from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and status = 'active'
+         and draft_positions = '{"node-a":{"x":310,"y":-10}}'::jsonb
+     ) then
+    raise exception 'ordinary release must preserve the durable draft: %', result;
+  end if;
+
+  result := public.acquire_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a
+  );
+  if result->>'ok' <> 'true'
+     or result->>'status' <> 'recovered'
+     or result->>'recoverySource' <> 'durable'
+     or result->'draftPositions' <> '{"node-a":{"x":310,"y":-10}}'::jsonb then
+    raise exception 'same editor must recover a durable draft after the lease row is gone: %', result;
+  end if;
+
+  result := public.discard_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a
+  );
+  if result <> '{"ok":true,"status":"discarded"}'::jsonb
+     or exists (select 1 from public.world_edit_leases)
+     or exists (
+       select 1 from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and status = 'active'
+     )
+     or not exists (
+       select 1 from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and status = 'discarded'
+     ) then
+    raise exception 'explicit discard must tombstone the draft and release the lease: %', result;
   end if;
 end;
 $$;

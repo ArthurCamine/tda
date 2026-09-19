@@ -160,7 +160,8 @@ RPCs observadas deste boundary:
 - `renew_world_edit_lease_atomic(uuid,uuid,text,uuid)`;
 - `save_world_edit_layout_draft_atomic(uuid,uuid,text,uuid,jsonb)`;
 - `publish_world_edit_layout_atomic(uuid,uuid,text,uuid)`;
-- `release_world_edit_lease_atomic(uuid,uuid,text,uuid)`.
+- `release_world_edit_lease_atomic(uuid,uuid,text,uuid)`;
+- `discard_world_edit_lease_atomic(uuid,uuid,text,uuid)` (candidate `20260919170000`).
 
 Classificação observada:
 
@@ -174,7 +175,11 @@ Boundary:
 
 - valida vínculo `auth_user_id -> profile_id`;
 - exige capability `campaign.world.layout.edit` e assignment ativo no scope da campaign ou `project/tda`;
-- lease exclusivo protege sessão editorial e recovery do mesmo holder;
+- lease exclusivo protege **concorrência** da sessão editorial; durabilidade do trabalho não depende mais da row temporária do lease;
+- `world_edit_drafts` mantém checkpoints server-only por campaign/editor/token, inclusive depois de release/expiração;
+- acquire restaura somente checkpoint compatível do mesmo editor; recovery stale é preservado, mas não aplicado cegamente;
+- release encerra o lock sem apagar checkpoint; discard explícito tombstona a cópia antes de encerrar;
+- publish bem-sucedido grava receipt de revision no checkpoint na mesma transação e só então remove o lease;
 - `expected_revision`/`base_layout_revision` controlam concorrência otimista;
 - payload de positions é limitado a IDs/coords válidos;
 - dragging público não recebe permissão para persistir por inferência.
@@ -232,8 +237,9 @@ Invariantes versionadas:
 - usa `world_graph_heads.revision` para optimistic concurrency;
 - publica layout pela RPC de snapshot na mesma transação;
 - grava snapshot append-only em `world_graph_revisions` e `world_graph.publish` no audit apenas quando o conteúdo factual muda;
-- remove o lease somente após publish bem-sucedido;
-- conflito/falha retorna sem declarar publicação concluída.
+- persiste receipt positivo com graph/layout revisions em `world_edit_drafts` no mesmo commit da publicação;
+- remove o lease somente após receipt/publish bem-sucedidos;
+- conflito/falha mantém checkpoint recuperável e retorna sem declarar publicação concluída.
 
 Estado físico observado para as RPCs novas:
 

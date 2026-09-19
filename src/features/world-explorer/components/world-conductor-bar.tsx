@@ -233,7 +233,7 @@ export function WorldConductorBar({
 					{busyNotice}
 				</p>
 			) : null}
-			{feedback && !active ? (
+			{feedback ? (
 				<p className={styles.feedback} role="status" aria-live="polite" data-world-conductor-notice>
 					<span aria-hidden="true">{active ? "●" : "·"}</span>
 					{feedback}

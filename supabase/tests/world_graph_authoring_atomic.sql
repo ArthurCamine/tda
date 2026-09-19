@@ -44,6 +44,7 @@ $$;
 -- Leave the previous layout/lease suite behind and start a deterministic factual graph.
 reset role;
 delete from public.world_edit_leases;
+delete from public.world_edit_drafts;
 delete from public.entity_relation_sources;
 delete from public.entity_relations;
 delete from public.world_relation_styles;
@@ -247,18 +248,25 @@ begin
      or exists (select 1 from public.world_layout_snapshots)
      or exists (select 1 from public.world_graph_revisions)
      or coalesce((select revision from public.world_graph_heads where campaign_id='11111111-1111-4111-8111-111111111111'), 0) <> 0
-     or exists (select 1 from public.audit_log where action in ('world_layout.update','world_graph.publish')) then
-    raise exception 'review_required must leave canonical graph/layout/audit unchanged';
+     or exists (select 1 from public.audit_log where action in ('world_layout.update','world_graph.publish'))
+     or not exists (
+       select 1
+       from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and lease_token = token
+         and status = 'active'
+     ) then
+    raise exception 'review_required must leave canonical graph/layout/audit unchanged and preserve the durable draft';
   end if;
 
-  result := public.release_world_edit_lease_atomic(
+  result := public.discard_world_edit_lease_atomic(
     '44444444-4444-4444-8444-444444444444',
     '33333333-3333-4333-8333-333333333333',
     'synthetic-campaign',
     token
   );
-  if result->>'ok' <> 'true' then
-    raise exception 'provenance guard fixture cleanup failed: %', result;
+  if result->>'ok' <> 'true' or result->>'status' <> 'discarded' then
+    raise exception 'provenance guard fixture must explicitly discard its preserved draft: %', result;
   end if;
 end;
 $$;
@@ -359,6 +367,18 @@ begin
     raise exception 'canonical graph draft must save privately: %', result;
   end if;
 
+  if not exists (
+    select 1
+    from public.world_edit_drafts durable
+    where durable.owner_profile_id = '33333333-3333-4333-8333-333333333333'
+      and durable.lease_token = token
+      and durable.status = 'active'
+      and durable.graph_draft_initialized
+      and durable.draft_graph = draft
+  ) then
+    raise exception 'graph-only autosave must checkpoint the full draft outside the lease row';
+  end if;
+
   result := public.save_world_edit_layout_draft_atomic(
     '44444444-4444-4444-8444-444444444444',
     '33333333-3333-4333-8333-333333333333',
@@ -399,8 +419,18 @@ begin
      or (select count(*) from public.relation_types) <> 1
      or (select count(*) from public.entity_relations) <> 1
      or (select count(*) from public.audit_log where action='world_graph.publish') <> 1
-     or (select count(*) from public.audit_log where action='world_layout.update') <> 1 then
-    raise exception 'combined publish did not leave expected canonical/audit state';
+     or (select count(*) from public.audit_log where action='world_layout.update') <> 1
+     or not exists (
+       select 1
+       from public.world_edit_drafts
+       where owner_profile_id = '33333333-3333-4333-8333-333333333333'
+         and lease_token = token
+         and status = 'published'
+         and published_graph_revision = 1
+         and published_layout_revision = 1
+         and last_publish_error is null
+     ) then
+    raise exception 'combined publish did not leave expected canonical/audit/receipt state';
   end if;
 
   if (select source_entity_id::text from public.entity_relations limit 1)
@@ -507,6 +537,104 @@ begin
      or (select status from public.entity_relations where id='17181818-1818-4818-8818-181818181818') <> 'active'
      or (select count(*) from public.entity_relations where relation_type_slug='friend_of' and status='active') <> 1 then
     raise exception 'authoritative replacement did not leave exactly one active relation';
+  end if;
+end;
+$$;
+reset role;
+rollback;
+
+-- Ordinary release must free the writer lock without destroying a factual draft.
+-- A later token from the same editor recovers the server-side checkpoint.
+begin;
+set role service_role;
+do $$
+declare
+  result jsonb;
+  token_a uuid := '23232323-2323-4323-8323-232323232323';
+  token_b uuid := '24242424-2424-4424-8424-242424242424';
+  draft jsonb;
+begin
+  result := public.acquire_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a
+  );
+  if result->>'status' <> 'acquired' or (result->>'baseRevision')::bigint <> 1 then
+    raise exception 'durable factual release fixture must acquire revision 1: %', result;
+  end if;
+
+  result := public.acquire_world_graph_draft_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a
+  );
+  draft := jsonb_set(
+    result->'draftGraph',
+    '{nodes,0,summary}',
+    to_jsonb('Rascunho factual preservado após release.'::text),
+    true
+  );
+
+  result := public.save_world_graph_draft_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a,
+    draft
+  );
+  if result->>'status' <> 'draft_saved' then
+    raise exception 'durable factual release fixture must save first: %', result;
+  end if;
+
+  result := public.release_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_a
+  );
+  if result->>'status' <> 'released'
+     or exists (select 1 from public.world_edit_leases)
+     or not exists (
+       select 1
+       from public.world_edit_drafts
+       where owner_profile_id='33333333-3333-4333-8333-333333333333'
+         and lease_token=token_a
+         and status='active'
+     ) then
+    raise exception 'ordinary release must keep factual durable checkpoint: %', result;
+  end if;
+
+  result := public.acquire_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_b
+  );
+  if result->>'status' <> 'recovered' or result->>'recoverySource' <> 'durable' then
+    raise exception 'same editor must recover factual checkpoint after release: %', result;
+  end if;
+
+  result := public.acquire_world_graph_draft_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_b
+  );
+  if result->>'ok' <> 'true'
+     or result->'draftGraph'->'nodes'->0->>'summary' <> 'Rascunho factual preservado após release.' then
+    raise exception 'recovered factual graph must contain the saved checkpoint: %', result;
+  end if;
+
+  result := public.discard_world_edit_lease_atomic(
+    '44444444-4444-4444-8444-444444444444',
+    '33333333-3333-4333-8333-333333333333',
+    'synthetic-campaign',
+    token_b
+  );
+  if result->>'status' <> 'discarded' then
+    raise exception 'durable factual release fixture cleanup must discard explicitly: %', result;
   end if;
 end;
 $$;
