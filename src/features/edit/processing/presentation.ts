@@ -32,6 +32,7 @@ export const jobLabels: Record<JobStatus, string> = {
 };
 export const stageLabels: Record<string, string> = {
 	queued: "Aguardando execução",
+	runtime_validation: "Validando runtime e gate físico",
 	fixture: "Ensaio sintético",
 	checking_model: "Verificando modelo",
 	downloading_model: "Baixando modelo",
@@ -143,6 +144,11 @@ export function presentJobEvent(event: JobEvent): PresentedJobEvent {
 						? `Unidade ${completed} de ${total} concluída.`
 						: "Unidade de trabalho concluída.",
 				detail: choose(genericProgressJokes, event.seq),
+			};
+		case "WORKER_DISPATCH_PREPARING":
+			return {
+				title: "Runtime local validado; preparando o worker.",
+				detail: "O gate físico selado foi conferido sem reler gigabytes do modelo.",
 			};
 		case "MODEL_LOADING":
 			return {
