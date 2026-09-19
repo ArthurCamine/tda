@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  deployments: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -55,10 +54,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Validate GitHub Actions workflows
-        uses: docker://rhysd/actionlint:1.7.12
-        with:
-          args: -color -shellcheck= -pyflakes=
+      - name: Install and validate GitHub Actions workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+          SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+          curl --fail --silent --show-error --location "$URL" --output actionlint.tar.gz
+          echo "$SHA256  actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color -shellcheck= -pyflakes=
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
@@ -218,16 +223,6 @@ jobs:
             test "$MEDIA_RESULT" = "skipped"
           fi
 
-  preview-deployment:
-    name: preview-deployment
-    needs: ci-gate
-    if: ${{ always() && github.event_name == 'pull_request' && needs.ci-gate.result == 'success' }}
-    uses: ./.github/workflows/deploy-preview.yml
-    with:
-      source_sha: ${{ github.event.pull_request.head.sha }}
-      pr_number: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
   required-ci:
     name: required-ci
     runs-on: ubuntu-latest
@@ -235,19 +230,12 @@ jobs:
     if: ${{ always() }}
     needs:
       - ci-gate
-      - preview-deployment
     steps:
-      - name: Require CI gate and PR Preview when applicable
+      - name: Require CI gate
         env:
-          EVENT_NAME: ${{ github.event_name }}
           CI_GATE_RESULT: ${{ needs.ci-gate.result }}
-          PREVIEW_RESULT: ${{ needs.preview-deployment.result }}
         shell: bash
         run: |
           set -euo pipefail
           test "$CI_GATE_RESULT" = "success"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$PREVIEW_RESULT" = "success"
-          else
-            test "$PREVIEW_RESULT" = "skipped"
-          fi
+          echo "Privileged Preview deployment runs separately from the trusted default-branch workflow."
