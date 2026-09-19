@@ -742,6 +742,7 @@
     }
     if (job.status === "running") {
       const stageDetails = {
+        runtime_validation: "Validando o runtime instalado e o gate físico selado sem reler gigabytes do modelo.",
         model_prepare: "Baixando ou verificando o modelo local. A GPU pode ficar em 0% nesta etapa.",
         model_load: "Modelo pronto; carregando na GPU para iniciar a transcrição.",
         transcription: "Transcrevendo as faixas da sessão na GPU.",
@@ -756,7 +757,11 @@
         ? `${progress.completed} de ${progress.total ?? "—"} ${progress.unit || "itens"}`
         : null;
       setProcessStatus(
-        job.stage === "model_prepare" ? "Preparando modelo de transcrição…" : "Transcrição em andamento.",
+        job.stage === "runtime_validation"
+          ? "Validando runtime e gate físico…"
+          : job.stage === "model_prepare"
+            ? "Preparando modelo de transcrição…"
+            : "Transcrição em andamento.",
         [stageDetail, progressDetail].filter(Boolean).join(" · ") || "O worker está processando a sessão.",
         "busy",
       );
