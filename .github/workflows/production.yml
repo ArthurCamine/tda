@@ -50,7 +50,7 @@ jobs:
       REQUESTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
           fetch-depth: 0
@@ -94,11 +94,11 @@ jobs:
           console.log(`PRODUCTION_SOURCE_OK PR #${match.number} -> main ${sha}`);
           NODE
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 12.3.4
           run_install: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -207,7 +207,7 @@ jobs:
 
       - name: Install pinned Supabase CLI when migrations changed
         if: ${{ steps.plan.outputs.migrations == 'true' }}
-        uses: supabase/setup-cli@v3
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
 
