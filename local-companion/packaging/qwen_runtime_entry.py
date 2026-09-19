@@ -308,7 +308,7 @@ def main() -> int:
         choices=("qwen-fast", "qwen-quality"),
         default="qwen-fast",
     )
-    parser.add_argument("--require-gpu-name", default="RTX 4070")
+    parser.add_argument("--require-gpu-name", default="")
     parser.add_argument("--transcript-out", type=Path)
     parser.add_argument("--glossary-file", type=Path)
     parser.add_argument("--context-file", type=Path)
