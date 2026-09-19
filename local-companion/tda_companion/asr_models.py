@@ -129,22 +129,47 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def compute_model_content_sha256(directory: Path) -> str:
+def _model_files(directory: Path) -> tuple[Path, ...]:
     root = directory.resolve()
     if not root.is_dir():
         raise ModelRegistryError("MODEL_DIRECTORY_MISSING")
-    files = sorted(
-        (
-            path
-            for path in root.rglob("*")
-            if path.is_file() and path.name != MODEL_MARKER and not path.name.endswith(".partial")
-        ),
-        key=lambda path: path.relative_to(root).as_posix(),
+    files = tuple(
+        sorted(
+            (
+                path
+                for path in root.rglob("*")
+                if path.is_file()
+                and path.name != MODEL_MARKER
+                and not path.name.endswith(".partial")
+            ),
+            key=lambda path: path.relative_to(root).as_posix(),
+        )
     )
     if not files:
         raise ModelRegistryError("MODEL_CONTENT_EMPTY")
+    return files
+
+
+def compute_model_metadata_sha256(directory: Path) -> str:
+    """Cheaply fingerprint model files without reading multi-GB payload bytes."""
+    root = directory.resolve()
     digest = hashlib.sha256()
-    for path in files:
+    for path in _model_files(root):
+        relative = path.relative_to(root).as_posix()
+        stat = path.stat()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(stat.st_mtime_ns).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def compute_model_content_sha256(directory: Path) -> str:
+    root = directory.resolve()
+    digest = hashlib.sha256()
+    for path in _model_files(root):
         relative = path.relative_to(root).as_posix()
         stat = path.stat()
         digest.update(relative.encode("utf-8"))
