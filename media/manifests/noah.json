@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "project": "noah-lore",
+  "namespace": "lore/noah",
+  "bucket": "tda-media-public",
+  "publicOrigin": "https://media.dnd.faysk.dev",
+  "assets": [
+    {
+      "file": "noah_amigos_dormitorio_prismari.webp",
+      "source": "media/sources/noah/noah_amigos_dormitorio_prismari.webp",
+      "bytes": 1952002,
+      "sha256": "a0bb88ee3cb8327709b300d231f20b721bfb474cb6fb874ed20a1390eb9ec0f3",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "noah_familia_wood_estudo.webp",
+      "source": "media/sources/noah/noah_familia_wood_estudo.webp",
+      "bytes": 1503466,
+      "sha256": "094e9a07d83fba9c8db5f115fd9969eafb746725e54def9fc4188615e6da4bae",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "noah_luke_dormitorio_prismari.webp",
+      "source": "media/sources/noah/noah_luke_dormitorio_prismari.webp",
+      "bytes": 1714952,
+      "sha256": "4ebd87117d31b648aabfe744413f2709d0d4b9c0b802c9599750008c347f43eb",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "noah_partida_strixhaven.webp",
+      "source": "media/sources/noah/noah_partida_strixhaven.webp",
+      "bytes": 1960162,
+      "sha256": "1cbeb332c4241c387774bc0670ceb3744fe39981811c89b7871fbdd1b6902c27",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "noah_ritual_marcas_costas.webp",
+      "source": "media/sources/noah/noah_ritual_marcas_costas.webp",
+      "bytes": 1518002,
+      "sha256": "165f44447817f552c8160fdd4bbb53d189965635b49a9f463445bc341bb11cd6",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "noah_sonho_floresta_quori.webp",
+      "source": "media/sources/noah/noah_sonho_floresta_quori.webp",
+      "bytes": 2012456,
+      "sha256": "647b74775c3c0266b409e8a42c1629aa9aa321569c5393c9aab79fccdca8b450",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "referencia_visual_noah.webp",
+      "source": "media/sources/noah/referencia_visual_noah.webp",
+      "bytes": 1753018,
+      "sha256": "61cddeec7c11c19c3d0a967860d23d4927594dd5e2aeac7307de63940e7c8a4c",
+      "contentType": "image/webp"
+    },
+    {
+      "file": "social.png",
+      "source": "media/sources/noah/social.png",
+      "bytes": 781303,
+      "sha256": "47c1d0e5f5b3cc949fc5be35fdcafd70b7827d277c9dcb203a14fd795903f710",
+      "contentType": "image/png"
+    }
+  ]
+}

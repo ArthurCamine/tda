@@ -238,6 +238,9 @@ jobs:
           vercel curl / --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /sessoes --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           vercel curl /lore/yllith --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/astel --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
+          vercel curl /lore/noah --deployment "$DEPLOYMENT_URL" --fail --silent --show-error --output /dev/null
           node --input-type=module - <<'NODE'
           import fs from "node:fs";
           const health = JSON.parse(fs.readFileSync("health.json", "utf8"));

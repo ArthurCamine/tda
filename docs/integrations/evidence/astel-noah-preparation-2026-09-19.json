@@ -1,0 +1,451 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-09-19T15:16:52.216Z",
+  "stage": "local-candidate-not-published",
+  "packages": [
+    {
+      "slug": "astel",
+      "sourceHtmlSha256": "7d6828fe605ffbf8dc7d5f2d2601cb39ef1d616102f61c54c29cc0334086578c",
+      "assets": [
+        {
+          "file": "01_origem_shadowfell.webp",
+          "bytes": 1670162,
+          "sha256": "b2c640c276d20fae051285a3e4b0b6ee746dbdc42769f096efa448b1937c833a",
+          "width": 1536,
+          "height": 1024,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/b2c640c276d20fae051285a3e4b0b6ee746dbdc42769f096efa448b1937c833a/01_origem_shadowfell.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/01_origem_shadowfell.png",
+          "masterSha256": "212ad05de86ec0d72a9ea7c286bdbbebd18ba8322a0c3935d73f91a634247c8e",
+          "masterBytes": 2519364,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "02_chegada_chathold.webp",
+          "bytes": 1676046,
+          "sha256": "81a3afd7cbd9cf56d8e3ddd7fe1bb59d031c4529a2500fe0c0c4e98359cfbcea",
+          "width": 1484,
+          "height": 1060,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/81a3afd7cbd9cf56d8e3ddd7fe1bb59d031c4529a2500fe0c0c4e98359cfbcea/02_chegada_chathold.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/02_chegada_chathold.png",
+          "masterSha256": "07c067b51af2627444ff4b398d6594e529dc5642ef3d69c62c64b9b9032d6ef7",
+          "masterBytes": 2331464,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "03_trio_infernal_mercado.webp",
+          "bytes": 1829678,
+          "sha256": "6c728dc07fac2a584d2ece63a1f84ab3d93959a50f081377aed1458c3cc01ac6",
+          "width": 1484,
+          "height": 1060,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/6c728dc07fac2a584d2ece63a1f84ab3d93959a50f081377aed1458c3cc01ac6/03_trio_infernal_mercado.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/03_trio_infernal_mercado.png",
+          "masterSha256": "2cb81475f13d486d8f59c137f9bece5be3d1478b617aea9ca430f44aedd4b196",
+          "masterBytes": 2583740,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "04_encontro_orfina_corrigido.webp",
+          "bytes": 1887748,
+          "sha256": "1f203d7f8408d1fa08b4558dfdafe536a29f0ae4287c133c0a543bf61124927e",
+          "width": 1024,
+          "height": 1536,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/1f203d7f8408d1fa08b4558dfdafe536a29f0ae4287c133c0a543bf61124927e/04_encontro_orfina_corrigido.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/04_encontro_orfina_corrigido.png",
+          "masterSha256": "c16831f565a2723ba33a2ce53d9ec8b55e9dae8f3619dcda0480dfe06b05840c",
+          "masterBytes": 2777828,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "05_rejeicao_pais_orfina.webp",
+          "bytes": 1719390,
+          "sha256": "905767f729a943b60a343951f74ee73f8fd3515c3c8920ec8e1eda320bb71095",
+          "width": 1024,
+          "height": 1536,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/905767f729a943b60a343951f74ee73f8fd3515c3c8920ec8e1eda320bb71095/05_rejeicao_pais_orfina.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/05_rejeicao_pais_orfina.png",
+          "masterSha256": "4203d8a4067cbb482e0d2c5a92b02771b527b34d04b4522216af32359934455a",
+          "masterBytes": 2547100,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "06_fuga_para_oerth.webp",
+          "bytes": 1924454,
+          "sha256": "7a92caf85d368bdfe638fd8fc25f4bbbc65d50a49a4ba2dc98e445e708a26f06",
+          "width": 1536,
+          "height": 1024,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/7a92caf85d368bdfe638fd8fc25f4bbbc65d50a49a4ba2dc98e445e708a26f06/06_fuga_para_oerth.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/06_fuga_para_oerth.png",
+          "masterSha256": "feb747f59e54e2ba5eeb14792db56d3eeb2a3b807f50a6d1e8610a0fdad0f9e8",
+          "masterBytes": 2785560,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "07_familia_na_fazenda.webp",
+          "bytes": 1805932,
+          "sha256": "1a239f825693163bc2235453cdae0ceaaa1820b0d7f464886607d80eb230a9fc",
+          "width": 1536,
+          "height": 1024,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/1a239f825693163bc2235453cdae0ceaaa1820b0d7f464886607d80eb230a9fc/07_familia_na_fazenda.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/07_familia_na_fazenda.png",
+          "masterSha256": "274f5de69c7c8370b7cc437f958433f116bc9c3bb54fd2e1ca35889c1bf2c21a",
+          "masterBytes": 2636762,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "08_grande_seca.webp",
+          "bytes": 2049320,
+          "sha256": "181f3d3bee67d90d876ca5cb6943d4cdc9692cf0f8ef63861cbb17d87ba9d4db",
+          "width": 1536,
+          "height": 1024,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/181f3d3bee67d90d876ca5cb6943d4cdc9692cf0f8ef63861cbb17d87ba9d4db/08_grande_seca.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/08_grande_seca.png",
+          "masterSha256": "b871808f512f3384cb97a3d7128f204a872cc893f07aa8a6892b1ee8f7bf8bc0",
+          "masterBytes": 3124298,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "09_cobranca_impostos.webp",
+          "bytes": 1929096,
+          "sha256": "806e4085feb7426e41f45e04acfdbf671f7a17c9816f01a6a1dd3e8a64619b7c",
+          "width": 1024,
+          "height": 1536,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/806e4085feb7426e41f45e04acfdbf671f7a17c9816f01a6a1dd3e8a64619b7c/09_cobranca_impostos.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/09_cobranca_impostos.png",
+          "masterSha256": "9dbfe2e8b9e1cf33ee781a887e91de0a675927dc453c2d80765ce606dbba9600",
+          "masterBytes": 2894199,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "10_cacadores_ilegais.webp",
+          "bytes": 1462610,
+          "sha256": "bbc6bd0e659c83f9cd22a65967fb4216963a2693dd419eb7d3a6a05e0bb70e6a",
+          "width": 1536,
+          "height": 1024,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/bbc6bd0e659c83f9cd22a65967fb4216963a2693dd419eb7d3a6a05e0bb70e6a/10_cacadores_ilegais.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/10_cacadores_ilegais.png",
+          "masterSha256": "51a577f9b2b4a8041b81b5d43a8d10b0a31a389d1475ef9cfbb0cb3249c8961b",
+          "masterBytes": 2160819,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "11_retorno_para_casa.webp",
+          "bytes": 1441746,
+          "sha256": "9db577767ad288f41bad82992a3c6d1816140b96d8cc180c051aeb4a6f392fa9",
+          "width": 1060,
+          "height": 1484,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/9db577767ad288f41bad82992a3c6d1816140b96d8cc180c051aeb4a6f392fa9/11_retorno_para_casa.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/11_retorno_para_casa.png",
+          "masterSha256": "b57d5380b274f76b7bf9a72b79c3a67e3c0e819be20227a990a15e57bbb3a1ff",
+          "masterBytes": 1976659,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "12_promessa_nos_tumulos.webp",
+          "bytes": 1754806,
+          "sha256": "68e72e3f899d9403caebb71279edbf040a2a6d29fc52701fe0b3b61cba369c7b",
+          "width": 1024,
+          "height": 1536,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/68e72e3f899d9403caebb71279edbf040a2a6d29fc52701fe0b3b61cba369c7b/12_promessa_nos_tumulos.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/12_promessa_nos_tumulos.png",
+          "masterSha256": "03d8b383a2100add5755311c54511499f311615ee4f6d1f84a087de8ccd8a99a",
+          "masterBytes": 2592378,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "13_cinco_anos_de_busca.webp",
+          "bytes": 1685650,
+          "sha256": "1bb19aae478541d151713ef021063b0938009aee20f0762d2aa4f3cc43c93af6",
+          "width": 1060,
+          "height": 1484,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/1bb19aae478541d151713ef021063b0938009aee20f0762d2aa4f3cc43c93af6/13_cinco_anos_de_busca.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/13_cinco_anos_de_busca.png",
+          "masterSha256": "eb709888ed6a1d75136a0d9169e3258b4869c8a66599a9132ccc85aefdaf83fb",
+          "masterBytes": 2286578,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "14_pacto_com_a_voz.webp",
+          "bytes": 1773454,
+          "sha256": "fa23a186e0b48d6687523afbda9d02e9c58b7780bdf6f6b16e87f1e6fab7e465",
+          "width": 1060,
+          "height": 1484,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/fa23a186e0b48d6687523afbda9d02e9c58b7780bdf6f6b16e87f1e6fab7e465/14_pacto_com_a_voz.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/14_pacto_com_a_voz.png",
+          "masterSha256": "f6509cc5897da7fa5ea9f1f157c4d61f5361dfbfffe6485fb3a9fdce37dd92b9",
+          "masterBytes": 2427242,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "referencia_visual_astel.webp",
+          "bytes": 1603800,
+          "sha256": "970130679ae2bd7820f63e4a0882807cfaff047d63788ce8b0d459d480257821",
+          "width": 1059,
+          "height": 1484,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/970130679ae2bd7820f63e4a0882807cfaff047d63788ce8b0d459d480257821/referencia_visual_astel.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/referencia_visual_astel.png",
+          "masterSha256": "85b4e2b30e20d15dec6d05ab8b6058ce7601ed00bc948968e70bd8e5765bb3f2",
+          "masterBytes": 2409960,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "social.png",
+          "bytes": 1344051,
+          "sha256": "95c5052c27bfc5c731e8417bd058873105fc47314ecf6ba71e5f121b4ad79cd6",
+          "width": 1200,
+          "height": 630,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/astel/95c5052c27bfc5c731e8417bd058873105fc47314ecf6ba71e5f121b4ad79cd6/social.png",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/astel/01_origem_shadowfell.png",
+          "masterSha256": "212ad05de86ec0d72a9ea7c286bdbbebd18ba8322a0c3935d73f91a634247c8e",
+          "masterBytes": 2519364,
+          "encoder": "sharp 0.35.4; PNG contain 1200x630; no crop",
+          "consumers": [
+            "index.html: og:image/twitter:image",
+            "catalog: cover"
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "noah",
+      "sourceHtmlSha256": "4c9782c87b89425c4c66602ba3058937746af31f29e72bc6d768678c4d427ef7",
+      "assets": [
+        {
+          "file": "noah_amigos_dormitorio_prismari.webp",
+          "bytes": 1952002,
+          "sha256": "a0bb88ee3cb8327709b300d231f20b721bfb474cb6fb874ed20a1390eb9ec0f3",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/a0bb88ee3cb8327709b300d231f20b721bfb474cb6fb874ed20a1390eb9ec0f3/noah_amigos_dormitorio_prismari.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_amigos_dormitorio_prismari.png",
+          "masterSha256": "7d925bd73f70144f0d39ff4f38a1a24a51ce41d8a4a920b6a154b5192ba67a6b",
+          "masterBytes": 2549206,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "noah_familia_wood_estudo.webp",
+          "bytes": 1503466,
+          "sha256": "094e9a07d83fba9c8db5f115fd9969eafb746725e54def9fc4188615e6da4bae",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/094e9a07d83fba9c8db5f115fd9969eafb746725e54def9fc4188615e6da4bae/noah_familia_wood_estudo.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_familia_wood_estudo.png",
+          "masterSha256": "b693de3f2712b54f57512865c6c4ddb0024aafb4c81a56cb73dffd213f82b62b",
+          "masterBytes": 2065757,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "noah_luke_dormitorio_prismari.webp",
+          "bytes": 1714952,
+          "sha256": "4ebd87117d31b648aabfe744413f2709d0d4b9c0b802c9599750008c347f43eb",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/4ebd87117d31b648aabfe744413f2709d0d4b9c0b802c9599750008c347f43eb/noah_luke_dormitorio_prismari.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_luke_dormitorio_prismari.png",
+          "masterSha256": "43c2fcf701af41a2dab8163b3498d4d5f1d5a8f73b1625447d23967c2e252466",
+          "masterBytes": 2301060,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "noah_partida_strixhaven.webp",
+          "bytes": 1960162,
+          "sha256": "1cbeb332c4241c387774bc0670ceb3744fe39981811c89b7871fbdd1b6902c27",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/1cbeb332c4241c387774bc0670ceb3744fe39981811c89b7871fbdd1b6902c27/noah_partida_strixhaven.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_partida_strixhaven.png",
+          "masterSha256": "0f44ec5f92e41321301bc7f840288904a2a8ffe711e6ede680ada4ecdf0bb752",
+          "masterBytes": 2640082,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "noah_ritual_marcas_costas.webp",
+          "bytes": 1518002,
+          "sha256": "165f44447817f552c8160fdd4bbb53d189965635b49a9f463445bc341bb11cd6",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/165f44447817f552c8160fdd4bbb53d189965635b49a9f463445bc341bb11cd6/noah_ritual_marcas_costas.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_ritual_marcas_costas.png",
+          "masterSha256": "657bf1f00ee13e5c85f27bb7e06f2f708f260d2f29f699e0e6f99dbe8eb6b1b8",
+          "masterBytes": 2077205,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "noah_sonho_floresta_quori.webp",
+          "bytes": 2012456,
+          "sha256": "647b74775c3c0266b409e8a42c1629aa9aa321569c5393c9aab79fccdca8b450",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/647b74775c3c0266b409e8a42c1629aa9aa321569c5393c9aab79fccdca8b450/noah_sonho_floresta_quori.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_sonho_floresta_quori.png",
+          "masterSha256": "4a1bcd806931d3c44bde5df1a60e5f8335522fea95b52d26f7206c17e42ac6a3",
+          "masterBytes": 2731228,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "referencia_visual_noah.webp",
+          "bytes": 1753018,
+          "sha256": "61cddeec7c11c19c3d0a967860d23d4927594dd5e2aeac7307de63940e7c8a4c",
+          "width": 1086,
+          "height": 1448,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/61cddeec7c11c19c3d0a967860d23d4927594dd5e2aeac7307de63940e7c8a4c/referencia_visual_noah.webp",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/referencia_visual_noah.png",
+          "masterSha256": "735c9fa20c9fd2debcd2bea71aacf74c5ffb2e7deba0082f805c8126b0648499",
+          "masterBytes": 2316720,
+          "encoder": "sharp 0.35.4; webp lossless effort=6",
+          "decodedPixelsEqual": true,
+          "consumers": [
+            "index.html: src/preload/data-full"
+          ]
+        },
+        {
+          "file": "social.png",
+          "bytes": 781303,
+          "sha256": "47c1d0e5f5b3cc949fc5be35fdcafd70b7827d277c9dcb203a14fd795903f710",
+          "width": 1200,
+          "height": 630,
+          "hasAlpha": false,
+          "publicUrl": "https://media.dnd.faysk.dev/lore/noah/47c1d0e5f5b3cc949fc5be35fdcafd70b7827d277c9dcb203a14fd795903f710/social.png",
+          "deliveryStatus": "pending-production-cd",
+          "original": "assets/noah/noah_sonho_floresta_quori.png",
+          "masterSha256": "4a1bcd806931d3c44bde5df1a60e5f8335522fea95b52d26f7206c17e42ac6a3",
+          "masterBytes": 2731228,
+          "encoder": "sharp 0.35.4; PNG contain 1200x630; no crop",
+          "consumers": [
+            "index.html: og:image/twitter:image",
+            "catalog: cover"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+[
+	{
+		"slug": "astel",
+		"name": "Astel",
+		"title": "Antes da Voz",
+		"description": "A vida de Astel antes da Voz: Shadowfell, juventude errante, Orfina e a fazenda ao sul de Prymp.",
+		"cover": "https://media.dnd.faysk.dev/lore/astel/95c5052c27bfc5c731e8417bd058873105fc47314ecf6ba71e5f121b4ad79cd6/social.png"
+	},
+	{
+		"slug": "noah",
+		"name": "Noah Wood",
+		"title": "Sonhos com Dentes",
+		"description": "A história de Noah Wood: família, sonhos, um espírito primal e a coragem de partir de Strixhaven.",
+		"cover": "https://media.dnd.faysk.dev/lore/noah/47c1d0e5f5b3cc949fc5be35fdcafd70b7827d277c9dcb203a14fd795903f710/social.png"
+	}
+]
