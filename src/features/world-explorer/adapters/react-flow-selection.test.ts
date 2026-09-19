@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorldGraphProjection } from "../model";
 import {
 	applyWorldFlowSelection,
+	preserveWorldFlowNodeMeasurements,
 	toReactFlowStructure,
 } from "./react-flow";
 
@@ -87,5 +88,26 @@ describe("World React Flow selection decoration", () => {
 		expect(cleared.nodes.every((node) => node.selected === false)).toBe(true);
 		expect(cleared.nodes.every((node) => node.data.isDimmed === false)).toBe(true);
 		expect(cleared.edges.every((edge) => edge.data?.isDimmed === false)).toBe(true);
+	});
+
+	it("preserves React Flow measurements when domain-driven graph data refreshes", () => {
+		const structure = toReactFlowStructure(PROJECTION);
+		const current = structure.nodes.map((node) =>
+			node.id === "hero"
+				? { ...node, measured: { width: 240, height: 144 } }
+				: node,
+		);
+		const next = structure.nodes.map((node) =>
+			node.id === "hero"
+				? { ...node, data: { ...node.data, isDimmed: true } }
+				: node,
+		);
+
+		const reconciled = preserveWorldFlowNodeMeasurements(current, next);
+		const hero = reconciled.find((node) => node.id === "hero");
+
+		expect(hero?.measured).toEqual({ width: 240, height: 144 });
+		expect(hero?.data.isDimmed).toBe(true);
+		expect(reconciled.find((node) => node.id === "friend")?.measured).toBeUndefined();
 	});
 });

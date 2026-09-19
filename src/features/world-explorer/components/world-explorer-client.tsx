@@ -12,6 +12,7 @@ import { useEdgesState, useNodesState, type XYPosition } from "@xyflow/react";
 import { useWorldWorkspaceControls } from "../../world-shell/world-workspace-context";
 import {
 	applyWorldFlowSelection,
+	preserveWorldFlowNodeMeasurements,
 	rerouteWorldEdges,
 	toReactFlowGraph,
 	toReactFlowStructure,
@@ -238,7 +239,7 @@ export function WorldExplorerClient({
 	}, [positionOverrides]);
 
 	useEffect(() => {
-		setNodes(graph.nodes);
+		setNodes((current) => preserveWorldFlowNodeMeasurements(current, graph.nodes));
 		setEdges(graph.edges);
 	}, [graph, setEdges, setNodes]);
 

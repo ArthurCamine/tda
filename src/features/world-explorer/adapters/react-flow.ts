@@ -40,6 +40,26 @@ export type WorldFlowGraph = Readonly<{
 	edges: WorldFlowEdge[];
 }>;
 
+/**
+ * React Flow stores measured node dimensions in controlled node state.
+ * Rebuilding the graph from domain data does not include those measurements,
+ * so replacing the whole node array can temporarily make every node unmeasured.
+ * With onlyRenderVisibleElements enabled that can cull the entire canvas until
+ * the flow is remounted. Preserve measurements for stable node ids while still
+ * accepting every domain-driven field from the freshly projected graph.
+ */
+export function preserveWorldFlowNodeMeasurements(
+	currentNodes: readonly WorldFlowNode[],
+	nextNodes: readonly WorldFlowNode[],
+): WorldFlowNode[] {
+	const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+	return nextNodes.map((node) => {
+		if (node.measured) return node;
+		const measured = currentById.get(node.id)?.measured;
+		return measured ? { ...node, measured } : node;
+	});
+}
+
 function prominenceFor(
 	item: WorldNodeDTO,
 	isHero: boolean,
