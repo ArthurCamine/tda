@@ -783,6 +783,12 @@ def create_app(
                                         "rejected_field_count": sanitized_event.rejected_field_count,
                                     },
                                 )
+                            store.record_worker_activity(
+                                job_id,
+                                attempt,
+                                code,
+                                data,
+                            )
                             if code in {
                                 "QWEN_WINDOW_TRANSCRIBED",
                                 "WHISPER_SEGMENT_TRANSCRIBED",
@@ -1478,6 +1484,13 @@ def create_app(
             signal_active_worker_cancel(job_id)
             return value
         return store.action(job_id, action)
+
+    @app.get("/api/v1/jobs/{job_id}/activity")
+    def activity(
+        job_id: str,
+        attempt: Annotated[int | None, Query(ge=1)] = None,
+    ):
+        return store.activity(job_id, attempt=attempt)
 
     @app.get("/api/v1/jobs/{job_id}/events")
     def events(

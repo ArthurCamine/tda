@@ -283,6 +283,7 @@ def test_strict_qwen_exposes_fingerprint_and_checkpoint_scan_before_model_load(
 def test_strict_qwen_accepts_silent_window_without_alignment(tmp_path: Path):
     package, root = _package(tmp_path)
     align_calls = 0
+    reports: list[dict] = []
 
     class Asr:
         def transcribe(self, _audio, *, prompt: str):
@@ -313,6 +314,7 @@ def test_strict_qwen_accepts_silent_window_without_alignment(tmp_path: Path):
             [AudioWindow(index=1, start=0.0, end=2.0, audio="silence")]
         ),
         energy_reader=lambda *_args: -120.0,
+        report=reports.append,
     )
 
     assert align_calls == 0
@@ -320,6 +322,28 @@ def test_strict_qwen_accepts_silent_window_without_alignment(tmp_path: Path):
     assert document.tracks[0].segments == ()
     assert document.stats.segment_count == 0
     assert document.stats.word_count == 0
+    windows = [
+        item
+        for item in reports
+        if item.get("code") == "QWEN_WINDOW_TRANSCRIBED"
+    ]
+    assert windows == [
+        {
+            "type": "event",
+            "code": "QWEN_WINDOW_TRANSCRIBED",
+            "stage": "transcription",
+            "track": 1,
+            "total_tracks": 1,
+            "speaker": "Alice",
+            "window": 1,
+            "completed_window_count": 1,
+        }
+    ]
+    completed = next(
+        item for item in reports if item.get("code") == "TRACK_COMPLETED"
+    )
+    assert completed["track"] == 1
+    assert completed["completed_window_count"] == 1
 
 
 def test_alignment_failure_event_allowlists_diagnostic_metadata(

@@ -8,6 +8,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -216,6 +217,111 @@ def test_running_cancel_signals_active_worker_and_stays_cancelled(monkeypatch, t
     persisted = Store(tmp_path).get(job_id)
     assert persisted["status"] == "cancelled"
     assert persisted["error"] is None
+
+
+def test_worker_activity_count_survives_agent_trace_throttle(monkeypatch, tmp_path):
+    emitted = threading.Event()
+
+    def fake_run_craig(
+        self,
+        *,
+        job_id,
+        attempt,
+        source_id,
+        profile_id,
+        glossary,
+        context,
+        cpu,
+        on_progress,
+        on_event=None,
+        is_cancelled=None,
+    ):
+        del (
+            self,
+            job_id,
+            attempt,
+            source_id,
+            profile_id,
+            glossary,
+            context,
+            cpu,
+            on_progress,
+            is_cancelled,
+        )
+        assert on_event is not None
+        for completed in range(1, 251):
+            on_event(
+                SimpleNamespace(
+                    type="event",
+                    payload={
+                        "code": "QWEN_WINDOW_TRANSCRIBED",
+                        "stage": "transcription",
+                        "track": 1,
+                        "total_tracks": 1,
+                        "speaker": "Alice",
+                        "window": completed,
+                        "completed_window_count": completed,
+                    },
+                )
+            )
+        emitted.set()
+        return WorkerOutcome(
+            terminal="cancelled",
+            payload={"stage": "test_complete", "forced": False},
+            returncode=0,
+        )
+
+    monkeypatch.setattr(WorkerSupervisor, "run_craig", fake_run_craig)
+    app = create_app(tmp_path, TOKEN, {ORIGIN}, run_worker=True)
+    job = app.state.store.submit(
+        "activity-throttle",
+        {
+            "kind": "transcription.craig",
+            "campaign_id": "campaign",
+            "session_id": "session",
+            "source_id": "activity-source",
+            "profile_id": "qwen-fast",
+            "glossary": "",
+            "context": "",
+            "cpu": False,
+            "units": 1,
+        },
+    )
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as live:
+        assert emitted.wait(10.0)
+        deadline = time.monotonic() + 5.0
+        state = None
+        while time.monotonic() < deadline:
+            state = live.get(f"/api/v1/jobs/{job['id']}", headers=HEADERS).json()
+            if state["status"] == "cancelled":
+                break
+            time.sleep(0.01)
+        assert state is not None
+        assert state["status"] == "cancelled"
+
+        response = live.get(
+            f"/api/v1/jobs/{job['id']}/activity",
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        activity = response.json()
+        assert activity["attempt"] == 1
+        assert {
+            (item["metric"], item["track"], item["value"])
+            for item in activity["metrics"]
+        } == {("qwen_windows_completed", 1, 250)}
+
+        events = live.get(
+            f"/api/v1/jobs/{job['id']}/events?limit=200",
+            headers=HEADERS,
+        ).json()["events"]
+        samples = [
+            event
+            for event in events
+            if event["code"] == "QWEN_WINDOW_TRANSCRIBED"
+        ]
+        assert 1 <= len(samples) < 250
 
 
 def test_cancelled_craig_source_stays_owned_until_worker_exits(monkeypatch, tmp_path):

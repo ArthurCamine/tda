@@ -288,6 +288,7 @@ def test_craig_whisper_adapter_emits_engine_independent_transcript(tmp_path: Pat
         and item.get("total_tracks") == 1
         and item.get("speaker") == "Alice"
         and item.get("segment") == 1
+        and item.get("completed_segment_count") == 1
         for item in reports
     )
     assert any(
@@ -296,6 +297,7 @@ def test_craig_whisper_adapter_emits_engine_independent_transcript(tmp_path: Pat
         and item.get("track") == 1
         and item.get("total_tracks") == 1
         and item.get("speaker") == "Alice"
+        and item.get("completed_segment_count") == 1
         for item in reports
     )
     stages = [item.get("stage") for item in reports if item.get("type") == "stage"]

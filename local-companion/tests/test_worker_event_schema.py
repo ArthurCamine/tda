@@ -38,6 +38,47 @@ def test_known_activity_event_drops_private_extra_fields_without_losing_safe_met
     assert "segredo" not in repr(event)
 
 
+def test_activity_counts_are_bounded_and_terminal_zero_is_valid():
+    qwen = sanitize_worker_event(
+        {
+            "code": "QWEN_WINDOW_TRANSCRIBED",
+            "stage": "transcription",
+            "track": 1,
+            "total_tracks": 1,
+            "speaker": "Alice",
+            "window": 2,
+            "completed_window_count": 2,
+        }
+    )
+    assert qwen.data["completed_window_count"] == 2
+
+    whisper_terminal = sanitize_worker_event(
+        {
+            "code": "TRACK_COMPLETED",
+            "stage": "transcription",
+            "track": 2,
+            "total_tracks": 2,
+            "speaker": "Bob",
+            "completed_segment_count": 0,
+        }
+    )
+    assert whisper_terminal.code == "TRACK_COMPLETED"
+    assert whisper_terminal.data["completed_segment_count"] == 0
+
+    invalid = sanitize_worker_event(
+        {
+            "code": "TRACK_COMPLETED",
+            "stage": "transcription",
+            "track": 2,
+            "total_tracks": 2,
+            "speaker": "Bob",
+            "completed_segment_count": -1,
+        }
+    )
+    assert "completed_segment_count" not in invalid.data
+    assert invalid.drift_reason == "unexpected_or_invalid_field"
+
+
 def test_unknown_or_malformed_event_code_never_persists_raw_code_or_payload():
     for payload in (
         {"code": "PRIVATE_WORDS_FROM_TRANSCRIPT", "detail": "segredo"},

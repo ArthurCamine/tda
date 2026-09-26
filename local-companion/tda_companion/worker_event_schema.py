@@ -203,14 +203,14 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
 _POSITIVE_INT_FIELDS = frozenset(
     {
         "track", "total_tracks", "segment", "attempt",
-        "track_count", "count", "completed_window_count",
-        "completed_segment_count",
+        "track_count", "count",
     }
 )
 _NONNEGATIVE_INT_FIELDS = frozenset(
     {
         "window", "aligned_reused", "text_reused", "text_compat_reused",
         "pending_asr", "aligned_item", "aligned_word_count", "owned_word_count",
+        "completed_window_count", "completed_segment_count",
     }
 )
 _BYTE_FIELDS = frozenset({"downloaded_bytes", "total_bytes"})

@@ -111,6 +111,21 @@ export type JobEventPage = {
 	nextAfterSeq: number | null;
 	nextBeforeSeq: number | null;
 };
+export type JobActivityMetric =
+	| "qwen_windows_completed"
+	| "whisper_segments_completed"
+	| "model_downloaded_bytes";
+export type JobActivityItem = {
+	track: number | null;
+	metric: JobActivityMetric;
+	value: number;
+	updatedAt: string;
+};
+export type JobActivity = {
+	schemaVersion: "tda_job_activity_v1";
+	attempt: number;
+	metrics: readonly JobActivityItem[];
+};
 export type SystemGpu = {
 	index: number;
 	name: string;
@@ -738,6 +753,48 @@ export function parseJobEventPage(value: unknown): JobEventPage {
 		return invalid();
 	return { events, hasMore, nextAfterSeq, nextBeforeSeq };
 }
+
+export function parseJobActivity(value: unknown): JobActivity {
+	const row = record(value);
+	if (row.schema_version !== "tda_job_activity_v1") return invalid();
+	const attempt = nonNegativeInteger(row.attempt);
+	if (attempt < 1) return invalid();
+	if (!Array.isArray(row.metrics) || row.metrics.length > 1024) return invalid();
+	const allowedMetrics: readonly JobActivityMetric[] = [
+		"qwen_windows_completed",
+		"whisper_segments_completed",
+		"model_downloaded_bytes",
+	];
+	const metrics = row.metrics.map((raw) => {
+		const item = record(raw);
+		const metric = text(item.metric, 64);
+		if (!allowedMetrics.includes(metric as JobActivityMetric)) return invalid();
+		const track =
+			item.track === null ? null : nonNegativeInteger(item.track);
+		if (
+			metric === "model_downloaded_bytes"
+				? track !== null
+				: track === null || track < 1
+		)
+			return invalid();
+		return {
+			track,
+			metric: metric as JobActivityMetric,
+			value: nonNegativeInteger(item.value),
+			updatedAt: isoDate(item.updated_at),
+		};
+	});
+	const identities = metrics.map(
+		(item) => `${item.metric}:${item.track === null ? "none" : item.track}`,
+	);
+	if (new Set(identities).size !== identities.length) return invalid();
+	return {
+		schemaVersion: "tda_job_activity_v1",
+		attempt,
+		metrics,
+	};
+}
+
 export function parseSystemSnapshot(value: unknown): SystemSnapshot {
 	const row = record(value);
 	const host = record(row.host);

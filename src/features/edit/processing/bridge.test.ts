@@ -4,6 +4,7 @@ import {
 	LOCAL_API,
 	parseCapabilities,
 	parseJob,
+	parseJobActivity,
 	parseJobEventPage,
 	parseJobEvents,
 	parseJobs,
@@ -70,6 +71,96 @@ describe("processing protocol contract", () => {
 		});
 		expect(legacy.events.map((event) => event.seq)).toEqual([1, 2]);
 		expect(legacy.hasMore).toBe(false);
+	});
+
+	it("parses bounded authoritative job activity and rejects ambiguous identities", () => {
+		const activity = parseJobActivity({
+			schema_version: "tda_job_activity_v1",
+			attempt: 2,
+			metrics: [
+				{
+					track: 1,
+					metric: "qwen_windows_completed",
+					value: 250,
+					updated_at: "2026-09-26T20:00:00Z",
+				},
+				{
+					track: null,
+					metric: "model_downloaded_bytes",
+					value: 25,
+					updated_at: "2026-09-26T20:00:01Z",
+				},
+			],
+		});
+		expect(activity).toEqual({
+			schemaVersion: "tda_job_activity_v1",
+			attempt: 2,
+			metrics: [
+				{
+					track: 1,
+					metric: "qwen_windows_completed",
+					value: 250,
+					updatedAt: "2026-09-26T20:00:00Z",
+				},
+				{
+					track: null,
+					metric: "model_downloaded_bytes",
+					value: 25,
+					updatedAt: "2026-09-26T20:00:01Z",
+				},
+			],
+		});
+
+		for (const invalid of [
+			{
+				schema_version: "tda_job_activity_v1",
+				attempt: 0,
+				metrics: [],
+			},
+			{
+				schema_version: "tda_job_activity_v1",
+				attempt: 1,
+				metrics: [
+					{
+						track: null,
+						metric: "qwen_windows_completed",
+						value: 1,
+						updated_at: "2026-09-26T20:00:00Z",
+					},
+				],
+			},
+			{
+				schema_version: "tda_job_activity_v1",
+				attempt: 1,
+				metrics: [
+					{
+						track: 1,
+						metric: "model_downloaded_bytes",
+						value: 1,
+						updated_at: "2026-09-26T20:00:00Z",
+					},
+				],
+			},
+			{
+				schema_version: "tda_job_activity_v1",
+				attempt: 1,
+				metrics: [
+					{
+						track: 1,
+						metric: "whisper_segments_completed",
+						value: 10,
+						updated_at: "2026-09-26T20:00:00Z",
+					},
+					{
+						track: 1,
+						metric: "whisper_segments_completed",
+						value: 11,
+						updated_at: "2026-09-26T20:00:01Z",
+					},
+				],
+			},
+		])
+			expect(() => parseJobActivity(invalid)).toThrow();
 	});
 
 	it("keeps legacy/job-level event attempt nullable and rejects invalid attempts", () => {
@@ -471,6 +562,43 @@ describe("loopback bridge", () => {
 		expect(request.mock.calls[0][0]).toBe(
 			`${LOCAL_API}/jobs/test-job/events?after_seq=41&limit=200`,
 		);
+		bridge.disconnect();
+	});
+
+	it("reads authoritative activity through the authenticated local bridge", async () => {
+		const request = vi.fn<typeof fetch>().mockResolvedValue(
+			Response.json({
+				schema_version: "tda_job_activity_v1",
+				attempt: 2,
+				metrics: [
+					{
+						track: 3,
+						metric: "whisper_segments_completed",
+						value: 97,
+						updated_at: "2026-09-26T20:00:00Z",
+					},
+				],
+			}),
+		);
+		const bridge = new LocalBridge(request);
+		bridge.pair(token);
+
+		const activity = await bridge.activity("test-job", signal(), 2);
+
+		expect(activity.attempt).toBe(2);
+		expect(activity.metrics[0]).toMatchObject({
+			track: 3,
+			metric: "whisper_segments_completed",
+			value: 97,
+		});
+		expect(request.mock.calls[0][0]).toBe(
+			`${LOCAL_API}/jobs/test-job/activity?attempt=2`,
+		);
+		expect(request.mock.calls[0][1]?.method).toBe("GET");
+		await expect(
+			bridge.activity("test-job", signal(), 0),
+		).rejects.toMatchObject({ code: "invalid_response" });
+		expect(request).toHaveBeenCalledTimes(1);
 		bridge.disconnect();
 	});
 

@@ -564,6 +564,7 @@ def transcribe_craig_package_qwen_strict(
 
     started = time.monotonic()
     pending_text: dict[int, list[QwenWindowTranscript]] = {}
+    fresh_window_counts: dict[int, int] = {}
     asr_tracks = []
     text_checkpoint_reused = 0
     text_checkpoint_compat_reused = 0
@@ -700,10 +701,12 @@ def transcribe_craig_package_qwen_strict(
                             "total_tracks": total_tracks,
                             "speaker": track.speaker,
                             "window": window.index,
+                            "completed_window_count": len(values),
                         }
                     )
                 if not values:
                     raise QwenRuntimeError("QWEN_AUDIO_EMPTY")
+                fresh_window_counts[track.number] = len(values)
                 pending_text[track.number] = values
                 if checkpoints:
                     try:
@@ -984,6 +987,11 @@ def transcribe_craig_package_qwen_strict(
                         "track": track.number,
                         "total_tracks": total_tracks,
                         "speaker": track.speaker,
+                        **(
+                            {"completed_window_count": fresh_window_counts[track.number]}
+                            if track.number in fresh_window_counts
+                            else {}
+                        ),
                     }
                 )
                 completed_tracks += 1

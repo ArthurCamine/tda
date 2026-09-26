@@ -155,7 +155,7 @@ def test_v4_event_rows_migrate_to_nullable_attempt_without_inference(tmp_path: P
             row[1] for row in db.execute("PRAGMA table_info(events)").fetchall()
         }
 
-    assert version == 6
+    assert version == 7
     assert "attempt" in columns
     event = _event_by_code(migrated.events(job_id), "QUEUED")[0]
     assert event["attempt"] is None

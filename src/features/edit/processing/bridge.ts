@@ -14,6 +14,7 @@ import {
 	parseCraigSource,
 	parseHealth,
 	parseJob,
+	parseJobActivity,
 	parsePreparationStatus,
 	record,
 	text,
@@ -328,6 +329,17 @@ export class LocalBridge {
 	}
 	async job(id: string, signal: AbortSignal) {
 		return parseJob(await this.json(`/jobs/${identifier(id)}`, signal));
+	}
+	async activity(id: string, signal: AbortSignal, attempt?: number) {
+		if (
+			attempt !== undefined &&
+			(!Number.isSafeInteger(attempt) || attempt < 1)
+		)
+			throw new BridgeError("invalid_response");
+		const query = attempt === undefined ? "" : `?attempt=${attempt}`;
+		return parseJobActivity(
+			await this.json(`/jobs/${identifier(id)}/activity${query}`, signal),
+		);
 	}
 	async events(
 		id: string,

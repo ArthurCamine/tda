@@ -11,6 +11,17 @@ from .legacy.artifacts import sha256_json, utc_now
 from .legacy.publication import build_publication_bundle
 
 
+_ACTIVITY_METRICS = frozenset(
+    {
+        "qwen_windows_completed",
+        "whisper_segments_completed",
+        "model_downloaded_bytes",
+    }
+)
+_MAX_ACTIVITY_COUNT = 1_000_000_000
+_MAX_ACTIVITY_BYTES = (1 << 53) - 1
+
+
 class Conflict(Exception):
     pass
 
@@ -21,7 +32,7 @@ class Store:
         self.path = root / "jobs.sqlite3"
         with self.tx() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5, 6):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                 raise RuntimeError("DATABASE_VERSION_UNSUPPORTED")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -44,6 +55,15 @@ class Store:
                     status TEXT NOT NULL,
                     result_available INTEGER NOT NULL,
                     updated TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS job_activity (
+                    job_id TEXT NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    track INTEGER NOT NULL,
+                    metric TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    updated TEXT NOT NULL,
+                    PRIMARY KEY(job_id, attempt, track, metric)
                 );
             """)
             event_columns = {
@@ -74,7 +94,7 @@ class Store:
                 "CREATE INDEX IF NOT EXISTS jobs_status_updated_id_idx "
                 "ON jobs(status, updated DESC, id DESC)"
             )
-            db.execute("PRAGMA user_version=6")
+            db.execute("PRAGMA user_version=7")
             db.execute("INSERT OR IGNORE INTO settings VALUES ('device', ?)", (str(uuid4()),))
             db.execute("INSERT OR IGNORE INTO settings VALUES ('paused', 'false')")
 
@@ -177,6 +197,155 @@ class Store:
                 return False
             self.event(db, job_id, code, clean, level=level, attempt=attempt)
             return True
+
+    def record_activity(self, job_id, attempt, metric, value, *, track=None):
+        if (
+            isinstance(attempt, bool)
+            or not isinstance(attempt, int)
+            or attempt < 1
+            or not isinstance(metric, str)
+            or metric not in _ACTIVITY_METRICS
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise Conflict("JOB_ACTIVITY_INVALID")
+        if metric == "model_downloaded_bytes":
+            if track is not None or value > _MAX_ACTIVITY_BYTES:
+                raise Conflict("JOB_ACTIVITY_INVALID")
+            track_key = 0
+        else:
+            if (
+                isinstance(track, bool)
+                or not isinstance(track, int)
+                or track < 1
+                or track > _MAX_ACTIVITY_COUNT
+                or value > _MAX_ACTIVITY_COUNT
+            ):
+                raise Conflict("JOB_ACTIVITY_INVALID")
+            track_key = track
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT status,attempt FROM jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] != "running" or row["attempt"] != attempt:
+                return False
+            now = utc_now()
+            db.execute(
+                """
+                INSERT INTO job_activity(job_id,attempt,track,metric,value,updated)
+                VALUES (?,?,?,?,?,?)
+                ON CONFLICT(job_id,attempt,track,metric) DO UPDATE SET
+                    value=CASE
+                        WHEN excluded.metric = 'model_downloaded_bytes'
+                        THEN excluded.value
+                        WHEN excluded.value > job_activity.value
+                        THEN excluded.value
+                        ELSE job_activity.value
+                    END,
+                    updated=CASE
+                        WHEN excluded.metric = 'model_downloaded_bytes'
+                        THEN excluded.updated
+                        WHEN excluded.value > job_activity.value
+                        THEN excluded.updated
+                        ELSE job_activity.updated
+                    END
+                """,
+                (job_id, attempt, track_key, metric, value, now),
+            )
+            return True
+
+    def record_worker_activity(self, job_id, attempt, code, data):
+        payload = data if isinstance(data, dict) else {}
+        if code == "QWEN_WINDOW_TRANSCRIBED":
+            value = payload.get("completed_window_count")
+            if value is None:
+                return None
+            return self.record_activity(
+                job_id,
+                attempt,
+                "qwen_windows_completed",
+                value,
+                track=payload.get("track"),
+            )
+        if code == "WHISPER_SEGMENT_TRANSCRIBED":
+            value = payload.get("completed_segment_count", payload.get("segment"))
+            return self.record_activity(
+                job_id,
+                attempt,
+                "whisper_segments_completed",
+                value,
+                track=payload.get("track"),
+            )
+        if code == "MODEL_DOWNLOAD_PROGRESS":
+            return self.record_activity(
+                job_id,
+                attempt,
+                "model_downloaded_bytes",
+                payload.get("downloaded_bytes"),
+            )
+        if code == "TRACK_COMPLETED":
+            accepted = None
+            if "completed_window_count" in payload:
+                accepted = self.record_activity(
+                    job_id,
+                    attempt,
+                    "qwen_windows_completed",
+                    payload["completed_window_count"],
+                    track=payload.get("track"),
+                )
+            if "completed_segment_count" in payload:
+                segment_accepted = self.record_activity(
+                    job_id,
+                    attempt,
+                    "whisper_segments_completed",
+                    payload["completed_segment_count"],
+                    track=payload.get("track"),
+                )
+                accepted = segment_accepted if accepted is None else accepted and segment_accepted
+            return accepted
+        return None
+
+    def activity(self, job_id, *, attempt=None):
+        if attempt is not None and (
+            isinstance(attempt, bool)
+            or not isinstance(attempt, int)
+            or attempt < 1
+        ):
+            raise Conflict("JOB_ACTIVITY_ATTEMPT_INVALID")
+        with self.read() as db:
+            job = db.execute(
+                "SELECT attempt FROM jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if not job:
+                raise KeyError(job_id)
+            selected_attempt = attempt if attempt is not None else int(job["attempt"])
+            rows = db.execute(
+                """
+                SELECT track,metric,value,updated
+                FROM job_activity
+                WHERE job_id=? AND attempt=?
+                ORDER BY track,metric
+                """,
+                (job_id, selected_attempt),
+            ).fetchall()
+        return {
+            "schema_version": "tda_job_activity_v1",
+            "attempt": selected_attempt,
+            "metrics": [
+                {
+                    "track": row["track"] or None,
+                    "metric": row["metric"],
+                    "value": row["value"],
+                    "updated_at": row["updated"],
+                }
+                for row in rows
+            ],
+        }
 
     def recover(self):
         with self.tx() as db:
@@ -592,6 +761,7 @@ class Store:
                 ),
             )
             db.execute("DELETE FROM events WHERE job_id=?", (job_id,))
+            db.execute("DELETE FROM job_activity WHERE job_id=?", (job_id,))
             db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             return {"deleted": True, "id": job_id}
 
