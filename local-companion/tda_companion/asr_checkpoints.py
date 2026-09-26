@@ -10,13 +10,14 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 from .asr_models import AsrProfile
-from .craig import CraigPackage, CraigTrack
+from .craig import CraigPackage, CraigPackageError, CraigTrack
 from .transcript import TranscriptSegment, TranscriptTrack, TranscriptValidationError
 
 CHECKPOINT_SCHEMA = "tda_asr_track_checkpoint_v2"
 QWEN_TEXT_CHECKPOINT_SCHEMA = "tda_qwen_text_checkpoint_v1"
 QWEN_TEXT_CHECKPOINT_NAMESPACE = "qwen-text-v1"
 MAX_CHECKPOINT_BYTES = 64 * 1024 * 1024
+SOURCE_HASH_CHUNK_BYTES = 1024 * 1024
 _TRACK_CHECKPOINT_KEYS = frozenset(
     {
         "schema",
@@ -88,6 +89,25 @@ def _sha_text(value: str) -> str:
 def _canonical_json_hash(value: object) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def verify_checkpoint_source_bytes(path: Path, track: CraigTrack) -> None:
+    """Prove staged bytes still match the Craig manifest before cache reuse."""
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise CraigPackageError("CRAIG_MANIFEST_TRACK_MISSING") from exc
+    if stat.st_size != track.size_bytes:
+        raise CraigPackageError("CRAIG_MANIFEST_TRACK_SIZE_MISMATCH")
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(SOURCE_HASH_CHUNK_BYTES), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise CraigPackageError("CRAIG_MANIFEST_TRACK_READ_FAILED") from exc
+    if digest.hexdigest().lower() != track.sha256.lower():
+        raise CraigPackageError("CRAIG_MANIFEST_TRACK_HASH_MISMATCH")
 
 
 def build_checkpoint_signature(

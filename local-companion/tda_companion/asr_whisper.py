@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from .asr_checkpoints import build_checkpoint_signature, load_track_checkpoint, save_track_checkpoint
+from .asr_checkpoints import (
+    build_checkpoint_signature,
+    load_track_checkpoint,
+    save_track_checkpoint,
+    verify_checkpoint_source_bytes,
+)
 from .asr_models import (
     AsrProfile,
     ModelRegistryError,
@@ -541,6 +546,7 @@ def transcribe_craig_package(
                 _safe_track_path(package_root, track)
                 cached = load_track_checkpoint(package_root, candidate_signature, track)
                 if cached is not None:
+                    verify_checkpoint_source_bytes(_safe_track_path(package_root, track), track)
                     candidate_tracks[track.number] = cached
             if len(candidate_tracks) == total_tracks:
                 checkpoint_signature = candidate_signature
@@ -596,6 +602,8 @@ def transcribe_craig_package(
         cached = preloaded_checkpoints.get(track.number)
         if cached is None and checkpoints:
             cached = load_track_checkpoint(package_root, checkpoint_signature, track)
+            if cached is not None:
+                verify_checkpoint_source_bytes(source, track)
         if cached is not None:
             tracks.append(cached)
             report(

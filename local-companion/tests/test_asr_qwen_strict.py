@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -1503,6 +1504,30 @@ def test_strict_qwen_checkpoint_reuse_skips_model_and_only_replays_energy(
     assert "model_load" not in stages
     assert "alignment" not in stages
     assert "energy_analysis" in stages
+
+    source = root / package.tracks[0].path
+    payload = source.read_bytes()
+    original_stat = source.stat()
+    source.write_bytes(bytes(byte ^ 1 for byte in payload))
+    os.utime(
+        source,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    with pytest.raises(CraigPackageError, match="CRAIG_MANIFEST_TRACK_HASH_MISMATCH"):
+        transcribe_craig_package_qwen_strict(
+            package,
+            root,
+            tmp_path / "Models",
+            profile_id="qwen-fast",
+            plan_resolver=_plan,
+            model_prepare=forbidden,
+            aligner_prepare=forbidden,
+            asr_session_factory=forbidden,
+            aligner_session_factory=forbidden,
+            window_reader=reader,
+            energy_reader=lambda *_args: -12.0,
+        )
+    source.write_bytes(payload)
 
     monkeypatch.setenv("TDA_ASR_RUNTIME_VERSION", "1.0.7")
     before_upgrade = reads

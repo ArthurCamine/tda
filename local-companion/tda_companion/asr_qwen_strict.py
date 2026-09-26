@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import math
 import re
 import time
@@ -15,6 +14,7 @@ from .asr_checkpoints import (
     load_track_checkpoint,
     save_qwen_text_checkpoint,
     save_track_checkpoint,
+    verify_checkpoint_source_bytes,
 )
 from .asr_models import QWEN_FORCED_ALIGNER_MODEL_ID, get_profile
 from .asr_qwen import (
@@ -76,9 +76,6 @@ _ALIGNMENT_DIAGNOSTIC_KEYS = frozenset(
         "owned_word_count",
     }
 )
-_CHECKPOINT_HASH_CHUNK_BYTES = 1024 * 1024
-
-
 def _runtime_identity_metadata(fingerprint: str) -> dict[str, str]:
     version = _RUNTIME_VERSION_FIELD.search(fingerprint)
     worker = _RUNTIME_WORKER_SHA256_FIELD.search(fingerprint)
@@ -88,24 +85,6 @@ def _runtime_identity_metadata(fingerprint: str) -> dict[str, str]:
         "runtime_version": version.group(1),
         "worker_sha256": worker.group(1),
     }
-
-
-def _verify_checkpoint_source_bytes(path: Path, track: CraigTrack) -> None:
-    try:
-        stat = path.stat()
-    except OSError as exc:
-        raise CraigPackageError("CRAIG_MANIFEST_TRACK_MISSING") from exc
-    if stat.st_size != track.size_bytes:
-        raise CraigPackageError("CRAIG_MANIFEST_TRACK_SIZE_MISMATCH")
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(_CHECKPOINT_HASH_CHUNK_BYTES), b""):
-                digest.update(chunk)
-    except OSError as exc:
-        raise CraigPackageError("CRAIG_MANIFEST_TRACK_READ_FAILED") from exc
-    if digest.hexdigest().lower() != track.sha256.lower():
-        raise CraigPackageError("CRAIG_MANIFEST_TRACK_HASH_MISMATCH")
 
 
 def iter_audio_windows_overlap(
@@ -558,6 +537,7 @@ def transcribe_craig_package_qwen_strict(
         _safe_track_path(package_root, track)
         cached = load_track_checkpoint(package_root, signature, track) if checkpoints else None
         if cached is not None and not any(segment.id.endswith("-fallback") for segment in cached.segments):
+            verify_checkpoint_source_bytes(_safe_track_path(package_root, track), track)
             cached_tracks[track.number] = cached
             report(
                 {
@@ -621,7 +601,7 @@ def transcribe_craig_package_qwen_strict(
         # Reusing ASR text is much cheaper than retranscription, so pay one
         # cryptographic read only on the reuse path. This proves the staged FLAC
         # still matches the manifest even if filesystem metadata was preserved.
-        _verify_checkpoint_source_bytes(_safe_track_path(package_root, track), track)
+        verify_checkpoint_source_bytes(_safe_track_path(package_root, track), track)
         pending_text[track.number] = [
             QwenWindowTranscript(
                 index=item.index,

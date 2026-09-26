@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +17,7 @@ from tda_companion.asr_whisper import (
     transcribe_craig_package,
     whisper_transcribe_options,
 )
-from tda_companion.craig import CraigPackage, CraigTrack
+from tda_companion.craig import CraigPackage, CraigPackageError, CraigTrack
 
 
 def _install_whisper_fixture(models_root: Path, profile_id: str = "whisper-turbo") -> Path:
@@ -350,7 +352,8 @@ def test_craig_whisper_reuses_exact_track_checkpoint(monkeypatch, tmp_path: Path
     track_root = package_root / "tracks"
     track_root.mkdir(parents=True)
     track_file = track_root / "1-Alice.flac"
-    track_file.write_bytes(b"fake-flac-for-checkpoint")
+    payload = b"fake-flac-for-checkpoint"
+    track_file.write_bytes(payload)
 
     track = CraigTrack(
         number=1,
@@ -358,7 +361,7 @@ def test_craig_whisper_reuses_exact_track_checkpoint(monkeypatch, tmp_path: Path
         filename="1-Alice.flac",
         path="tracks/1-Alice.flac",
         size_bytes=track_file.stat().st_size,
-        sha256="b" * 64,
+        sha256=hashlib.sha256(payload).hexdigest(),
         identity=None,
     )
     package = CraigPackage(
@@ -423,6 +426,22 @@ def test_craig_whisper_reuses_exact_track_checkpoint(monkeypatch, tmp_path: Path
     assert "model_load" not in [
         item.get("stage") for item in second_reports if item.get("type") == "stage"
     ]
+
+    original_stat = track_file.stat()
+    track_file.write_bytes(bytes(byte ^ 1 for byte in payload))
+    os.utime(
+        track_file,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    with pytest.raises(CraigPackageError, match="CRAIG_MANIFEST_TRACK_HASH_MISMATCH"):
+        transcribe_craig_package(
+            package,
+            package_root,
+            models_root,
+            report=lambda _item: None,
+            **common,
+        )
+    track_file.write_bytes(payload)
 
     monkeypatch.setenv("TDA_ASR_RUNTIME_VERSION", "1.1.4")
     transcribe_craig_package(
