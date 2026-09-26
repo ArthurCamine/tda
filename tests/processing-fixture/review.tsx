@@ -114,7 +114,7 @@ export function ReviewFixture() {
                 },
             }) : undefined}
             onClose={() => {}}
-			onPublish={publishApprovedLocalReview}
+			onPublish={(review, id, expected, profile) => publishApprovedLocalReview(review, id, expected, fetch, profile)}
 		/>
         </>
 	);

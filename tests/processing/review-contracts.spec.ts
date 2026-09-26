@@ -156,7 +156,7 @@ test("publication freezes current and requires a fresh confirmation after stale_
  const first = "11111111-1111-4111-8111-111111111111";
  const second = "22222222-2222-4222-8222-222222222222";
  let reads = 0; const sent: Array<{ operationId: string; expectedCurrentRevisionId: string }> = [];
- await page.route("**/api/transcript-publications/current", route => route.fulfill({ json: { ok: true, current: { actorProfileId: "33333333-3333-4333-8333-333333333333", revisionId: ++reads === 1 ? first : second } } }));
+ await page.route("**/api/transcript-publications/current", route => route.fulfill({ json: { ok: true, current: { actorProfileId: "33333333-3333-4333-8333-333333333333", revisionId: (++reads, sent.length === 0 ? first : second) } } }));
  await page.route(/\/api\/transcript-publications$/, async route => {
   sent.push(route.request().postDataJSON());
   await route.fulfill({ status: 409, json: { ok: false, reason: "stale_current" } });
@@ -168,11 +168,38 @@ test("publication freezes current and requires a fresh confirmation after stale_
  await page.screenshot({ path: testInfo.outputPath("publication-current-confirmation.png"), fullPage: true });
  await page.getByRole("button", { name: "Confirmar publicação" }).click();
  await expect(page.getByRole("alert")).toContainText("A revisão publicada mudou");
- expect(sent).toHaveLength(1); expect(sent[0].expectedCurrentRevisionId).toBe(first); expect(reads).toBe(1);
+ expect(sent).toHaveLength(1); expect(sent[0].expectedCurrentRevisionId).toBe(first); expect(reads).toBeGreaterThanOrEqual(2);
  await page.getByRole("button", { name: "Publicar no TDA" }).click();
  await expect(page.getByRole("alertdialog")).toContainText(second);
  expect(sent).toHaveLength(1);
  await page.getByRole("button", { name: "Confirmar publicação" }).click();
  await expect(page.getByRole("alert")).toContainText("A revisão publicada mudou");
  expect(sent).toHaveLength(2); expect(sent[1].expectedCurrentRevisionId).toBe(second); expect(sent[1].operationId).not.toBe(sent[0].operationId);
+});
+
+test("lost publication recovers after reload without a second write or transcript storage", async ({ page }, testInfo) => {
+ let posts = 0; let readable = false; let committed: Record<string, unknown> | null = null;
+ await page.route("**/api/transcript-publications/current", route => route.fulfill({ json: { ok: true, current: { actorProfileId: "33333333-3333-4333-8333-333333333333", revisionId: committed ? "44444444-4444-4444-8444-444444444444" : null } } }));
+ await page.route(/\/api\/transcript-publications$/, async route => {
+  const body = route.request().postDataJSON(); posts++;
+  committed = { schemaVersion: "tda_transcript_publication_receipt_v1", status: "committed", receiptId: "55555555-5555-4555-8555-555555555555", revisionId: "44444444-4444-4444-8444-444444444444", revisionNumber: 1, committedAt: "2026-09-26T12:00:00Z", operationId: body.operationId, sourceId: body.review.sourceId, runId: body.review.runId, baseTranscriptSha256: body.review.baseTranscriptSha256, draftSha256: body.review.draftSha256, segmentCount: body.review.segments.length, wordCount: body.review.review.wordCount };
+  await route.abort();
+ });
+ await page.route("**/api/transcript-publications/receipt", async route => {
+  if (!readable) { await route.fulfill({ status: 503, json: { ok: false, reason: "dependency_unavailable" } }); return; }
+  const body = route.request().postDataJSON(); expect(body.operationId).toBe(committed?.operationId); expect(body.expectedCurrentRevisionId).toBeNull();
+  await route.fulfill({ json: { ok: true, receipt: committed } });
+ });
+ await page.goto("/?review-contracts&publication");
+ await page.getByRole("button", { name: "Publicar no TDA" }).click();
+ await page.getByRole("button", { name: "Confirmar publicação" }).click();
+ await expect(page.getByRole("alert")).toContainText("A resposta foi perdida");
+ const stored = await page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith("tda.publication.pending.v1:")));
+ expect(stored).toHaveLength(1); expect(stored[0][1]).not.toContain("Olá"); expect(stored[0][1]).not.toContain("Participante sintético"); expect(JSON.parse(stored[0][1]).operationId).toBe((committed as Record<string, unknown> | null)?.operationId);
+ readable = true;
+ await page.reload();
+ await expect(page.getByText(/Publicação confirmada · revisão cloud 1/)).toBeVisible();
+ expect(posts).toBe(1);
+ expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("tda.publication.pending.v1:")))).toHaveLength(0);
+ await page.screenshot({ path: testInfo.outputPath("publication-recovered.png"), fullPage: true });
 });

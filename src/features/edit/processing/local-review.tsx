@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status";
 import {
 	PublicationClientError,
-	readCurrentPublication,
 	preflightApprovedLocalReview,
 	type PublicationReceiptView,
 } from "./publication-client";
@@ -16,6 +15,7 @@ import type {
 	LocalRunSummary,
 } from "./protocol";
 import styles from "./local-review.module.css";
+import { browserPublicationRecovery, PublicationRecoveryError, type PublicationConfirmation } from "./publication-recovery";
 import { ReviewConflicts } from "./review-conflicts";
 import { prepareReviewRebase, resolveReviewRebase, type ReviewRebase } from "./review-rebase";
 import { ParticipantManager } from "./participant-manager";
@@ -42,8 +42,37 @@ type Props = Readonly<{
 		review: LocalReview,
 		operationId: string,
 		expectedCurrentRevisionId: string | null,
+		profileScope: string,
 	) => Promise<PublicationReceiptView>;
 }>;
+
+	function publicationErrorMessage(code: string): string {
+		return {
+			storage_unavailable: "Não foi possível preservar a operação neste navegador. A publicação foi bloqueada antes do envio. Libere o armazenamento e tente novamente.",
+            pending_mismatch: "Existe uma publicação anterior não reconciliada nesta campanha. Reabra a revisão original ou abandone a recuperação explicitamente.",
+            pending_expired: "A recuperação ultrapassou 30 dias. Consulte o recibo ou abandone explicitamente antes de uma nova publicação.",
+            profile_changed: "O perfil autenticado mudou. Consulte novamente a publicação antes de continuar.",
+			unauthenticated: "Sua sessão Web expirou. Entre novamente antes de publicar.",
+			forbidden: "Seu acesso não permite publicar transcrições nesta campanha.",
+			publish_capability_undefined:
+				"A publicação ainda não está ativada para esta campanha.",
+			approved_review_required:
+				"Salve esta revisão como Aprovado localmente antes de publicar.",
+			invalid_payload:
+				"O servidor recusou o vínculo ou o conteúdo desta revisão.",
+			too_large: "A revisão excede o limite aceito para publicação.",
+			not_found:
+				"A sessão vinculada não foi localizada no escopo autorizado.",
+			stale_current: "A revisão publicada mudou. Consulte novamente e confirme a substituição antes de publicar.",
+			conflict:
+				"Esta operação conflita com uma publicação já registrada. Recarregue antes de continuar.",
+			dependency_unavailable:
+				"O serviço de publicação está indisponível e não confirmou nenhuma alteração.",
+			unconfirmed:
+				"A resposta foi perdida e o readback ainda não confirmou o commit. Repetir reutilizará a mesma operação.",
+		}[code] ?? `Publicação não confirmada · ${code}`;
+	}
+
 
 const PAGE_SIZE = 25;
 
@@ -250,9 +279,9 @@ function ReviewEditor({
 	const [dirty, setDirty] = useState(false);
 	const [query, setQuery] = useState("");
 	const [page, setPage] = useState(0);
-	const [publicationCurrent, setPublicationCurrent] = useState<{ actorProfileId: string; revisionId: string | null } | null>(null);
+	const [publicationRecovery, setPublicationRecovery] = useState<PublicationConfirmation | null>(null);
+    const publicationCurrent = publicationRecovery?.current;
 	const [publishConfirmation, setPublishConfirmation] = useState(false);
-	const [publishOperationId, setPublishOperationId] = useState<string | null>(null);
 	const [publishing, setPublishing] = useState(false);
     const editingBlocked = busy || comparing || comparison !== null || publishing;
 	const [publicationError, setPublicationError] = useState<string | null>(null);
@@ -280,6 +309,28 @@ function ReviewEditor({
 		window.addEventListener("beforeunload", beforeUnload);
 		return () => window.removeEventListener("beforeunload", beforeUnload);
 	}, [dirty]);
+
+    useEffect(() => {
+        if (!publicationEnabled || !review.publicationTarget || review.status !== "approved_local" || dirty) return;
+        let cancelled = false;
+        const invalidate = () => { setPublicationRecovery(null); setPublicationReceipt(null); setPublishConfirmation(false); };
+        const recover = async () => {
+            invalidate(); setPublishing(true);
+            try {
+                const result = await browserPublicationRecovery().inspect(review);
+                if (!cancelled) { setPublicationRecovery(result); setPublicationReceipt(result.receipt); setPublicationError(null); }
+            } catch (cause) {
+                if (!cancelled) setPublicationError(publicationErrorMessage(cause instanceof PublicationClientError || cause instanceof PublicationRecoveryError ? cause.code : "dependency_unavailable"));
+            } finally { if (!cancelled) setPublishing(false); }
+        };
+        const focus = () => { void recover(); };
+        const visibility = () => { if (document.visibilityState === "hidden") invalidate(); };
+        void recover();
+        window.addEventListener("focus", focus);
+        window.addEventListener("storage", focus);
+        document.addEventListener("visibilitychange", visibility);
+        return () => { cancelled = true; window.removeEventListener("focus", focus); window.removeEventListener("storage", focus); document.removeEventListener("visibilitychange", visibility); };
+    }, [publicationEnabled, review, dirty]);
 
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLocaleLowerCase("pt-BR");
@@ -324,69 +375,36 @@ function ReviewEditor({
 			return;
 		onClose();
 	}
-	function publicationErrorMessage(code: string): string {
-		return {
-			unauthenticated: "Sua sessão Web expirou. Entre novamente antes de publicar.",
-			forbidden: "Seu acesso não permite publicar transcrições nesta campanha.",
-			publish_capability_undefined:
-				"A publicação ainda não está ativada para esta campanha.",
-			approved_review_required:
-				"Salve esta revisão como Aprovado localmente antes de publicar.",
-			invalid_payload:
-				"O servidor recusou o vínculo ou o conteúdo desta revisão.",
-			too_large: "A revisão excede o limite aceito para publicação.",
-			not_found:
-				"A sessão vinculada não foi localizada no escopo autorizado.",
-			stale_current: "A revisão publicada mudou. Consulte novamente e confirme a substituição antes de publicar.",
-			conflict:
-				"Esta operação conflita com uma publicação já registrada. Recarregue antes de continuar.",
-			dependency_unavailable:
-				"O serviço de publicação está indisponível e não confirmou nenhuma alteração.",
-			unconfirmed:
-				"A resposta foi perdida e o readback ainda não confirmou o commit. Repetir reutilizará a mesma operação.",
-		}[code] ?? `Publicação não confirmada · ${code}`;
-	}
 
-	async function preparePublicationConfirmation() {
-        setPublishing(true); setPublicationError(null);
+    function recoveryError(cause: unknown) {
+        return publicationErrorMessage(cause instanceof PublicationClientError || cause instanceof PublicationRecoveryError ? cause.code : "dependency_unavailable");
+    }
+    async function preparePublicationConfirmation() {
+        setPublishing(true); setPublicationError(null); setPublicationRecovery(null); setPublishConfirmation(false);
         try {
-            // Keep a lost-response retry frozen to its original expected pointer.
-            if (!publishOperationId || !publicationCurrent) setPublicationCurrent(await readCurrentPublication(review));
-            setPublishConfirmation(true);
-        } catch (cause) { setPublicationError(publicationErrorMessage(cause instanceof PublicationClientError ? cause.code : "dependency_unavailable")); }
+            const result = await browserPublicationRecovery().inspect(review);
+            setPublicationRecovery(result); setPublicationReceipt(result.receipt);
+            if (!result.receipt && !result.blocked) setPublishConfirmation(true);
+        } catch (cause) { setPublicationError(recoveryError(cause)); }
         finally { setPublishing(false); }
     }
-
-	async function confirmPublication() {
-		if (
-			publishing || !publicationCurrent ||
-			dirty ||
-			review.status !== "approved_local" ||
-			!review.publicationTarget ||
-			publicationPreflight?.eligible !== true
-		)
-			return;
-		const operationId = publishOperationId ?? crypto.randomUUID();
-		setPublishOperationId(operationId);
-		setPublishing(true);
-		setPublicationError(null);
-		try {
-			const receipt = await onPublish(review, operationId, publicationCurrent.revisionId);
-			setPublicationReceipt(receipt);
-			setPublishConfirmation(false);
-			setPublishOperationId(null);
-		} catch (cause) {
-			const code =
-				cause instanceof PublicationClientError
-					? cause.code
-					: "dependency_unavailable";
-			if (code === "stale_current") { setPublicationCurrent(null); setPublishOperationId(null); }
-			setPublicationError(publicationErrorMessage(code));
-			setPublishConfirmation(false);
-		} finally {
-			setPublishing(false);
-		}
-	}
+    async function confirmPublication() {
+        if (publishing || !publicationRecovery || publicationRecovery.blocked || dirty || review.status !== "approved_local" || publicationPreflight?.eligible !== true) return;
+        setPublishing(true); setPublicationError(null);
+        try {
+            const receipt = await browserPublicationRecovery().execute(review, publicationRecovery, onPublish);
+            setPublicationReceipt(receipt); setPublicationRecovery(null);
+        } catch (cause) {
+            setPublicationRecovery(null); setPublicationError(recoveryError(cause));
+        } finally { setPublishConfirmation(false); setPublishing(false); }
+    }
+    async function abandonPublication() {
+        if (!publicationRecovery?.pending || !window.confirm("A publicação anterior pode ter sido concluída. Abandonar a recuperação permite criar outra revisão. Continuar?")) return;
+        setPublishing(true); setPublishConfirmation(false);
+        try { await browserPublicationRecovery().abandon(review, publicationRecovery); setPublicationRecovery(null); setPublicationError(null); }
+        catch (cause) { setPublicationRecovery(null); setPublicationError(recoveryError(cause)); }
+        finally { setPublishing(false); }
+    }
 
 	return (
 		<section className={styles.editor} aria-labelledby="local-review-title">
@@ -507,6 +525,10 @@ function ReviewEditor({
 				</section>
 			) : null}
 
+            {publicationRecovery?.pending ? <div className={styles.notice} role="status">
+                <p>{publicationRecovery.blocked === "mismatch" ? "Existe uma publicação anterior de outra revisão ainda não reconciliada nesta campanha. Reabra a revisão original para consultar o recibo." : publicationRecovery.blocked === "expired" ? "Esta publicação não resolvida ultrapassou 30 dias. O recibo ainda pode ser consultado; novos envios estão bloqueados." : "Publicação anterior ainda não confirmada. A consulta e a repetição preservam a mesma operação, inclusive após recarregar."}</p>
+                <Button variant="secondary" disabled={publishing} onClick={() => void abandonPublication()}>Abandonar recuperação anterior</Button>
+            </div> : null}
 			{publicationError ? (
 				<p className={styles.error} role="alert">{publicationError}</p>
 			) : null}
@@ -627,7 +649,7 @@ function ReviewEditor({
                 setStatus(result.status);
                 setDirty(true);
                 setPublicationReceipt(null);
-                setPublishOperationId(null);
+                setPublicationRecovery(null);
                 setPublishConfirmation(false);
                 setComparison(null);
             }} /> : null}

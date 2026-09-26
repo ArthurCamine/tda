@@ -37,6 +37,7 @@ export type PublicationTarget = Readonly<{
 export type CanonicalPreparedPublication = Readonly<{
 	operationId: string;
 	expectedCurrentRevisionId: string | null;
+	expectedActorProfileId?: string;
 	target: PublicationTarget;
 	sourceId: string;
 	runId: string;
@@ -142,12 +143,13 @@ export function prepareCanonicalPublication(raw: string): CanonicalPreparePublic
 	const root = record(input);
 	if (
 		!root ||
-		!exactKeys(root, ["schemaVersion", "operationId", "expectedCurrentRevisionId", "binding", "review"]) ||
+		!exactKeys(root, ["schemaVersion", "operationId", "expectedCurrentRevisionId", "binding", "review", ...(root.expectedActorProfileId === undefined ? [] : ["expectedActorProfileId"])]) ||
 		root.schemaVersion !== PUBLICATION_REQUEST_VERSION
 	)
 		return { ok: false, reason: "invalid_payload" };
 
 	const operationId = text(root.operationId, 36, UUID);
+	if (root.expectedActorProfileId !== undefined && !text(root.expectedActorProfileId, 36, UUID)) return { ok: false, reason: "invalid_payload" };
 	const expectedCurrentRevisionId = root.expectedCurrentRevisionId === null ? null : text(root.expectedCurrentRevisionId, 36, UUID);
 	if (root.expectedCurrentRevisionId !== null && expectedCurrentRevisionId === null) return { ok: false, reason: "invalid_payload" };
 	const binding = record(root.binding);
@@ -419,6 +421,7 @@ export function prepareCanonicalPublication(raw: string): CanonicalPreparePublic
 		value: {
 			operationId,
 			expectedCurrentRevisionId,
+			...(root.expectedActorProfileId === undefined ? {} : { expectedActorProfileId: root.expectedActorProfileId as string }),
 			target: { campaignSlug, sourceSessionId },
 			sourceId,
 			runId,

@@ -58,7 +58,7 @@ export async function publishTranscriptRevision(
 	try {
 		const access = await deps.authorize(authUserId, parsed.value.target);
 		if (!access.ok) return access;
-		if (access.actor.authUserId !== authUserId)
+		if (access.actor.authUserId !== authUserId || (parsed.value.expectedActorProfileId !== undefined && parsed.value.expectedActorProfileId !== access.actor.profileId))
 			return { ok: false, reason: "forbidden" };
 		const result = await deps.commit(access.actor, parsed.value);
 		if (!result.ok) return result;
@@ -84,7 +84,7 @@ export async function readPublicationReceipt(
 	try {
 		const access = await deps.authorize(authUserId, parsed.value.target);
 		if (!access.ok) return access;
-		if (access.actor.authUserId !== authUserId)
+		if (access.actor.authUserId !== authUserId || (parsed.value.expectedActorProfileId !== undefined && parsed.value.expectedActorProfileId !== access.actor.profileId))
 			return { ok: false, reason: "forbidden" };
 		const result = await deps.lookup(access.actor, parsed.value);
 		if (!result.ok) return result;

@@ -221,3 +221,11 @@ describe("transcript publication HTTP boundary", () => {
 		});
 	});
 });
+
+it.each([false, true])("rejects profile changes between confirmation and receipt/write (lookup=%s)", async lookup => {
+ const { raw, publication } = dependencies();
+ const handler = createPublicationHandler({ origin: () => ORIGIN, identity: async () => ({ ok: true, authUserId: AUTH_USER }), publication }, lookup);
+ const changed = { ...JSON.parse(raw), expectedActorProfileId: "99999999-9999-4999-8999-999999999999" };
+ const response = await handler(request(JSON.stringify(changed)));
+ expect(response.status).toBe(403); expect(publication.commit).not.toHaveBeenCalled(); expect(publication.lookup).not.toHaveBeenCalled();
+});

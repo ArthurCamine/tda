@@ -48,7 +48,7 @@ type Transport = (
 	init?: RequestInit,
 ) => Promise<Response>;
 
-function requestBody(review: LocalReview, operationId: string, expectedCurrentRevisionId: string | null) {
+export function publicationRequestBody(review: LocalReview, operationId: string, expectedCurrentRevisionId: string | null, expectedActorProfileId?: string) {
 	const target = review.publicationTarget;
 	if (!target) throw new PublicationClientError("invalid_payload");
 	if (review.persistence === "ephemeral_base" || review.draftSha256 === null || review.draftRevision === null)
@@ -59,6 +59,7 @@ function requestBody(review: LocalReview, operationId: string, expectedCurrentRe
 		schemaVersion: "tda_transcript_publication_request_v1",
 		operationId,
 		expectedCurrentRevisionId,
+		...(expectedActorProfileId === undefined ? {} : { expectedActorProfileId }),
 		binding: {
 			schemaVersion: "tda_publication_target_v1",
 			campaignSlug: target.campaignSlug,
@@ -101,7 +102,7 @@ export function preflightApprovedLocalReview(
 ): PublicationPreflight {
 	let raw: string;
 	try {
-		raw = JSON.stringify(requestBody(review, PREFLIGHT_OPERATION_ID, null));
+		raw = JSON.stringify(publicationRequestBody(review, PREFLIGHT_OPERATION_ID, null));
 	} catch (cause) {
 		const reason =
 			cause instanceof PublicationClientError
@@ -230,8 +231,9 @@ export async function publishApprovedLocalReview(
 	operationId: string,
 	expectedCurrentRevisionId: string | null,
 	transport: Transport = fetch,
+	expectedActorProfileId?: string,
 ): Promise<PublicationReceiptView> {
-	const body = JSON.stringify(requestBody(review, operationId, expectedCurrentRevisionId));
+	const body = JSON.stringify(publicationRequestBody(review, operationId, expectedCurrentRevisionId, expectedActorProfileId));
 	try {
 		return await parseReceipt(
 			await post("/api/transcript-publications", body, transport),
@@ -275,4 +277,8 @@ export async function readCurrentPublication(review: LocalReview, transport: Tra
  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
  if (body?.ok !== true || !current || typeof current.actorProfileId !== "string" || !uuid.test(current.actorProfileId) || (current.revisionId !== null && (typeof current.revisionId !== "string" || !uuid.test(current.revisionId)))) throw new PublicationClientError("dependency_unavailable");
  return { actorProfileId: current.actorProfileId, revisionId: current.revisionId };
+}
+
+export async function readApprovedPublicationReceipt(review: LocalReview, operationId: string, expectedCurrentRevisionId: string | null, transport: Transport = fetch, expectedActorProfileId?: string): Promise<PublicationReceiptView> {
+ return parseReceipt(await post("/api/transcript-publications/receipt", JSON.stringify(publicationRequestBody(review, operationId, expectedCurrentRevisionId, expectedActorProfileId)), transport), review, operationId);
 }
