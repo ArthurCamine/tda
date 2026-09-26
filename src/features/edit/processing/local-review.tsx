@@ -30,6 +30,7 @@ type Props = Readonly<{
 		status: LocalReviewStatus,
 		segments: readonly LocalReviewSegment[],
 	) => void | Promise<void>;
+	onRepairTarget?: () => void | Promise<void>;
 	onClose: () => void;
 	onPublish: (
 		review: LocalReview,
@@ -103,6 +104,9 @@ function formatRuntime(run: LocalRunSummary): string {
 function reviewError(code: string | null): string | null {
 	if (!code) return null;
 	return {
+		PUBLICATION_TARGET_PROVENANCE_UNAVAILABLE: "A origem original não está disponível. Restaure um backup completo; nenhum destino foi inferido.",
+		PUBLICATION_TARGET_PROVENANCE_MISMATCH: "A origem e o run divergem. O reparo foi bloqueado e seus arquivos foram preservados.",
+		PUBLICATION_TARGET_CONFLICT: "Existe um vínculo divergente. O reparo não troca a sessão de destino.",
 		LOCAL_REVIEW_DRAFT_CONFLICT:
 			"Este draft mudou em outra aba ou processo. Feche sem descartar seu texto, reabra a revisão e reconcilie antes de salvar.",
 		LOCAL_REVIEW_WRITE_UNCONFIRMED:
@@ -206,6 +210,7 @@ function ReviewEditor({
 	onClose,
 	publicationEnabled,
 	onPublish,
+	onRepairTarget,
 }: Readonly<{
 	review: LocalReview;
 	busy: boolean;
@@ -214,6 +219,7 @@ function ReviewEditor({
 	onClose: () => void;
 	publicationEnabled: boolean;
 	onPublish: Props["onPublish"];
+	onRepairTarget: Props["onRepairTarget"];
 }>) {
 	const [segments, setSegments] = useState<LocalReviewSegment[]>(() =>
 		review.segments.map((segment) => ({ ...segment })),
@@ -401,7 +407,7 @@ function ReviewEditor({
 				<span>
 					{review.publicationTarget
 						? `Destino vinculado: ${review.publicationTarget.campaignSlug} · sessão ${review.publicationTarget.sourceSessionId}. ${publicationEnabled ? "Somente a confirmação explícita abaixo pode publicar este draft salvo." : "A publicação cloud continua desativada neste ambiente."}`
-						: "Este run não possui um destino cloud durável. A revisão continua local e não pode ser publicada até existir um vínculo verificável."}
+						: "O destino cloud está indisponível. A revisão continua local e só pode ser publicada com um vínculo verificado."}
 				</span>
 			</div>
 
@@ -417,6 +423,13 @@ function ReviewEditor({
 				</p>
 			) : null}
 
+            {!review.publicationTarget && onRepairTarget ? (
+                <div className={styles.notice}>
+                    <p>{review.publicationTargetState === "invalid" ? "O vínculo de publicação está danificado." : "O destino de publicação não está disponível."} O reparo usa somente a origem verificada. Sem essa prova, o Companion mantém a publicação bloqueada.</p>
+                    <Button type="button" variant="secondary" disabled={busy || dirty || publishing} onClick={() => void onRepairTarget()}>Reparar vínculo original</Button>
+                    {dirty ? <p>Salve suas alterações antes de reparar o vínculo.</p> : null}
+                </div>
+            ) : null}
 			{publishConfirmation && review.publicationTarget ? (
 				<section
 					className={styles.publishConfirmation}
@@ -620,6 +633,7 @@ export function LocalReviewWorkspace({
 	onSave,
 	onClose,
 	onPublish,
+	onRepairTarget,
 }: Props) {
 	if (review) {
 		return (
@@ -631,6 +645,7 @@ export function LocalReviewWorkspace({
 				onSave={onSave}
 				onClose={onClose}
 				publicationEnabled={publicationEnabled}
+				onRepairTarget={onRepairTarget}
 				onPublish={onPublish}
 			/>
 		);

@@ -70,3 +70,19 @@ test("historical review does not claim a verified total", async ({ page }) => {
 	await expect(page.getByText("total histórico não verificado")).toBeVisible();
 	await expect(page.locator("summary")).not.toContainText("primeiros");
 });
+
+
+test("target repair preserves edits and restores only the original destination", async ({ page }, testInfo) => {
+    await page.goto("/?review-contracts&repair");
+    const repair = page.getByRole("button", { name: "Reparar vínculo original" });
+    await expect(page.getByText(/O vínculo de publicação está danificado/)).toBeVisible();
+    await page.getByRole("textbox", { name: "Texto", exact: true }).fill("Texto preservado");
+    await expect(repair).toBeDisabled();
+    await page.getByRole("button", { name: "Salvar revisão" }).click();
+    await expect(repair).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath("publication-target-repair.png"), fullPage: true });
+    await repair.click();
+    await expect(repair).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Texto", exact: true })).toHaveValue("Texto preservado");
+    await expect(page.getByText(/Destino vinculado: yuhara-main/)).toBeVisible();
+});

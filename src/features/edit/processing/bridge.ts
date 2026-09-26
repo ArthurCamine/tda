@@ -487,6 +487,11 @@ export class LocalBridge {
 		);
 	}
 
+	async repairPublicationTarget(sourceId: string, runId: string, signal: AbortSignal) {
+        await this.json(`/sources/${identifier(sourceId)}/runs/${runIdentifier(runId)}/publication-target/repair`, signal, {});
+        return this.localReview(sourceId, runId, signal);
+    }
+
 	async saveLocalReview(
 		sourceId: string,
 		runId: string,

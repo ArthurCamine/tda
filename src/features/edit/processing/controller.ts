@@ -707,6 +707,12 @@ export class ProcessingController {
 		);
 	};
 
+	repairPublicationTarget = async () => {
+        const current = this.#state.localReview;
+        if (!current || current.publicationTarget) return;
+        await this.reviewAction((signal) => this.bridge.repairPublicationTarget(current.sourceId, current.runId, signal));
+    };
+
 	saveLocalReview = async (
 		baseline: LocalReview,
 		status: LocalReviewStatus,

@@ -39,7 +39,7 @@ from .profile_preparation import (
     profile_catalog,
     whisper_model_ready,
 )
-from .publication_target import PublicationTargetError, bind_publication_target
+from .publication_target import PublicationTargetError, bind_publication_target, repair_publication_target
 from .qwen_physical_gate import inspect_qwen_physical_gate
 from .qwen_runtime import recover_interrupted_qwen_runtime_install
 from .store import Conflict, Store
@@ -63,6 +63,8 @@ _BROWSER_JOB_PATH = re.compile(
 
 def _browser_route_allowed(method: str, path: str) -> bool:
     """Scope ephemeral browser credentials to the Web product surface only."""
+    if re.fullmatch(r"/api/v1/sources/[A-Za-z0-9_-]{1,128}/runs/[A-Za-z0-9_-]{1,196}/publication-target/repair", path):
+        return method == "POST"
     if path in {
         "/api/v1/capabilities",
         "/api/v1/preparation",
@@ -456,8 +458,20 @@ def create_app(
         )
 
     def staged_package(source_id: str, *, verify_tracks: bool = False):
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", source_id) is None:
+            raise CraigPackageError("CRAIG_STAGING_PATH_INVALID")
         staging = (data_root / "staging").resolve()
-        package_root = (staging / source_id).resolve()
+        # Resolve a known direct child rather than constructing a filesystem path
+        # from an HTTP route parameter. Reparse targets still face confinement.
+        try:
+            package_root = next(
+                (child.resolve() for child in staging.iterdir() if child.name == source_id),
+                None,
+            )
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise CraigPackageError("CRAIG_MANIFEST_NOT_FOUND") from exc
+        if package_root is None:
+            raise CraigPackageError("CRAIG_MANIFEST_NOT_FOUND")
         if package_root.parent != staging:
             raise CraigPackageError("CRAIG_STAGING_PATH_INVALID")
         return package_root, load_craig_package(package_root, verify_tracks=verify_tracks)
@@ -1240,6 +1254,7 @@ def create_app(
             "transcription.prepare",
             "transcription.prepare.cancel",
             "transcription.review",
+            "transcription.target.repair",
         ]
         catalog = profile_catalog(
             resolved_state_root,
@@ -1461,12 +1476,52 @@ def create_app(
     def job(job_id: str):
         return store.get(job_id)
 
+    def repair_run_target(source_id: str, run_id: str):
+        with source_gate:
+            package_root, package = staged_package(source_id, verify_tracks=False)
+            manifest = load_run(package_root, run_id, verify_content=True)
+            if not transcription_run_visible(package_root, manifest):
+                raise PublicationTargetError("PUBLICATION_TARGET_RUN_NOT_VISIBLE")
+            try:
+                origin_job = store.get(manifest["job_id"])
+            except KeyError:
+                origin_job = None
+            return repair_publication_target(
+                package_root, run_id, job=origin_job,
+                body=store.body(manifest["job_id"]) if origin_job else None,
+                result=store.result(manifest["job_id"]) if origin_job else None,
+                source_sha256=package.source_sha256, track_count=len(package.tracks),
+            )
+
+    @app.post("/api/v1/sources/{source_id}/runs/{run_id}/publication-target/repair")
+    def repair_target(source_id: str, run_id: str):
+        try:
+            return {"publication_target": repair_run_target(source_id, run_id)}
+        except (PublicationTargetError, TranscriptionRunError, CraigPackageError) as exc:
+            public_code = {
+                "PUBLICATION_TARGET_PROVENANCE_UNAVAILABLE": "PUBLICATION_TARGET_PROVENANCE_UNAVAILABLE",
+                "PUBLICATION_TARGET_PROVENANCE_MISMATCH": "PUBLICATION_TARGET_PROVENANCE_MISMATCH",
+                "PUBLICATION_TARGET_ORIGIN_CONFLICT": "PUBLICATION_TARGET_ORIGIN_CONFLICT",
+                "PUBLICATION_TARGET_CONFLICT": "PUBLICATION_TARGET_CONFLICT",
+                "PUBLICATION_TARGET_RUN_NOT_VISIBLE": "PUBLICATION_TARGET_RUN_NOT_VISIBLE",
+            }.get(str(exc), "PUBLICATION_TARGET_REPAIR_FAILED")
+            return error(public_code, 409, False)
+
     @app.post("/api/v1/jobs/{job_id}/{action}")
     async def action(job_id: str, action: Literal["cancel", "retry", "delete"]):
         if action == "delete":
             if active_worker_is(job_id):
                 raise Conflict("JOB_ACTIVE")
-            return store.remove(job_id)
+            with source_gate:
+                current = store.get(job_id)
+                body = store.body(job_id)
+                if current["status"] == "succeeded" and body.get("kind") == "transcription.craig":
+                    try:
+                        result = store.result(job_id)
+                        repair_run_target(body["source_id"], result["transcription"]["run_id"])
+                    except (PublicationTargetError, TranscriptionRunError, CraigPackageError, KeyError) as exc:
+                        raise Conflict("PUBLICATION_TARGET_CLEANUP_BLOCKED") from exc
+                return store.remove(job_id)
         if action == "retry":
             body = store.body(job_id)
             if body.get("kind") == "transcription.craig":

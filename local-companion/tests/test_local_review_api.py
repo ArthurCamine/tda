@@ -522,3 +522,74 @@ def test_catalog_of_100_reviews_only_reads_bounded_metadata(monkeypatch, tmp_pat
         assert all(row["review"]["status"] == "draft" for row in rows)
         assert max(sizes) <= 8192
         assert "SEGREDO EDITORIAL LOCAL" not in listing.text
+
+
+
+def test_publication_target_repair_is_authenticated_and_preserves_review(tmp_path):
+    with _client(tmp_path) as client:
+        source_id, root, run = _stage_and_run(client, tmp_path)
+        expected = bind_publication_target(root, run_id=run["run_id"], job_id=run["job_id"],
+            attempt=1, campaign_slug="yuhara-main", source_session_id="sessao-00001",
+            source_id=source_id, transcript_sha256=run["transcript_sha256"])
+        target_path = root / "runs" / run["run_id"] / "publication-target.json"
+        target_path.unlink()
+        endpoint = f"/api/v1/sources/{source_id}/runs/{run['run_id']}/publication-target/repair"
+        assert client.post(endpoint, headers={"Origin": ORIGIN}, json={}).status_code == 401
+        headers = _browser_headers(client)
+        review_url = f"/api/v1/sources/{source_id}/runs/{run['run_id']}/review"
+        before = client.get(review_url, headers=headers).json()
+        assert before["publication_target_state"] == "invalid"
+        repaired = client.post(endpoint, headers=headers, json={})
+        assert repaired.status_code == 200
+        assert repaired.json()["publication_target"] == expected
+        after = client.get(review_url, headers=headers).json()
+        assert after["publication_target_state"] == "valid"
+        assert after["segments"] == before["segments"]
+        assert after["draft_sha256"] == before["draft_sha256"]
+        assert "SEGREDO EDITORIAL" not in json.dumps(repaired.json())
+        target_path.unlink()
+        (target_path.parent / "publication-origin.json").unlink()
+        denied = client.post(endpoint, headers=headers, json={})
+        assert denied.status_code == 409
+        assert denied.json()["error"]["code"] == "PUBLICATION_TARGET_PROVENANCE_UNAVAILABLE"
+
+
+
+def test_queue_cleanup_preserves_verified_origin_and_blocks_last_proof_loss(tmp_path):
+    with _client(tmp_path) as client:
+        source_id, root, _ = _stage_and_run(client, tmp_path)
+        store = client.app.app.state.store
+        body = {"kind": "transcription.craig", "campaign_id": "yuhara-main",
+            "session_id": "sessao-00001", "source_id": source_id,
+            "profile_id": "whisper-detailed", "units": 1}
+        submitted = store.submit("cleanup-target-proof", body)
+        job_id, attempt = store.claim()
+        assert submitted["id"] == job_id
+        package = load_craig_package(root, verify_tracks=True)
+        run = write_completed_run(root, _document(package), job_id=job_id, attempt=attempt)
+        assert claim_attempt_outcome(root, job_id, attempt, "commit") == "commit"
+        result = {"job_id": job_id, "campaign_id": body["campaign_id"],
+            "session_id": body["session_id"], "source_id": source_id,
+            "transcription": {"run_id": run["run_id"], "sha256": run["transcript_sha256"],
+            "profile_id": body["profile_id"]}}
+        store.progress(job_id, attempt, completed=1, total=1, stage="complete")
+        assert store.complete(job_id, attempt, result)
+        headers = _browser_headers(client)
+        # Damaged origin must not be silently replaced during cleanup.
+        origin = root / "runs" / run["run_id"] / "publication-origin.json"
+        origin.write_text("broken")
+        deleted = client.post(f"/api/v1/jobs/{job_id}/delete", headers=headers, json={})
+        assert deleted.status_code == 409
+        assert deleted.json()["error"]["code"] == "PUBLICATION_TARGET_CLEANUP_BLOCKED"
+        assert store.get(job_id)["status"] == "succeeded"
+        origin.unlink()
+        deleted = client.post(f"/api/v1/jobs/{job_id}/delete", headers=headers, json={})
+        assert deleted.status_code == 200
+        assert origin.exists()
+        target = origin.with_name("publication-target.json")
+        target.unlink()
+        repaired = client.post(
+            f"/api/v1/sources/{source_id}/runs/{run['run_id']}/publication-target/repair",
+            headers=headers, json={})
+        assert repaired.status_code == 200
+        assert repaired.json()["publication_target"]["source_session_id"] == body["session_id"]

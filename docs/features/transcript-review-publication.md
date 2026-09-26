@@ -1331,3 +1331,42 @@ o draft e os runs permanecem no formato anterior. Nenhuma migration de banco.
 Validação sintética: catálogo de 100 runs sem abrir payloads editoriais, identidade
 incorreta, metadata não finita, stale/missing/corrupt, arquivos não regulares, falha
 de disco da projeção, GET sem efeitos e rebuild preservando bytes do draft.
+
+
+## Recuperação do vínculo de publicação — candidato #637
+
+O vínculo derivado `publication-target.json` tem uma origem redundante mínima,
+`publication-origin.json`, persistida atomicamente antes do binding. Ambos contêm
+somente campaign/session/source/run/job/attempt/hash e versão, sem texto ou paths.
+A origem permanece após exclusão do job da fila e deve acompanhar o run no backup.
+Runs existentes não são reescritos: a origem é estabelecida ao verificar o vínculo
+completo antes da limpeza da fila ou em reparo explícito de um job succeeded.
+
+A revisão distingue `valid`, `invalid` e `unbound`. Ausência de target com origem
+presente é dano (`invalid`), não prova de que nunca houve vínculo. A capability aditiva `transcription.target.repair` habilita o botão
+**Reparar vínculo original** usa POST autenticado no Agent e só fica disponível
+sem edição pendente. O Agent verifica os bytes do run e a origem redundante; se
+o job existe, exige também succeeded, attempt, source/hash, profile, context e
+glossary hashes, track count e result receipt compatíveis. Nenhuma sessão é
+escolhida por nome ou pela última seleção. Sem prova, retorna erro explícito e
+preserva o resultado revisável com publicação indisponível. Rebind humano para
+outro destino não faz parte deste contrato.
+
+Binding e reparo compartilham lock entre processos. Um target válido divergente,
+origem divergente ou symlink falha fechado. A limpeza de um job succeeded Craig
+verifica/preserva a origem antes de remover a linha operacional; falha bloqueia
+cleanup com `PUBLICATION_TARGET_CLEANUP_BLOCKED`. A listagem continua metadata-only,
+sem repair automático nem hash de transcript a cada polling.
+
+Compatibilidade: campos de estado são aditivos; clientes anteriores continuam
+lendo o target. Servidor anterior ignora a origem adicional, mas não oferece
+reparo e não protege a última origem no cleanup. Rollback deve manter os sidecars
+e evitar limpeza da fila pelo Agent anterior. Sem DDL, publicação editorial ou
+deploy neste candidato; integração e rollout precisam de evidências separadas.
+
+
+Evidência local do candidato: suíte Companion 986 passed / 12 skipped; regressões
+focadas finais 21 passed, incluindo limpeza da fila e reparo autenticado. `pnpm
+check` passou (659 testes Web, validações de docs/design/media/database) e build
+Production local passou. Playwright: 12 casos desktop/mobile, com screenshots
+inspecionados e edição pendente bloqueando reparo. Fixtures são sintéticas.

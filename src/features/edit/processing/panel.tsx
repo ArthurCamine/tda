@@ -596,6 +596,7 @@ export function ProcessingPanel({
 							onOpen={(sourceId, runId) =>
 								controller.openLocalReview(sourceId, runId)
 							}
+							onRepairTarget={state.capabilities?.capabilities.includes("transcription.target.repair") ? controller.repairPublicationTarget : undefined}
 							onSave={(revision, status, segments) =>
 								controller.saveLocalReview(revision, status, segments)
 							}

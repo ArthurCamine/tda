@@ -54,6 +54,7 @@ export function ReviewFixture() {
 					},
 				}),
 		publicationTarget: null,
+		publicationTargetState: "invalid",
 		review: {
 			reviewedSegments: 0,
 			totalSegments: 1,
@@ -88,7 +89,14 @@ export function ReviewFixture() {
 				approvedAt: status === "approved_local" ? "2026-09-26T12:00:01Z" : null,
 				persistence: "persisted", draftRevision: (baseline.draftRevision ?? 0) + 1,
 				draftSha256: "e".repeat(64), createdAt: "2026-09-26T12:00:00Z", updatedAt: "2026-09-26T12:00:00Z" })}
-			onClose={() => {}}
+			onRepairTarget={new URLSearchParams(location.search).has("repair") ? () => setReview({ ...review,
+                publicationTargetState: "valid", publicationTarget: {
+                    campaignSlug: "yuhara-main", sourceSessionId: "sessao-synthetic",
+                    jobId: "synthetic",
+                    attempt: 1,
+                },
+            }) : undefined}
+            onClose={() => {}}
 			onPublish={async () => {
 				throw new Error("Synthetic fixture cannot publish");
 			}}

@@ -220,6 +220,7 @@ export type LocalRunSummary = {
 		warningCount: number | null;
 	};
 	publicationTarget: LocalPublicationTarget | null;
+	publicationTargetState?: "valid" | "invalid" | "unbound";
 	review: LocalRunReviewSummary | null;
 };
 export type LocalReviewSegment = {
@@ -272,6 +273,7 @@ export type LocalReview = {
 		truncated: boolean;
 	};
 	publicationTarget: LocalPublicationTarget | null;
+	publicationTargetState?: "valid" | "invalid" | "unbound";
 	review: {
 		reviewedSegments: number;
 		totalSegments: number;
@@ -1116,6 +1118,8 @@ export function parseLocalReview(value: unknown): LocalReview {
 		},
 		warnings: row.warnings.map((warning) => contentText(warning, 1024)),
 		...(warningSummary ? { warningSummary } : {}),
+		...(row.publication_target_state === "valid" || row.publication_target_state === "invalid" || row.publication_target_state === "unbound"
+			? { publicationTargetState: row.publication_target_state } : {}),
 		publicationTarget: parsePublicationTarget(row.publication_target, {
 			sourceId,
 			runId,

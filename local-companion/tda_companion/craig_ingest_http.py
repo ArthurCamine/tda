@@ -16,7 +16,7 @@ from .craig_ingest import CRAIG_UPLOAD_MEDIA_TYPES, CraigUploadError, ingest_cra
 from .browser_session import BrowserSessionManager
 from .craig_runtime import load_craig_package
 from .local_review import LocalReviewError, open_review, review_summary, save_review
-from .publication_target import PublicationTargetError, load_publication_target
+from .publication_target import publication_target_state
 from .system_log import SystemLog
 from .transcription_runs import (
     TranscriptionRunError,
@@ -219,21 +219,10 @@ class CraigIngestBoundary:
             ]
             enriched = []
             for item in visible_runs:
-                target = None
-                try:
-                    target = load_publication_target(
-                        package_root,
-                        str(item.get("run_id") or ""),
-                        verify_run=True,
-                    )
-                except PublicationTargetError:
-                    # A corrupt/mismatched target can never make a run publishable.
-                    # Keep the immutable local result visible and fail the target closed.
-                    target = None
                 enriched.append(
                     {
                         **item,
-                        "publication_target": target,
+                        **publication_target_state(package_root, str(item.get("run_id") or "")),
                         "review": review_summary(
                             package_root,
                             str(item.get("run_id") or ""),
@@ -275,15 +264,7 @@ class CraigIngestBoundary:
                     run_id=run_id,
                     value=payload,
                 )
-            try:
-                target = load_publication_target(
-                    package_root,
-                    run_id,
-                    verify_run=True,
-                )
-            except PublicationTargetError:
-                target = None
-            return {**review, "publication_target": target}
+            return {**review, **publication_target_state(package_root, run_id)}
 
     async def _read_review_body(self, request: Request) -> dict[str, object]:
         body = bytearray()
