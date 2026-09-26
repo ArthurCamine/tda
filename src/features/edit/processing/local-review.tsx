@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status";
 import {
 	PublicationClientError,
+	readCurrentPublication,
 	preflightApprovedLocalReview,
 	type PublicationReceiptView,
 } from "./publication-client";
@@ -40,6 +41,7 @@ type Props = Readonly<{
 	onPublish: (
 		review: LocalReview,
 		operationId: string,
+		expectedCurrentRevisionId: string | null,
 	) => Promise<PublicationReceiptView>;
 }>;
 
@@ -234,7 +236,6 @@ function ReviewEditor({
     const [comparison, setComparison] = useState<ReviewRebase | null>(null);
     const [comparing, setComparing] = useState(false);
     const [comparisonError, setComparisonError] = useState<string | null>(null);
-    const editingBlocked = busy || comparing || comparison !== null;
 	const [segments, setSegments] = useState<LocalReviewSegment[]>(() =>
 		review.segments.map((segment) => ({ ...segment })),
 	);
@@ -249,9 +250,11 @@ function ReviewEditor({
 	const [dirty, setDirty] = useState(false);
 	const [query, setQuery] = useState("");
 	const [page, setPage] = useState(0);
+	const [publicationCurrent, setPublicationCurrent] = useState<{ actorProfileId: string; revisionId: string | null } | null>(null);
 	const [publishConfirmation, setPublishConfirmation] = useState(false);
 	const [publishOperationId, setPublishOperationId] = useState<string | null>(null);
 	const [publishing, setPublishing] = useState(false);
+    const editingBlocked = busy || comparing || comparison !== null || publishing;
 	const [publicationError, setPublicationError] = useState<string | null>(null);
 	const [publicationReceipt, setPublicationReceipt] =
 		useState<PublicationReceiptView | null>(null);
@@ -334,6 +337,7 @@ function ReviewEditor({
 			too_large: "A revisão excede o limite aceito para publicação.",
 			not_found:
 				"A sessão vinculada não foi localizada no escopo autorizado.",
+			stale_current: "A revisão publicada mudou. Consulte novamente e confirme a substituição antes de publicar.",
 			conflict:
 				"Esta operação conflita com uma publicação já registrada. Recarregue antes de continuar.",
 			dependency_unavailable:
@@ -343,9 +347,19 @@ function ReviewEditor({
 		}[code] ?? `Publicação não confirmada · ${code}`;
 	}
 
+	async function preparePublicationConfirmation() {
+        setPublishing(true); setPublicationError(null);
+        try {
+            // Keep a lost-response retry frozen to its original expected pointer.
+            if (!publishOperationId || !publicationCurrent) setPublicationCurrent(await readCurrentPublication(review));
+            setPublishConfirmation(true);
+        } catch (cause) { setPublicationError(publicationErrorMessage(cause instanceof PublicationClientError ? cause.code : "dependency_unavailable")); }
+        finally { setPublishing(false); }
+    }
+
 	async function confirmPublication() {
 		if (
-			publishing ||
+			publishing || !publicationCurrent ||
 			dirty ||
 			review.status !== "approved_local" ||
 			!review.publicationTarget ||
@@ -357,7 +371,7 @@ function ReviewEditor({
 		setPublishing(true);
 		setPublicationError(null);
 		try {
-			const receipt = await onPublish(review, operationId);
+			const receipt = await onPublish(review, operationId, publicationCurrent.revisionId);
 			setPublicationReceipt(receipt);
 			setPublishConfirmation(false);
 			setPublishOperationId(null);
@@ -366,6 +380,7 @@ function ReviewEditor({
 				cause instanceof PublicationClientError
 					? cause.code
 					: "dependency_unavailable";
+			if (code === "stale_current") { setPublicationCurrent(null); setPublishOperationId(null); }
 			setPublicationError(publicationErrorMessage(code));
 			setPublishConfirmation(false);
 		} finally {
@@ -385,7 +400,7 @@ function ReviewEditor({
 					</p>
 				</div>
 				<div className={styles.headerActions}>
-					<Button size="sm" variant="tertiary" disabled={busy} onClick={attemptClose}>
+					<Button size="sm" variant="tertiary" disabled={busy || publishing} onClick={attemptClose}>
 						Voltar aos resultados
 					</Button>
 					<Button
@@ -407,10 +422,7 @@ function ReviewEditor({
 								review.status !== "approved_local" ||
 								Boolean(publicationReceipt)
 							}
-							onClick={() => {
-								setPublicationError(null);
-								setPublishConfirmation(true);
-							}}
+							onClick={() => void preparePublicationConfirmation()}
 						>
 							{publicationReceipt
 								? `Publicado · r${publicationReceipt.revisionNumber}`
@@ -468,6 +480,7 @@ function ReviewEditor({
 							<strong>{review.publicationTarget.sourceSessionId}</strong>.
 							O run bruto continuará imutável.
 						</p>
+						<p>Revisão atualmente publicada: {publicationCurrent?.revisionId ?? "nenhuma"}. A publicação será recusada se esse estado mudar.</p>
 						<small>
 							Base SHA {review.baseTranscriptSha256.slice(0, 12)}… · draft SHA{" "}
 							{review.draftSha256?.slice(0, 12)}…

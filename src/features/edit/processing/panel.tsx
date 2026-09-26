@@ -602,8 +602,8 @@ export function ProcessingPanel({
 								controller.saveLocalReview(revision, status, segments)
 							}
 							onClose={controller.closeLocalReview}
-							onPublish={(review, operationId) =>
-								publishApprovedLocalReview(review, operationId)
+							onPublish={(review, operationId, expectedCurrentRevisionId) =>
+								publishApprovedLocalReview(review, operationId, expectedCurrentRevisionId)
 							}
 						/>
 

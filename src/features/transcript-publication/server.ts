@@ -21,3 +21,7 @@ export const publicationReceiptPost = createPublicationHandler(
 	dependencies,
 	true,
 );
+
+import { createCurrentPublicationHandler } from "./current";
+import { readCurrentPublication } from "./repository";
+export const publicationCurrentPost = createCurrentPublicationHandler({ ...dependencies, read: readCurrentPublication });

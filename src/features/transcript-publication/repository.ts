@@ -93,6 +93,7 @@ async function invoke(
 			campaignId: actor.campaignId,
 			sessionId: actor.sessionId,
 			operationId: input.operationId,
+			expectedCurrentRevisionId: input.expectedCurrentRevisionId,
 			sourceSystem: "local_companion",
 			sourceSessionId: input.target.sourceSessionId,
 			sourceId: input.sourceId,
@@ -121,9 +122,19 @@ async function invoke(
 			"invalid_payload",
 			"not_found",
 			"conflict",
+			"stale_current",
 		].includes(data.reason)
 	)
 		return { ok: false, reason: "dependency_unavailable" };
 
 	return data as PublicationResult;
+}
+
+export async function readCurrentPublication(actor: AuthorizedPublicationActor) {
+ const client = editDataClient();
+ if (!client) return { ok: false as const, reason: "dependency_unavailable" as const };
+ const { data, error } = await client.from("sessions").select("current_transcript_revision_id").eq("id", actor.sessionId).eq("campaign_id", actor.campaignId).maybeSingle();
+ if (error) return { ok: false as const, reason: "dependency_unavailable" as const };
+ if (!data) return { ok: false as const, reason: "not_found" as const };
+ return { ok: true as const, current: { actorProfileId: actor.profileId, revisionId: data.current_transcript_revision_id as string | null } };
 }

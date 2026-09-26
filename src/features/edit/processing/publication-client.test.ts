@@ -124,6 +124,7 @@ describe("publication client", () => {
 				publishApprovedLocalReview(
 					review,
 					receipt.receipt.operationId,
+					null,
 					transport,
 				),
 			).resolves.toMatchObject({ revisionNumber: 7 });
@@ -154,6 +155,7 @@ describe("publication client", () => {
 				publishApprovedLocalReview(
 					review,
 					receipt.receipt.operationId,
+					null,
 					transport,
 				),
 			).rejects.toMatchObject({ code: "unconfirmed" });
@@ -166,6 +168,7 @@ describe("publication client", () => {
 		"too_large",
 		"not_found",
 		"conflict",
+		"stale_current",
 	])("does not read back definitive %s", async (reason) => {
 		const transport = vi
 			.fn<typeof fetch>()
@@ -174,6 +177,7 @@ describe("publication client", () => {
 			publishApprovedLocalReview(
 				review,
 				receipt.receipt.operationId,
+				null,
 				transport,
 			),
 		).rejects.toMatchObject({ code: reason });
@@ -199,6 +203,7 @@ describe("publication client", () => {
 			publishApprovedLocalReview(
 				review,
 				receipt.receipt.operationId,
+				null,
 				transport,
 			),
 		).rejects.toMatchObject({ code: "conflict" });
@@ -210,6 +215,7 @@ describe("publication client", () => {
 		const result = await publishApprovedLocalReview(
 			review,
 			"55555555-5555-4555-8555-555555555555",
+			null,
 			transport,
 		);
 		expect(result).toMatchObject({ revisionNumber: 7 });
@@ -241,6 +247,7 @@ describe("publication client", () => {
 		const result = await publishApprovedLocalReview(
 			review,
 			"55555555-5555-4555-8555-555555555555",
+			null,
 			transport,
 		);
 		expect(result.revisionId).toBe("44444444-4444-4444-8444-444444444444");
@@ -263,6 +270,7 @@ describe("publication client", () => {
 			publishApprovedLocalReview(
 				review,
 				"55555555-5555-4555-8555-555555555555",
+				null,
 				transport,
 			),
 		).rejects.toMatchObject({ code: "forbidden" });
@@ -280,6 +288,7 @@ describe("publication client", () => {
 			publishApprovedLocalReview(
 				review,
 				"55555555-5555-4555-8555-555555555555",
+				null,
 				transport,
 			),
 		).rejects.toEqual(new PublicationClientError("unconfirmed"));

@@ -34,6 +34,7 @@ export class PublicationClientError extends Error {
 			| "too_large"
 			| "not_found"
 			| "conflict"
+			| "stale_current"
 			| "dependency_unavailable"
 			| "unconfirmed",
 	) {
@@ -47,7 +48,7 @@ type Transport = (
 	init?: RequestInit,
 ) => Promise<Response>;
 
-function requestBody(review: LocalReview, operationId: string) {
+function requestBody(review: LocalReview, operationId: string, expectedCurrentRevisionId: string | null) {
 	const target = review.publicationTarget;
 	if (!target) throw new PublicationClientError("invalid_payload");
 	if (review.persistence === "ephemeral_base" || review.draftSha256 === null || review.draftRevision === null)
@@ -57,6 +58,7 @@ function requestBody(review: LocalReview, operationId: string) {
 	return {
 		schemaVersion: "tda_transcript_publication_request_v1",
 		operationId,
+		expectedCurrentRevisionId,
 		binding: {
 			schemaVersion: "tda_publication_target_v1",
 			campaignSlug: target.campaignSlug,
@@ -99,7 +101,7 @@ export function preflightApprovedLocalReview(
 ): PublicationPreflight {
 	let raw: string;
 	try {
-		raw = JSON.stringify(requestBody(review, PREFLIGHT_OPERATION_ID));
+		raw = JSON.stringify(requestBody(review, PREFLIGHT_OPERATION_ID, null));
 	} catch (cause) {
 		const reason =
 			cause instanceof PublicationClientError
@@ -144,6 +146,7 @@ function parseFailure(value: unknown): PublicationClientError["code"] {
 			"too_large",
 			"not_found",
 			"conflict",
+			"stale_current",
 			"dependency_unavailable",
 		].includes(reason)
 		? (reason as PublicationClientError["code"])
@@ -225,9 +228,10 @@ async function post(
 export async function publishApprovedLocalReview(
 	review: LocalReview,
 	operationId: string,
+	expectedCurrentRevisionId: string | null,
 	transport: Transport = fetch,
 ): Promise<PublicationReceiptView> {
-	const body = JSON.stringify(requestBody(review, operationId));
+	const body = JSON.stringify(requestBody(review, operationId, expectedCurrentRevisionId));
 	try {
 		return await parseReceipt(
 			await post("/api/transcript-publications", body, transport),
@@ -259,4 +263,16 @@ export async function publishApprovedLocalReview(
 			throw cause;
 		throw new PublicationClientError("unconfirmed");
 	}
+}
+
+export async function readCurrentPublication(review: LocalReview, transport: Transport = fetch): Promise<{ actorProfileId: string; revisionId: string | null }> {
+ const target = review.publicationTarget;
+ if (!target) throw new PublicationClientError("invalid_payload");
+ const response = await post("/api/transcript-publications/current", JSON.stringify({ campaignSlug: target.campaignSlug, sourceSessionId: target.sourceSessionId }), transport);
+ const body = await response.json();
+ if (!response.ok) throw new PublicationClientError(parseFailure(body));
+ const current = body?.current;
+ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+ if (body?.ok !== true || !current || typeof current.actorProfileId !== "string" || !uuid.test(current.actorProfileId) || (current.revisionId !== null && (typeof current.revisionId !== "string" || !uuid.test(current.revisionId)))) throw new PublicationClientError("dependency_unavailable");
+ return { actorProfileId: current.actorProfileId, revisionId: current.revisionId };
 }

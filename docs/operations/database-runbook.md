@@ -232,3 +232,7 @@ Antes de declarar “banco pronto” para uma etapa:
 - [ ] documentação atualizada;
 - [ ] verificação registrada;
 - [ ] nenhum dado sensível foi documentado ou exposto.
+
+### Publicação com CAS (#636, candidata)
+
+Para `20260926220608_transcript_publication_current_cas`: manter publicação desativada durante a troca; identificar scripts que invocam restore/unpublish e migrar da assinatura de seis para sete UUIDs, lendo e congelando o current antes da confirmação. Verificar após migration que a assinatura antiga não existe, anon/authenticated não têm EXECUTE, service_role tem EXECUTE na nova assinatura, e a flag só é reativada com Web compatível e aceites #430. Não executar smoke destrutivo em sessão real. Em falha, desativar publicação e corrigir adiante, preservando revisions e receipts. Não reintroduzir writes sem expectativa como rollback.

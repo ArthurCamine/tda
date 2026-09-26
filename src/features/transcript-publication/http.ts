@@ -30,6 +30,7 @@ function response(result: PublicationResult): Response {
 					too_large: 413,
 					not_found: 404,
 					conflict: 409,
+					stale_current: 409,
 					dependency_unavailable: 503,
 				} as const
 			)[result.reason];

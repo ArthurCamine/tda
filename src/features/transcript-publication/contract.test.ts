@@ -14,6 +14,7 @@ const draftSha = "c".repeat(64);
 function requestValue() {
 	return {
 		schemaVersion: "tda_transcript_publication_request_v1",
+		expectedCurrentRevisionId: null,
 		operationId: "11111111-1111-4111-8111-111111111111",
 		binding: {
 			schemaVersion: "tda_publication_target_v1",
@@ -189,4 +190,13 @@ describe("transcript publication contract", () => {
 			reason: "invalid_payload",
 		});
 	});
+});
+
+it("requires an explicit null or UUID current pointer", () => {
+ for (const expected of [undefined, "", 1, {}, "not-a-uuid"]) {
+  const input = { ...requestValue(), expectedCurrentRevisionId: expected };
+  expect(preparePublication(JSON.stringify(input))).toEqual({ ok: false, reason: "invalid_payload" });
+ }
+ const input = { ...requestValue(), expectedCurrentRevisionId: "11111111-1111-4111-8111-111111111111" };
+ expect(preparePublication(JSON.stringify(input))).toMatchObject({ ok: true, value: { expectedCurrentRevisionId: input.expectedCurrentRevisionId } });
 });

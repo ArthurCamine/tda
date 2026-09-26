@@ -441,5 +441,37 @@ describe.skipIf(!enabled)(
 				),
 			).toEqual(input.segments.map((row) => row.text));
 		}, 30000);
+
+        it("serializes competing publications and rejects the stale writer without evidence", async () => {
+            sql(`insert into role_permissions values ('55555555-5555-4555-8555-555555555555','campaign.transcript.publish');`);
+            const make = (id: string) => JSON.parse(sql(`select synthetic_publication_input('${id}', 'run-cas', 'Synthetic concurrency probe');`));
+            const a = make('91000000-0000-4000-8000-000000000001');
+            const b = make('91000000-0000-4000-8000-000000000002');
+            const publish = (value: unknown) => `select publish_transcript_revision_atomic('${actor.authUserId}','${actor.profileId}',${quote(JSON.stringify(value))}::jsonb,false);`;
+            const launch = (statement: string) => new Promise<string>((resolve, reject) => {
+                const cmd = sqlCommand(); const child = spawn(cmd.cmd, cmd.args, { env: cleanEnv }); let out = '', err = '';
+                child.stdout.on('data', data => { out += data.toString(); }); child.stderr.on('data', data => { err += data.toString(); }); child.on('error', reject); child.on('exit', code => code === 0 ? resolve(out.trim()) : reject(new Error(err))); child.stdin.end(statement);
+            });
+            const before = sql('select count(*) from audit_log;');
+            const first = launch(`set application_name='tda_pub_cas_a'; set role service_role; begin; ${publish(a)} select pg_sleep(3); commit;`);
+            const deadline = Date.now() + 6000;
+            while (sql("select count(*) from pg_stat_activity where application_name='tda_pub_cas_a' and wait_event='PgSleep';") !== '1') {
+                if (Date.now() > deadline) throw new Error('Publication writer failed to lock session');
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const second = launch(`set application_name='tda_pub_cas_b'; set role service_role; ${publish(b)}`);
+            let blocked = false;
+            while (Date.now() < deadline) {
+                if (sql("select exists(select 1 from pg_stat_activity b cross join pg_stat_activity a where b.application_name='tda_pub_cas_b' and a.application_name='tda_pub_cas_a' and a.pid=any(pg_blocking_pids(b.pid)));") === 't') { blocked = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const [winner, loser] = await Promise.all([first, second]);
+            expect(blocked).toBe(true);
+            expect(JSON.parse(winner).ok).toBe(true);
+            expect(JSON.parse(loser)).toEqual({ ok: false, reason: 'stale_current' });
+            expect(sql('select (select count(*) from transcript_revisions),(select count(*) from transcript_publication_receipts),(select count(*) from transcript_publication_events);')).toBe('1|1|1');
+            expect(Number(sql('select count(*) from audit_log;'))).toBe(Number(before) + 1);
+            expect(JSON.parse(sql(`set role service_role; ${publish(a)}`))).toEqual(JSON.parse(winner));
+        }, 20000);
 	},
 );

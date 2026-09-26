@@ -62,6 +62,7 @@ begin
     'campaignId', '11111111-1111-4111-8111-111111111111',
     'sessionId', '22222222-2222-4222-8222-222222222222',
     'operationId', p_operation_id,
+    'expectedCurrentRevisionId', (select current_transcript_revision_id from public.sessions where id = '22222222-2222-4222-8222-222222222222'),
     'sourceSystem', 'local_companion',
     'sourceSessionId', 'fixture-source',
     'sourceId', 'craig-' || repeat('a', 64),
@@ -406,7 +407,8 @@ begin
     '11111111-1111-4111-8111-111111111111',
     '22222222-2222-4222-8222-222222222222',
     '90000000-0000-4000-8000-000000000004',
-    v_revision_1
+    v_revision_1,
+    v_revision_2
   ) into v_restore;
 
   select public.set_current_transcript_revision_atomic(
@@ -415,7 +417,8 @@ begin
     '11111111-1111-4111-8111-111111111111',
     '22222222-2222-4222-8222-222222222222',
     '90000000-0000-4000-8000-000000000004',
-    v_revision_1
+    v_revision_1,
+    v_revision_2
   ) into v_restore_replay;
 
   if v_restore->>'ok' <> 'true'
@@ -439,7 +442,8 @@ begin
     '11111111-1111-4111-8111-111111111111',
     '22222222-2222-4222-8222-222222222222',
     '90000000-0000-4000-8000-000000000005',
-    null
+    null,
+    v_revision_1
   ) into v_unpublish;
 
   if v_unpublish->>'ok' <> 'true'
@@ -456,6 +460,42 @@ begin
   if v_current is not null or v_revisions <> 2 then
     raise exception 'UNPUBLISH_DESTROYED_HISTORY';
   end if;
+
+  -- Stale writes, including null expectations, cannot leave partial evidence.
+  select count(*) into v_events from public.transcript_publication_events;
+  select count(*) into v_audits from public.audit_log;
+  select public.publish_transcript_revision_atomic(
+    '44444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333',
+    public.synthetic_publication_input('90000000-0000-4000-8000-000000000010', 'run-stale', 'stale synthetic') || jsonb_build_object('expectedCurrentRevisionId', v_revision_2), false
+  ) into v_conflict;
+  if v_conflict <> '{"ok":false,"reason":"stale_current"}'::jsonb then raise exception 'STALE_PUBLISH_ACCEPTED:%', v_conflict; end if;
+  select public.set_current_transcript_revision_atomic(
+    '44444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333',
+    '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    '90000000-0000-4000-8000-000000000011', v_revision_1, v_revision_2
+  ) into v_conflict;
+  if v_conflict <> '{"ok":false,"reason":"stale_current"}'::jsonb then raise exception 'STALE_RESTORE_ACCEPTED'; end if;
+  select public.set_current_transcript_revision_atomic(
+    '44444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333',
+    '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    '90000000-0000-4000-8000-000000000012', null, v_revision_2
+  ) into v_conflict;
+  if v_conflict <> '{"ok":false,"reason":"stale_current"}'::jsonb then raise exception 'STALE_UNPUBLISH_ACCEPTED'; end if;
+  select public.publish_transcript_revision_atomic(
+    '44444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333',
+    public.synthetic_publication_input('90000000-0000-4000-8000-000000000001', 'run-first', 'Texto publicado inicial') || jsonb_build_object('expectedCurrentRevisionId', v_revision_2), false
+  ) into v_replay;
+  if v_replay->'receipt' <> v_first->'receipt' then raise exception 'REPLAY_LOST_AFTER_CURRENT_CHANGED'; end if;
+  if (select count(*) from public.transcript_publication_events) <> v_events
+     or (select count(*) from public.audit_log) <> v_audits
+     or (select count(*) from public.transcript_revisions) <> 2
+     or (select count(*) from public.transcript_publication_receipts) <> 2 then raise exception 'STALE_WRITE_LEFT_EVIDENCE'; end if;
+  select public.publish_transcript_revision_atomic(
+    '44444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333',
+    public.synthetic_publication_input('90000000-0000-4000-8000-000000000013', 'run-missing', 'missing expectation') - 'expectedCurrentRevisionId', false
+  ) into v_conflict;
+  if v_conflict <> '{"ok":false,"reason":"invalid_payload"}'::jsonb then raise exception 'MISSING_EXPECTATION_ACCEPTED'; end if;
+  if to_regprocedure('public.set_current_transcript_revision_atomic(uuid,uuid,uuid,uuid,uuid,uuid)') is not null then raise exception 'UNFENCED_RESTORE_STILL_EXISTS'; end if;
 
   -- Public audit/event evidence must remain metadata-only.
   if exists (
@@ -503,4 +543,4 @@ delete from public.role_permissions
 where role_id = '55555555-5555-4555-8555-555555555555'::uuid
   and permission_action = 'campaign.transcript.publish';
 
-drop function public.synthetic_publication_input(uuid, text, text);
+-- Helper retained only in this disposable cluster for multi-connection CAS tests.

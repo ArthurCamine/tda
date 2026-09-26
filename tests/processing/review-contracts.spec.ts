@@ -150,3 +150,29 @@ test("concurrent bulk edits reconcile by field without closing or losing the wor
     await expect(page.getByText(/Run bruto imutável · draft r3/)).toBeVisible();
     await expect(page.getByTestId("save-count")).toHaveText("2");
 });
+
+
+test("publication freezes current and requires a fresh confirmation after stale_current", async ({ page }, testInfo) => {
+ const first = "11111111-1111-4111-8111-111111111111";
+ const second = "22222222-2222-4222-8222-222222222222";
+ let reads = 0; const sent: Array<{ operationId: string; expectedCurrentRevisionId: string }> = [];
+ await page.route("**/api/transcript-publications/current", route => route.fulfill({ json: { ok: true, current: { actorProfileId: "33333333-3333-4333-8333-333333333333", revisionId: ++reads === 1 ? first : second } } }));
+ await page.route(/\/api\/transcript-publications$/, async route => {
+  sent.push(route.request().postDataJSON());
+  await route.fulfill({ status: 409, json: { ok: false, reason: "stale_current" } });
+ });
+ await page.goto("/?review-contracts&publication");
+ await page.getByRole("button", { name: "Publicar no TDA" }).click();
+ await expect(page.getByRole("alertdialog")).toContainText(first);
+ expect(sent).toHaveLength(0);
+ await page.screenshot({ path: testInfo.outputPath("publication-current-confirmation.png"), fullPage: true });
+ await page.getByRole("button", { name: "Confirmar publicação" }).click();
+ await expect(page.getByRole("alert")).toContainText("A revisão publicada mudou");
+ expect(sent).toHaveLength(1); expect(sent[0].expectedCurrentRevisionId).toBe(first); expect(reads).toBe(1);
+ await page.getByRole("button", { name: "Publicar no TDA" }).click();
+ await expect(page.getByRole("alertdialog")).toContainText(second);
+ expect(sent).toHaveLength(1);
+ await page.getByRole("button", { name: "Confirmar publicação" }).click();
+ await expect(page.getByRole("alert")).toContainText("A revisão publicada mudou");
+ expect(sent).toHaveLength(2); expect(sent[1].expectedCurrentRevisionId).toBe(second); expect(sent[1].operationId).not.toBe(sent[0].operationId);
+});

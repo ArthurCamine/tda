@@ -1,9 +1,11 @@
+import { publishApprovedLocalReview } from "../../src/features/edit/processing/publication-client";
 import { LocalReviewWorkspace } from "../../src/features/edit/processing/local-review";
 import type { LocalReview } from "../../src/features/edit/processing/protocol";
 import { useState } from "react";
 
 // Synthetic browser data; the product never imports this isolated harness.
 export function ReviewFixture() {
+	const publication = new URLSearchParams(location.search).has("publication");
 	const legacy = new URLSearchParams(location.search).has("legacy");
 	const ephemeral = new URLSearchParams(location.search).has("ephemeral");
 	const oldAgent = new URLSearchParams(location.search).has("old-agent");
@@ -18,7 +20,7 @@ export function ReviewFixture() {
 		draftRevision: ephemeral ? null : 1,
 		persistence: ephemeral ? "ephemeral_base" : "persisted",
 		...(oldAgent ? {} : { snapshotContract: "tda_local_review_cas_v1" }),
-		status: bulk ? "approved_local" : "draft",
+		status: bulk || publication ? "approved_local" : "draft",
 		approvalCurrent: false,
 		approvedAt: null,
 		createdAt: ephemeral ? null : "2026-09-26T12:00:00Z",
@@ -56,7 +58,7 @@ export function ReviewFixture() {
 						truncated: true,
 					},
 				}),
-		publicationTarget: null,
+		publicationTarget: publication ? { campaignSlug: "yuhara-main", sourceSessionId: "sessao-synthetic", jobId: "synthetic", attempt: 1 } : null,
 		publicationTargetState: "invalid",
 		review: {
 			reviewedSegments: 0,
@@ -90,7 +92,7 @@ export function ReviewFixture() {
 			review={review}
 			busy={false}
 			error={saveError}
-			publicationEnabled={false}
+			publicationEnabled={publication}
 			onOpen={() => {}}
 			onSave={(baseline, status, segments) => {
                 setSaveCount((count) => count + 1);
@@ -112,9 +114,7 @@ export function ReviewFixture() {
                 },
             }) : undefined}
             onClose={() => {}}
-			onPublish={async () => {
-				throw new Error("Synthetic fixture cannot publish");
-			}}
+			onPublish={publishApprovedLocalReview}
 		/>
         </>
 	);

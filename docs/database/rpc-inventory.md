@@ -374,3 +374,7 @@ Segurança planejada para rollout:
 - `search_path = pg_catalog, public`;
 - browser roles sem `EXECUTE`;
 - somente `service_role`.
+
+## Candidata de concorrência de publicação (#636)
+
+`publish_transcript_revision_atomic(uuid,uuid,jsonb,boolean)` requer a expectativa explícita do current em JSON. `set_current_transcript_revision_atomic(uuid,uuid,uuid,uuid,uuid,uuid,uuid)` acrescenta o current esperado sem default; a assinatura anterior é retirada. Ambas são SECURITY INVOKER, EXECUTE somente service_role, com identidade/capability/escopo revalidados antes do lock e CAS. Endpoint `/api/transcript-publications/current` autentica e autoriza campanha antes de ler metadados da sessão. Estado candidato; não implica alteração em Production.

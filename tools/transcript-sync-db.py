@@ -37,6 +37,7 @@ try:
         repo/'supabase/tests/transcript_review_default.sql',
         repo/'supabase/tests/transcript_edit_atomic.sql',
         repo/'supabase/tests/transcript_statistics_read_model.sql',
+        repo/'supabase/migrations/20260926220608_transcript_publication_current_cas.sql',
         repo/'supabase/tests/transcript_publication_revisions.sql',
     ]
     for path in paths:

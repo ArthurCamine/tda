@@ -1275,3 +1275,9 @@ Validação exigida:
 - PostgreSQL sintético deve provar `service_role=SELECT-only`;
 - após rollout, read-back de `information_schema.role_table_grants` deve retornar somente `SELECT` para `service_role` e zero grants para browser roles;
 - advisors devem ser reexecutados; o aviso `RLS enabled no policy` é esperado para esta tabela server-only sem grants de browser e não deve ser convertido em policy permissiva.
+
+### `20260926220608_transcript_publication_current_cas`
+
+Candidata #636, não aplicada a Production nesta entrega. Exige `expectedCurrentRevisionId` (UUID ou null explícito) no publish e `p_expected_current_revision_id` em restore/unpublish. Autorização, lock da sessão e replay precedem CAS; `stale_current` não escreve revision/receipt/event/audit. A assinatura de seis UUIDs de restore é removida; a nova assinatura de sete UUIDs mantém SECURITY INVOKER, search_path e EXECUTE exclusivo de service_role. Consumidores: repository Web, scripts operacionais e testes sintéticos. Não há consumidor Web de restore nesta entrega.
+
+Rollout: desativar publicação, validar consumidores/scripts, aplicar migration versionada pelo runbook e publicar Web compatível antes de reativar. Clientes antigos falham fechados. Rollback: manter flag desativada e corrigir adiante; não restaurar função sem CAS nem apagar histórico.

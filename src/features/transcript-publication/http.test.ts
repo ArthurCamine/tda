@@ -13,6 +13,7 @@ const sourceId = `craig-${"a".repeat(64)}`;
 function rawRequest() {
 	return JSON.stringify({
 		schemaVersion: "tda_transcript_publication_request_v1",
+		expectedCurrentRevisionId: null,
 		operationId: "11111111-1111-4111-8111-111111111111",
 		binding: {
 			schemaVersion: "tda_publication_target_v1",

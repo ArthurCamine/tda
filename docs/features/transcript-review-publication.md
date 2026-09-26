@@ -1423,3 +1423,11 @@ arrays reordenados, mudanças convergentes, rejeição de conjunto/timing diverg
 CAS da versão nova sem substituir o editor e fluxo desktop/mobile completo de
 409 → escolha por campo → dirty → save explícito. Não há alteração de schema,
 publicação cloud ou merge textual automático de valores divergentes.
+
+## Current concorrente — candidata #636
+
+Antes da confirmação editorial, o Web consulta apenas o UUID current e perfil autorizado, sem segmentos. A confirmação mostra esse UUID (ou nenhuma revisão). O POST congela `expectedCurrentRevisionId`; uma disputa resulta em `stale_current` (HTTP 409), sem retry automático. Nova consulta e nova confirmação humana são necessárias. Resposta perdida mantém operationId e expectativa para read-back/replay; o replay precede CAS e nunca reativa a revisão antiga. Restore/unpublish operacionais seguem o mesmo fence na assinatura de sete UUIDs.
+
+Validação inclui PostgreSQL 16 descartável com duas conexões, replay após mudança do current, stale publish/restore/unpublish e ausência de writes parciais. Build/testes de UI não autorizam ativação: publicação real continua no escopo #430. Rollout e rollback constam no catálogo de migrations; não aplicar mudança em Production para testar.
+
+Evidência local em 2026-09-26: check completo (677 testes Web, 40 testes Node; 8 testes condicionais omitidos), build Next, PostgreSQL 16/WSL (49 testes focados, incluindo disputa observada no lock) e 20 cenários Playwright desktop/mobile aprovados. Captura da confirmação mobile inspecionada. Nenhum deploy ou migration remota executado.

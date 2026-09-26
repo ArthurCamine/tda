@@ -26,6 +26,7 @@ export type PublicationFailure =
 	| "too_large"
 	| "not_found"
 	| "conflict"
+	| "stale_current"
 	| "dependency_unavailable";
 
 export type PublicationTarget = Readonly<{
@@ -35,6 +36,7 @@ export type PublicationTarget = Readonly<{
 
 export type CanonicalPreparedPublication = Readonly<{
 	operationId: string;
+	expectedCurrentRevisionId: string | null;
 	target: PublicationTarget;
 	sourceId: string;
 	runId: string;
@@ -125,7 +127,7 @@ function finite(value: unknown, min: number, max: number): number | null {
 }
 
 function utf8Bytes(value: string): number {
-	return Buffer.byteLength(value, "utf8");
+	return new TextEncoder().encode(value).byteLength;
 }
 
 export function prepareCanonicalPublication(raw: string): CanonicalPreparePublicationResult {
@@ -140,12 +142,14 @@ export function prepareCanonicalPublication(raw: string): CanonicalPreparePublic
 	const root = record(input);
 	if (
 		!root ||
-		!exactKeys(root, ["schemaVersion", "operationId", "binding", "review"]) ||
+		!exactKeys(root, ["schemaVersion", "operationId", "expectedCurrentRevisionId", "binding", "review"]) ||
 		root.schemaVersion !== PUBLICATION_REQUEST_VERSION
 	)
 		return { ok: false, reason: "invalid_payload" };
 
 	const operationId = text(root.operationId, 36, UUID);
+	const expectedCurrentRevisionId = root.expectedCurrentRevisionId === null ? null : text(root.expectedCurrentRevisionId, 36, UUID);
+	if (root.expectedCurrentRevisionId !== null && expectedCurrentRevisionId === null) return { ok: false, reason: "invalid_payload" };
 	const binding = record(root.binding);
 	const review = record(root.review);
 	if (
@@ -414,6 +418,7 @@ export function prepareCanonicalPublication(raw: string): CanonicalPreparePublic
 		ok: true,
 		value: {
 			operationId,
+			expectedCurrentRevisionId,
 			target: { campaignSlug, sourceSessionId },
 			sourceId,
 			runId,
