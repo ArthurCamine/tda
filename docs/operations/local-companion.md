@@ -376,3 +376,30 @@ Além disso:
 - documentação descrevendo somente capabilities realmente ativas.
 
 CI sem GPU prova empacotamento e contratos, não prova qualidade, throughput, VRAM, jornada da UI instalada ou compatibilidade física da RTX.
+
+
+## Revalidação instalada RTX 4070 — 2026-09-26 / #416
+
+Por decisão explícita do usuário em 26/09, a investigação física da RTX 2080
+fica adiada e pode ser reaberta com os detalhes de uma falha futura. O aceite
+autorizado nesta rodada usa a RTX 4070 disponível; isso não certifica Turing nem
+remove gates de compatibilidade. Não houve GPU SM 7.5 disponível nesta execução.
+
+Os quatro perfis passaram em CUDA real na RTX 4070 Laptop 8 GB / driver 616.56,
+com áudio sintético de 110,588 s. Qwen runtime 1.0.11 e Whisper 1.1.5 tiveram
+os workers verificados contra seus manifests SHA-256 antes da execução. Qwen
+fast/quality concluíram ASR e Forced Aligner em BF16 + SDPA; Whisper turbo/detailed
+usaram FP16 sem fallback de memória. Nenhuma transcrição foi gravada.
+
+| Perfil | ASR (s) | Alinhamento (s) | Pico GPU ASR (GiB) |
+| --- | ---: | ---: | ---: |
+| qwen-fast | 11,406 | 0,906 | 4,33 |
+| qwen-quality | 12,359 | 0,828 | 6,74 |
+| whisper-turbo | 5,094 | nativo | 4,14 |
+| whisper-detailed | 7,766 | nativo | 6,00 |
+
+[Receipts sanitizados dos runtimes instalados](evidence/rtx4070-installed-validation-2026-09-26.json)
+registram hashes, versões, GPU, tempos e contagens, sem áudio, texto ou paths locais.
+Esta evidência não representa teste da RTX 2080, avaliação editorial de qualidade,
+validação de Craig longo, nem certificação de MSI/RC produzido pela main atual.
+Não houve instalação, promoção de release, deploy ou publicação de transcript.

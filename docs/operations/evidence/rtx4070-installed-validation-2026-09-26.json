@@ -1,0 +1,289 @@
+{
+  "schema": "tda_gpu_validation_evidence_v1",
+  "date": "2026-09-26",
+  "scope": "Installed runtime acceptance on synthetic audio; not a release-candidate or RTX 2080 certification",
+  "contains_audio": false,
+  "contains_transcript": false,
+  "qwen_runtime_version": "1.0.11",
+  "qwen_worker_sha256": "23be3f2f643cfa1001c44019de19587f72691f538293e9afb395cff49c9a82cb",
+  "whisper_runtime_version": "1.1.5",
+  "whisper_worker_sha256": "1240f11e62ffd45c4133da98aa998d53c565a7fbb2c400e4df906b5ac01d0f53",
+  "receipts": [
+    {
+      "alignment": {
+        "attention_backend": "model:sdpa,text:sdpa,audio:sdpa",
+        "compute_type": "bfloat16",
+        "inference_seconds": 0.906,
+        "model_load_seconds": 1.953,
+        "prepare_seconds": 0.0,
+        "rtf": 0.008193,
+        "word_count": 195
+      },
+      "alignment_gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 1959723008,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 4919394304,
+        "peak_utilization_percent": 100,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "alignment_model": "Qwen/Qwen3-ForcedAligner-0.6B-hf",
+      "alignment_revision": "c07281df297b9905d24a508279258cccf987a064",
+      "audio_sha256": "6fccf36e94dd3d575d0274394c408cacef7ed63ccd87d53dbf80271d269bb7f9",
+      "cuda": {
+        "available": true,
+        "bf16_supported": true,
+        "device_count": 1,
+        "devices": [
+          {
+            "compute_capability": "8.9",
+            "index": 0,
+            "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+            "total_memory_bytes": 8585216000
+          }
+        ],
+        "driver_version": "616.56",
+        "execution_error": null,
+        "execution_ready": true,
+        "torch_cuda": "12.6"
+      },
+      "gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 1918173184,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 4644077568,
+        "peak_utilization_percent": 82,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "inference": {
+        "attention_backend": "model:sdpa,text:sdpa,audio:sdpa",
+        "audio_seconds": 110.588,
+        "compute_type": "bfloat16",
+        "device": "cuda",
+        "model_load_seconds": 1.86,
+        "prepare_seconds": 0.0,
+        "rtf": 0.103139,
+        "transcript_sha256": "7f2078680b6cac0d2e1e739af8a6c633ed2b42b9b1b768d37a1767ee38be87a5",
+        "transcript_written": false,
+        "transcription_seconds": 11.406
+      },
+      "language": "Portuguese",
+      "model": "Qwen/Qwen3-ASR-0.6B-hf",
+      "model_revision": "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
+      "pass": true,
+      "profile_id": "qwen-fast",
+      "runtime": {
+        "accelerate": "1.15.0",
+        "av": "18.1.0",
+        "huggingface_hub": "1.32.0",
+        "safetensors": "0.8.0",
+        "torch": "2.13.0+cu126",
+        "torch_cuda": "12.6",
+        "transformers": "5.17.0"
+      },
+      "schema": "tda_qwen_gpu_acceptance_v1",
+      "total_seconds": 16.312
+    },
+    {
+      "alignment": {
+        "attention_backend": "model:sdpa,text:sdpa,audio:sdpa",
+        "compute_type": "bfloat16",
+        "inference_seconds": 0.828,
+        "model_load_seconds": 1.703,
+        "prepare_seconds": 0.016,
+        "rtf": 0.007487,
+        "word_count": 195
+      },
+      "alignment_gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 2365390848,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 5284560896,
+        "peak_utilization_percent": 100,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "alignment_model": "Qwen/Qwen3-ForcedAligner-0.6B-hf",
+      "alignment_revision": "c07281df297b9905d24a508279258cccf987a064",
+      "audio_sha256": "6fccf36e94dd3d575d0274394c408cacef7ed63ccd87d53dbf80271d269bb7f9",
+      "cuda": {
+        "available": true,
+        "bf16_supported": true,
+        "device_count": 1,
+        "devices": [
+          {
+            "compute_capability": "8.9",
+            "index": 0,
+            "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+            "total_memory_bytes": 8585216000
+          }
+        ],
+        "driver_version": "616.56",
+        "execution_error": null,
+        "execution_ready": true,
+        "torch_cuda": "12.6"
+      },
+      "gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 2087452672,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 7240581120,
+        "peak_utilization_percent": 100,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "inference": {
+        "attention_backend": "model:sdpa,text:sdpa,audio:sdpa",
+        "audio_seconds": 110.588,
+        "compute_type": "bfloat16",
+        "device": "cuda",
+        "model_load_seconds": 3.875,
+        "prepare_seconds": 0.0,
+        "rtf": 0.111757,
+        "transcript_sha256": "d0e75ef9f4cef25a419864c64c9253e674b593ce09e292f65473fc5cb60ca287",
+        "transcript_written": false,
+        "transcription_seconds": 12.359
+      },
+      "language": "Portuguese",
+      "model": "Qwen/Qwen3-ASR-1.7B-hf",
+      "model_revision": "bcd2b5b7f32b480ab5790554cfa8347f246a14f3",
+      "pass": true,
+      "profile_id": "qwen-quality",
+      "runtime": {
+        "accelerate": "1.15.0",
+        "av": "18.1.0",
+        "huggingface_hub": "1.32.0",
+        "safetensors": "0.8.0",
+        "torch": "2.13.0+cu126",
+        "torch_cuda": "12.6",
+        "transformers": "5.17.0"
+      },
+      "schema": "tda_qwen_gpu_acceptance_v1",
+      "total_seconds": 18.969
+    },
+    {
+      "audio_sha256": "6fccf36e94dd3d575d0274394c408cacef7ed63ccd87d53dbf80271d269bb7f9",
+      "cuda": {
+        "device_count": 1,
+        "supported_compute_types": [
+          "bfloat16",
+          "float16",
+          "float32",
+          "int8",
+          "int8_bfloat16",
+          "int8_float16",
+          "int8_float32"
+        ]
+      },
+      "gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 1839435776,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 4449435648,
+        "peak_utilization_percent": 100,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "inference": {
+        "audio_seconds": 110.588,
+        "compute_type": "float16",
+        "device": "cuda",
+        "memory_fallback": false,
+        "model_load_seconds": 1.485,
+        "prepare_seconds": 0.0,
+        "rtf": 0.046063,
+        "segment_count": 15,
+        "total_seconds": 7.75,
+        "transcript_sha256": "a4e19a18e0fd21e4e0a7b0475751a4b7aef4a3864c68b7fd82afc12b9ca44745",
+        "transcript_written": false,
+        "transcription_seconds": 5.094,
+        "word_count": 197
+      },
+      "language": "pt",
+      "model": "dropbox-dash/faster-whisper-large-v3-turbo",
+      "model_content_sha256": "193a994d541f0741b9a3535a3c9789cc52221ba76e1985f8f713c11679fc9e65",
+      "model_integrity": "sha256-full",
+      "model_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "pass": true,
+      "profile_id": "whisper-turbo",
+      "runtime": {
+        "av": "18.1.0",
+        "ctranslate2": "4.8.2",
+        "faster_whisper": "1.2.1"
+      },
+      "schema": "tda_whisper_gpu_acceptance_v1"
+    },
+    {
+      "audio_sha256": "6fccf36e94dd3d575d0274394c408cacef7ed63ccd87d53dbf80271d269bb7f9",
+      "cuda": {
+        "device_count": 1,
+        "supported_compute_types": [
+          "bfloat16",
+          "float16",
+          "float32",
+          "int8",
+          "int8_bfloat16",
+          "int8_float16",
+          "int8_float32"
+        ]
+      },
+      "gpu": {
+        "available": true,
+        "baseline_memory_used_bytes": 1896812544,
+        "driver": "616.56",
+        "index": 0,
+        "memory_total_bytes": 8585740288,
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "peak_memory_used_bytes": 6447071232,
+        "peak_utilization_percent": 96,
+        "required_name": "RTX 4070",
+        "required_name_match": true
+      },
+      "inference": {
+        "audio_seconds": 110.588,
+        "compute_type": "float16",
+        "device": "cuda",
+        "memory_fallback": false,
+        "model_load_seconds": 3.0,
+        "prepare_seconds": 0.0,
+        "rtf": 0.070224,
+        "segment_count": 15,
+        "total_seconds": 13.125,
+        "transcript_sha256": "a4e19a18e0fd21e4e0a7b0475751a4b7aef4a3864c68b7fd82afc12b9ca44745",
+        "transcript_written": false,
+        "transcription_seconds": 7.766,
+        "word_count": 197
+      },
+      "language": "pt",
+      "model": "Systran/faster-whisper-large-v3",
+      "model_content_sha256": "f10dc9587870c7640ff50e523e4edbb21c8a781e8d9d93f4611d17bfae11fccc",
+      "model_integrity": "sha256-full",
+      "model_revision": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+      "pass": true,
+      "profile_id": "whisper-detailed",
+      "runtime": {
+        "av": "18.1.0",
+        "ctranslate2": "4.8.2",
+        "faster_whisper": "1.2.1"
+      },
+      "schema": "tda_whisper_gpu_acceptance_v1"
+    }
+  ]
+}
