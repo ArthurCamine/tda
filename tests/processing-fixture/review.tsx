@@ -7,7 +7,10 @@ export function ReviewFixture() {
 	const legacy = new URLSearchParams(location.search).has("legacy");
 	const ephemeral = new URLSearchParams(location.search).has("ephemeral");
 	const oldAgent = new URLSearchParams(location.search).has("old-agent");
-	const [review, setReview] = useState<LocalReview>({
+	const bulk = new URLSearchParams(location.search).has("bulk");
+    const [saveCount, setSaveCount] = useState(0);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [review, setReview] = useState<LocalReview>({
 		sourceId: `craig-${"a".repeat(64)}`,
 		runId: "run-synthetic-a1",
 		baseTranscriptSha256: "b".repeat(64),
@@ -15,7 +18,7 @@ export function ReviewFixture() {
 		draftRevision: ephemeral ? null : 1,
 		persistence: ephemeral ? "ephemeral_base" : "persisted",
 		...(oldAgent ? {} : { snapshotContract: "tda_local_review_cas_v1" }),
-		status: "draft",
+		status: bulk ? "approved_local" : "draft",
 		approvalCurrent: false,
 		approvedAt: null,
 		createdAt: ephemeral ? null : "2026-09-26T12:00:00Z",
@@ -63,7 +66,10 @@ export function ReviewFixture() {
 			wordCount: 2,
 			warningCount: legacy ? 1000 : 5000,
 		},
-		segments: [
+		segments: bulk ? Array.from({ length: 5 }, (_, index) => ({
+            trackNumber: index === 4 ? 2 : 1, segmentId: `s-${index}`, start: index, end: index + 1,
+            text: `Fala ${index}`, speaker: index === 3 ? "Convidado" : "Alex", reviewed: true,
+        })) : [
 			{
 				trackNumber: 1,
 				segmentId: "1-0",
@@ -77,18 +83,23 @@ export function ReviewFixture() {
 		sync: { status: "not_configured" },
 	});
 	return (
-		<LocalReviewWorkspace
+		<>
+        <span data-testid="save-count">{saveCount}</span>
+        <LocalReviewWorkspace
 			runs={[]}
 			review={review}
 			busy={false}
-			error={null}
+			error={saveError}
 			publicationEnabled={false}
 			onOpen={() => {}}
-			onSave={(baseline, status, segments) => setReview({ ...baseline, status, segments,
+			onSave={(baseline, status, segments) => {
+                setSaveCount((count) => count + 1);
+                if (new URLSearchParams(location.search).has("conflict")) { setSaveError("LOCAL_REVIEW_DRAFT_CONFLICT"); return; }
+                setReview({ ...baseline, status, segments,
 				approvalCurrent: status === "approved_local",
 				approvedAt: status === "approved_local" ? "2026-09-26T12:00:01Z" : null,
 				persistence: "persisted", draftRevision: (baseline.draftRevision ?? 0) + 1,
-				draftSha256: "e".repeat(64), createdAt: "2026-09-26T12:00:00Z", updatedAt: "2026-09-26T12:00:00Z" })}
+				draftSha256: "e".repeat(64), createdAt: "2026-09-26T12:00:00Z", updatedAt: "2026-09-26T12:00:00Z" }); }}
 			onRepairTarget={new URLSearchParams(location.search).has("repair") ? () => setReview({ ...review,
                 publicationTargetState: "valid", publicationTarget: {
                     campaignSlug: "yuhara-main", sourceSessionId: "sessao-synthetic",
@@ -101,5 +112,6 @@ export function ReviewFixture() {
 				throw new Error("Synthetic fixture cannot publish");
 			}}
 		/>
+        </>
 	);
 }

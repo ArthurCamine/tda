@@ -46,8 +46,8 @@ test("review shows factual warning totals with bounded details and Unicode word 
 	await expect(
 		page.getByText("Palavras", { exact: true }).locator("..").locator("strong"),
 	).toHaveText("2");
-	await page.locator("summary").click();
-	await expect(page.locator("summary")).toHaveText(
+	await page.locator("summary").filter({ hasText: "avisos do pipeline" }).click();
+	await expect(page.locator("summary").filter({ hasText: "avisos do pipeline" })).toHaveText(
 		"5000 avisos do pipeline · mostrando 50 tipos dos primeiros 1000 avisos",
 	);
 	await expect(page.locator("details li")).toHaveCount(50);
@@ -68,7 +68,7 @@ test("review shows factual warning totals with bounded details and Unicode word 
 test("historical review does not claim a verified total", async ({ page }) => {
 	await page.goto("/?review-contracts&legacy");
 	await expect(page.getByText("total histórico não verificado")).toBeVisible();
-	await expect(page.locator("summary")).not.toContainText("primeiros");
+	await expect(page.locator("summary").filter({ hasText: "avisos do pipeline" })).not.toContainText("primeiros");
 });
 
 
@@ -85,4 +85,41 @@ test("target repair preserves edits and restores only the original destination",
     await expect(repair).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Texto", exact: true })).toHaveValue("Texto preservado");
     await expect(page.getByText(/Destino vinculado: yuhara-main/)).toBeVisible();
+});
+
+
+test("bulk rename isolates a track, preserves exceptions and saves one snapshot", async ({ page }, testInfo) => {
+    await page.goto("/?review-contracts&bulk");
+    await page.getByText(/Gerenciar participantes/).click();
+    await page.getByLabel("Participante de origem").selectOption(JSON.stringify([1, "Alex"]));
+    await page.getByLabel("Novo nome").fill("Nome normalizado");
+    await expect(page.getByText("3 falas serão alteradas; 1 com nomes diferentes serão preservadas.")).toBeVisible();
+    await page.getByRole("button", { name: "Revisar renomeio" }).click();
+    await page.getByRole("button", { name: "Cancelar renomeio" }).click();
+    await expect(page.getByTestId("save-count")).toHaveText("0");
+    await page.getByLabel("Novo nome").fill("Nome normalizado");
+    await page.getByRole("button", { name: "Revisar renomeio" }).click();
+    await page.getByRole("button", { name: "Aplicar ao draft" }).click();
+    await expect(page.getByLabel("Participante de origem")).toBeFocused();
+    await expect(page.getByLabel("Estado do draft")).toHaveValue("reviewed");
+    await expect(page.getByTestId("save-count")).toHaveText("0");
+    const speakers = page.getByRole("textbox", { name: "Speaker", exact: true });
+    expect(await speakers.evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value))).toEqual(["Nome normalizado", "Nome normalizado", "Nome normalizado", "Convidado", "Alex"]);
+    await page.screenshot({ path: testInfo.outputPath("participant-rename.png"), fullPage: true });
+    await page.getByRole("button", { name: "Salvar revisão" }).click();
+    await expect(page.getByTestId("save-count")).toHaveText("1");
+    await expect(speakers.first()).toHaveValue("Nome normalizado");
+});
+
+test("bulk rename survives a save conflict", async ({ page }) => {
+    await page.goto("/?review-contracts&bulk&conflict");
+    await page.getByText(/Gerenciar participantes/).click();
+    await page.getByLabel("Participante de origem").selectOption(JSON.stringify([1, "Alex"]));
+    await page.getByLabel("Novo nome").fill("Novo");
+    await page.getByRole("button", { name: "Revisar renomeio" }).click();
+    await page.getByRole("button", { name: "Aplicar ao draft" }).click();
+    await page.getByRole("button", { name: "Salvar revisão" }).click();
+    await expect(page.getByRole("alert")).toContainText("mudou em outra aba");
+    await expect(page.getByRole("textbox", { name: "Speaker", exact: true }).first()).toHaveValue("Novo");
+    await expect(page.getByText("Alterações não salvas neste draft.")).toBeVisible();
 });

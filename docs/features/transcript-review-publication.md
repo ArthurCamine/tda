@@ -1370,3 +1370,27 @@ focadas finais 21 passed, incluindo limpeza da fila e reparo autenticado. `pnpm
 check` passou (659 testes Web, validações de docs/design/media/database) e build
 Production local passou. Playwright: 12 casos desktop/mobile, com screenshots
 inspecionados e edição pendente bloqueando reparo. Fixtures são sintéticas.
+
+
+## Renomeio de participante em lote — candidato #662
+
+Gerenciar participantes identifica cada grupo por `(trackNumber, speaker atual)`.
+O operador escolhe explicitamente a track e o nome de origem, informa o novo nome
+e confirma um preview das identidades afetadas. Nomes divergentes na mesma track
+são exceções preservadas e têm contagem/consulta próprias; tracks diferentes com
+nomes iguais nunca são fundidas. Se o conjunto mudar após o preview, a interface
+exige nova conferência antes de aplicar.
+
+Aplicar transforma o working draft uma única vez em O(n), sem request, sem mudar
+IDs, timestamps, texto, reviewed ou ordem. O mesmo contrato Unicode do draft
+rejeita nomes vazios, controles e mais de 160 escalares. Busca usa imediatamente
+os nomes novos. Aplicar/cancelar devolve foco ao seletor sem forçar scroll.
+
+A edição marca dirty e invalida aprovação em memória. O único Salvar revisão
+persiste o snapshot completo com o CAS existente; conflito mantém o renomeio local.
+Run bruto não é alterado e publicação exige salvamento e aprovação nova explícita.
+
+Validação: sete testes de estado, incluindo 7.500 segmentos/3.000 alterações;
+fluxos desktop/mobile de preview, cancelar, exceções, tracks homônimas, aprovação
+invalidada, um único save e conflito sem perda. Integração e release são etapas
+separadas. Rollback da Web mantém os drafts compatíveis, sem migração de dados.

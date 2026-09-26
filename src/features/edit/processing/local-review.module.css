@@ -422,3 +422,24 @@
     border-radius: var(--ds-radius-lg);
     overflow-wrap: anywhere;
 }
+
+.participantManager {
+    display: grid;
+    gap: 12px;
+    padding-top: 12px;
+}
+.participantManager label {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+.participantManager input,
+.participantManager select {
+    width: 100%;
+    min-width: 0;
+    padding: 10px;
+    color: var(--ds-foreground);
+    background: var(--ds-surface-elevated);
+    border: 1px solid var(--ds-border-subtle);
+    border-radius: var(--ds-radius-lg);
+}

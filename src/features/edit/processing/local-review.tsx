@@ -15,6 +15,8 @@ import type {
 	LocalRunSummary,
 } from "./protocol";
 import styles from "./local-review.module.css";
+import { ParticipantManager } from "./participant-manager";
+import { applyParticipantRename } from "./participant-rename";
 import { countWordsV1, isReviewStringV1 } from "../../transcript-review/text-contract";
 import { localRunKey, serializeLocalRunKey } from "./local-run-key";
 
@@ -516,7 +518,15 @@ function ReviewEditor({
 				</details>
 			) : null}
 
-			<div className={styles.reviewToolbar}>
+            <ParticipantManager segments={segments} disabled={busy || publishing || !canSave} onApply={(intent) => {
+                const next = applyParticipantRename(segments, intent);
+                if (next === segments) return;
+                setSegments([...next]);
+                if (status === "approved_local") setStatus("reviewed");
+                setDirty(true);
+                setPublishConfirmation(false);
+            }} />
+            <div className={styles.reviewToolbar}>
 				<label>
 					<span>Estado do draft</span>
 					<select
