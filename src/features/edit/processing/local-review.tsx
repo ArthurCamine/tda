@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status";
 import {
 	PublicationClientError,
+	preflightApprovedLocalReview,
 	type PublicationReceiptView,
 } from "./publication-client";
 import type {
@@ -120,6 +121,10 @@ function reviewError(code: string | null): string | null {
 			"Salve primeiro as alterações desta revisão. A aprovação só pode ser aplicada ao draft exato já persistido.",
 		LOCAL_REVIEW_RUN_NOT_VISIBLE:
 			"Este run não está mais elegível para revisão.",
+		LOCAL_REVIEW_REQUEST_TOO_LARGE:
+			"O request da revisão excede o limite local de 32 MiB. Seu texto nesta tela foi preservado.",
+		LOCAL_REVIEW_DRAFT_TOO_LARGE:
+			"O draft serializado excede o limite local de 32 MiB. Reduza o conteúdo antes de salvar novamente.",
 		payload_too_large:
 			"O draft excede o limite local de 32 MiB.",
 		timeout:
@@ -226,6 +231,16 @@ function ReviewEditor({
 	const canSave = review.snapshotContract === "tda_local_review_cas_v1";
 	const ephemeral = review.persistence === "ephemeral_base";
 	const invalidStrings = segments.some((segment) => !isReviewStringV1(segment.text, "text") || !isReviewStringV1(segment.speaker, "speaker"));
+	const publicationPreflight = useMemo(
+		() =>
+			publicationEnabled &&
+			review.publicationTarget &&
+			review.status === "approved_local" &&
+			!dirty
+				? preflightApprovedLocalReview(review)
+				: null,
+		[dirty, publicationEnabled, review],
+	);
 
 	useEffect(() => {
 		if (!dirty) return;
@@ -306,7 +321,8 @@ function ReviewEditor({
 			publishing ||
 			dirty ||
 			review.status !== "approved_local" ||
-			!review.publicationTarget
+			!review.publicationTarget ||
+			publicationPreflight?.eligible !== true
 		)
 			return;
 		const operationId = publishOperationId ?? crypto.randomUUID();
@@ -388,6 +404,18 @@ function ReviewEditor({
 						: "Este run não possui um destino cloud durável. A revisão continua local e não pode ser publicada até existir um vínculo verificável."}
 				</span>
 			</div>
+
+			{publicationPreflight && !publicationPreflight.eligible ? (
+				<p className={styles.error} role="status">
+					{publicationPreflight.reason === "too_large"
+						? `Aprovado localmente, mas a publicação está indisponível: payload canônico ${publicationPreflight.payloadBytes?.toLocaleString("pt-BR") ?? "acima do limite"} bytes / ${publicationPreflight.maxPayloadBytes.toLocaleString("pt-BR")} bytes.`
+						: "Aprovado localmente, mas este snapshot não passa no contrato atual de publicação. Salve/reabra a revisão antes de tentar publicar."}
+				</p>
+			) : publicationPreflight?.eligible ? (
+				<p className={styles.saved} role="status">
+					Publicação compatível · payload canônico {publicationPreflight.payloadBytes?.toLocaleString("pt-BR")} / {publicationPreflight.maxPayloadBytes.toLocaleString("pt-BR")} bytes.
+				</p>
+			) : null}
 
 			{publishConfirmation && review.publicationTarget ? (
 				<section

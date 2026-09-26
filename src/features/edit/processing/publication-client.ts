@@ -1,6 +1,11 @@
 "use client";
 
 import type { LocalReview } from "./protocol";
+import {
+	MAX_PUBLICATION_PAYLOAD_BYTES,
+	prepareCanonicalPublication,
+	type PublicationFailure,
+} from "../../transcript-publication/canonical";
 
 export type PublicationReceiptView = Readonly<{
 	receiptId: string;
@@ -8,6 +13,15 @@ export type PublicationReceiptView = Readonly<{
 	revisionNumber: number;
 	committedAt: string;
 }>;
+
+export type PublicationPreflight = Readonly<{
+	eligible: boolean;
+	reason: PublicationFailure | null;
+	payloadBytes: number | null;
+	maxPayloadBytes: number;
+}>;
+
+const PREFLIGHT_OPERATION_ID = "00000000-0000-4000-8000-000000000000";
 
 export class PublicationClientError extends Error {
 	constructor(
@@ -77,6 +91,43 @@ function requestBody(review: LocalReview, operationId: string) {
 			review: review.review,
 			segments: review.segments,
 		},
+	};
+}
+
+export function preflightApprovedLocalReview(
+	review: LocalReview,
+): PublicationPreflight {
+	let raw: string;
+	try {
+		raw = JSON.stringify(requestBody(review, PREFLIGHT_OPERATION_ID));
+	} catch (cause) {
+		const reason =
+			cause instanceof PublicationClientError
+				? cause.code === "approved_review_required"
+					? "approved_review_required"
+					: "invalid_payload"
+				: "invalid_payload";
+		return {
+			eligible: false,
+			reason,
+			payloadBytes: null,
+			maxPayloadBytes: MAX_PUBLICATION_PAYLOAD_BYTES,
+		};
+	}
+	const prepared = prepareCanonicalPublication(raw);
+	if (!prepared.ok) {
+		return {
+			eligible: false,
+			reason: prepared.reason,
+			payloadBytes: prepared.payloadBytes ?? null,
+			maxPayloadBytes: MAX_PUBLICATION_PAYLOAD_BYTES,
+		};
+	}
+	return {
+		eligible: true,
+		reason: null,
+		payloadBytes: prepared.value.payloadBytes,
+		maxPayloadBytes: MAX_PUBLICATION_PAYLOAD_BYTES,
 	};
 }
 
