@@ -1411,7 +1411,9 @@ def create_app(
         except Conflict as exc:
             code = str(exc)
             if code.startswith("JOB_LIST_"):
-                return error(code, 422)
+                if re.fullmatch(r"JOB_LIST_[A-Z0-9_]{1,64}", code):
+                    return error(code, 422)
+                return error("JOB_LIST_INVALID", 422)
             raise
 
     @app.post("/api/v1/jobs")
