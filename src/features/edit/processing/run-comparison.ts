@@ -1,4 +1,5 @@
 import type { LocalReviewSegment, LocalRunSummary } from "./protocol";
+import { localRunKey, sameLocalRun, type LocalRunKey } from "./local-run-key";
 
 export type RunComparisonKind = "equal" | "changed" | "left_only" | "right_only";
 
@@ -266,8 +267,14 @@ export function summarizeRunComparison(
 }
 
 export function runsShareComparisonSource(
-	left: Pick<LocalRunSummary, "sourceId" | "runId">,
-	right: Pick<LocalRunSummary, "sourceId" | "runId">,
+	left: LocalRunKey,
+	right: LocalRunKey,
 ): boolean {
-	return left.runId !== right.runId && left.sourceId === right.sourceId;
+	return left.sourceId === right.sourceId && !sameLocalRun(left, right);
+}
+
+export function comparisonRunKey(
+	run: Pick<LocalRunSummary, "sourceId" | "runId">,
+): LocalRunKey {
+	return localRunKey(run);
 }

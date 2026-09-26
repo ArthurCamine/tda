@@ -15,6 +15,7 @@ import type {
 } from "./protocol";
 import styles from "./local-review.module.css";
 import { countWordsV1, isReviewStringV1 } from "../../transcript-review/text-contract";
+import { localRunKey, serializeLocalRunKey } from "./local-run-key";
 
 type Props = Readonly<{
 	runs: readonly LocalRunSummary[];
@@ -627,7 +628,7 @@ export function LocalReviewWorkspace({
 					<div className={styles.runGrid}>
 						{runs.map((run) => (
 							<RunCard
-								key={`${run.sourceId}-${run.runId}`}
+								key={serializeLocalRunKey(localRunKey(run))}
 								run={run}
 								busy={busy}
 								onOpen={() => void onOpen(run.sourceId, run.runId)}
