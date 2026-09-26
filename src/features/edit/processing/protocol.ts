@@ -95,6 +95,12 @@ export type JobEvent = {
 	level: JobEventLevel;
 	data: Readonly<Record<string, JobEventValue>>;
 };
+export type JobEventPage = {
+	events: readonly JobEvent[];
+	hasMore: boolean;
+	nextAfterSeq: number | null;
+	nextBeforeSeq: number | null;
+};
 export type SystemGpu = {
 	index: number;
 	name: string;
@@ -619,8 +625,8 @@ export function parseJobs(value: unknown): LocalJob[] {
 }
 export function parseJobEvents(value: unknown): JobEvent[] {
 	const rows = record(value).events;
-	if (!Array.isArray(rows) || rows.length > 100) return invalid();
-	return rows.map((value) => {
+	if (!Array.isArray(rows) || rows.length > 200) return invalid();
+	const events = rows.map((value) => {
 		const row = record(value);
 		const level = row.level === undefined ? "info" : text(row.level, 16);
 		if (!["info", "warning", "error"].includes(level)) return invalid();
@@ -650,6 +656,39 @@ export function parseJobEvents(value: unknown): JobEvent[] {
 			data,
 		};
 	});
+	if (new Set(events.map((event) => event.seq)).size !== events.length)
+		return invalid();
+	return events;
+}
+
+export function parseJobEventPage(value: unknown): JobEventPage {
+	const row = record(value);
+	const parsed = parseJobEvents(row);
+	const legacy = row.has_more === undefined;
+	const events = [...parsed].sort((left, right) => left.seq - right.seq);
+	if (legacy) {
+		return {
+			events,
+			hasMore: false,
+			nextAfterSeq: events.at(-1)?.seq ?? null,
+			nextBeforeSeq: events[0]?.seq ?? null,
+		};
+	}
+	const hasMore = boolean(row.has_more);
+	const nextAfterSeq =
+		row.next_after_seq === null
+			? null
+			: nonNegativeInteger(row.next_after_seq);
+	const nextBeforeSeq =
+		row.next_before_seq === null
+			? null
+			: nonNegativeInteger(row.next_before_seq);
+	if (
+		events.length > 0 &&
+		(nextAfterSeq !== events.at(-1)?.seq || nextBeforeSeq !== events[0]?.seq)
+	)
+		return invalid();
+	return { events, hasMore, nextAfterSeq, nextBeforeSeq };
 }
 export function parseSystemSnapshot(value: unknown): SystemSnapshot {
 	const row = record(value);

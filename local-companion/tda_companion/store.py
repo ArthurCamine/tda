@@ -352,25 +352,68 @@ class Store:
                 for row in rows
             ]
 
-    def events(self, job_id):
+    @staticmethod
+    def _event_dto(row):
+        return dict(
+            seq=row["seq"],
+            attempt=row["attempt"],
+            code=row["code"],
+            at=row["at"],
+            level=row["level"],
+            data=json.loads(row["data"]) if row["data"] else {},
+        )
+
+    def events_page(self, job_id, *, after_seq=None, before_seq=None, limit=100):
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 200
+            or after_seq is not None and before_seq is not None
+        ):
+            raise ValueError("JOB_EVENTS_CURSOR_INVALID")
+        for cursor in (after_seq, before_seq):
+            if cursor is not None and (
+                isinstance(cursor, bool)
+                or not isinstance(cursor, int)
+                or cursor < 0
+            ):
+                raise ValueError("JOB_EVENTS_CURSOR_INVALID")
+
         with self.read() as db:
             if not db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone():
                 raise KeyError(job_id)
+
+            params = [job_id]
+            where = "job_id=?"
+            descending = after_seq is None
+            if after_seq is not None:
+                where += " AND seq>?"
+                params.append(after_seq)
+                descending = False
+            elif before_seq is not None:
+                where += " AND seq<?"
+                params.append(before_seq)
+
             rows = db.execute(
-                "SELECT seq,code,at,level,data,attempt FROM events WHERE job_id=? ORDER BY seq DESC LIMIT 100",
-                (job_id,),
+                "SELECT seq,code,at,level,data,attempt FROM events "
+                f"WHERE {where} ORDER BY seq {'DESC' if descending else 'ASC'} LIMIT ?",
+                (*params, limit + 1),
             ).fetchall()
-            return [
-                dict(
-                    seq=row["seq"],
-                    attempt=row["attempt"],
-                    code=row["code"],
-                    at=row["at"],
-                    level=row["level"],
-                    data=json.loads(row["data"]) if row["data"] else {},
-                )
-                for row in rows
-            ]
+            has_more = len(rows) > limit
+            selected = rows[:limit]
+            events = [self._event_dto(row) for row in selected]
+            sequences = [event["seq"] for event in events]
+
+            return {
+                "events": events,
+                "has_more": has_more,
+                "next_after_seq": max(sequences) if sequences else after_seq,
+                "next_before_seq": min(sequences) if sequences else before_seq,
+            }
+
+    def events(self, job_id):
+        """Legacy latest-page helper retains the historical newest-first ordering."""
+        return self.events_page(job_id)["events"]
 
     def remove(self, job_id):
         with self.tx() as db:

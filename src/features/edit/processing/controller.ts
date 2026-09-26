@@ -51,6 +51,7 @@ export type ProcessingState = Readonly<{
 	localReviewError: string | null;
 	system: SystemSnapshot | null;
 	events: readonly JobEvent[];
+	eventsHasOlder: boolean;
 	observedJobId: string | null;
 	error: BridgeErrorCode | null;
 	errorDetails: BridgeErrorDetails | null;
@@ -79,6 +80,7 @@ const initial: ProcessingState = {
 	localReviewError: null,
 	system: null,
 	events: [],
+	eventsHasOlder: false,
 	observedJobId: null,
 	error: null,
 	errorDetails: null,
@@ -87,6 +89,16 @@ const initial: ProcessingState = {
 	result: null,
 	uncertainSubmission: false,
 };
+
+function mergeJobEvents(
+	current: readonly JobEvent[],
+	incoming: readonly JobEvent[],
+): JobEvent[] {
+	const bySeq = new Map<number, JobEvent>();
+	for (const event of current) bySeq.set(event.seq, event);
+	for (const event of incoming) bySeq.set(event.seq, event);
+	return [...bySeq.values()].sort((left, right) => left.seq - right.seq);
+}
 
 export class ProcessingController {
 	#state = initial;
@@ -202,6 +214,42 @@ export class ProcessingController {
 		}
 	}
 
+	private async readEventTail(
+		jobId: string,
+		signal: AbortSignal,
+		previous: ProcessingState,
+		cursorSupported: boolean,
+	): Promise<{ events: JobEvent[]; hasOlder: boolean }> {
+		if (!cursorSupported) {
+			const page = await this.bridge.events(jobId, signal);
+			return { events: [...page.events], hasOlder: false };
+		}
+		const sameJob = previous.observedJobId === jobId;
+		if (!sameJob || previous.events.length === 0) {
+			const page = await this.bridge.events(jobId, signal, { limit: 200 });
+			return { events: [...page.events], hasOlder: page.hasMore };
+		}
+
+		let events = [...previous.events];
+		let afterSeq = events.at(-1)?.seq;
+		if (afterSeq === undefined)
+			return { events, hasOlder: previous.eventsHasOlder };
+
+		while (!signal.aborted) {
+			const page = await this.bridge.events(jobId, signal, {
+				afterSeq,
+				limit: 200,
+			});
+			events = mergeJobEvents(events, page.events);
+			if (!page.hasMore) break;
+			const next = page.nextAfterSeq;
+			if (next === null || next <= afterSeq)
+				throw new BridgeError("invalid_response");
+			afterSeq = next;
+		}
+		return { events, hasOlder: previous.eventsHasOlder };
+	}
+
 	private async read(
 		signal: AbortSignal,
 		options: Readonly<{ deep?: boolean; includeLibrary?: boolean }> = {},
@@ -256,19 +304,26 @@ export class ProcessingController {
 				return fallback;
 			}
 		};
-		const [system, events] = await Promise.all([
+		const eventFallback =
+			previous.observedJobId === observedJob?.id
+				? { events: [...previous.events], hasOlder: previous.eventsHasOlder }
+				: { events: [] as JobEvent[], hasOlder: false };
+		const [system, eventState] = await Promise.all([
 			capabilities.capabilities.includes("system.telemetry")
 				? preserveSecondary(this.bridge.system(signal), previous.system, "telemetry")
 				: Promise.resolve(null),
 			observedJob && capabilities.capabilities.includes("job.events")
 				? preserveSecondary(
-						this.bridge.events(observedJob.id, signal),
-						previous.observedJobId === observedJob.id
-							? previous.events
-							: [],
+						this.readEventTail(
+							observedJob.id,
+							signal,
+							previous,
+							capabilities.capabilities.includes("job.events.cursor"),
+						),
+						eventFallback,
 						"events",
 					)
-				: Promise.resolve([] as JobEvent[]),
+				: Promise.resolve(eventFallback),
 		]);
 
 		const terminalStatuses = new Set([
@@ -341,7 +396,8 @@ export class ProcessingController {
 			localSources,
 			localRuns,
 			system,
-			events,
+			events: eventState.events,
+			eventsHasOlder: eventState.hasOlder,
 			observedJobId: observedJob?.id ?? null,
 			checkedAt: new Date().toISOString(),
 			refreshError: null,
@@ -458,11 +514,48 @@ export class ProcessingController {
 		if (id !== null) {
 			// Do not briefly show another job's events while the requested
 			// diagnostic history is being loaded.
-			this.update({ observedJobId: id, events: [] });
+			this.update({ observedJobId: id, events: [], eventsHasOlder: false });
 		}
 		await this.runOperation(null, async (signal) => {
 			await this.read(signal, { deep: false, includeLibrary: false });
 		});
+	};
+
+	loadOlderEvents = async () => {
+		const jobId = this.#state.observedJobId;
+		const firstSeq = this.#state.events[0]?.seq;
+		if (
+			this.#state.connection !== "connected" ||
+			!jobId ||
+			!this.#state.eventsHasOlder ||
+			firstSeq === undefined
+		)
+			return;
+		const epoch = this.#epoch;
+		const signal = this.#request.signal;
+		try {
+			const page = await this.bridge.events(jobId, signal, {
+				beforeSeq: firstSeq,
+				limit: 200,
+			});
+			if (
+				epoch !== this.#epoch ||
+				signal.aborted ||
+				this.#state.observedJobId !== jobId
+			)
+				return;
+			this.update({
+				events: mergeJobEvents(page.events, this.#state.events),
+				eventsHasOlder: page.hasMore,
+				eventsRefreshError: null,
+			});
+		} catch (error) {
+			if (epoch === this.#epoch && !signal.aborted)
+				this.update({
+					eventsRefreshError:
+						error instanceof BridgeError ? error.code : "service_error",
+				});
+		}
 	};
 
 	lifecycle = async (action: "pause" | "resume") => {

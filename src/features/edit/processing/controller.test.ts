@@ -52,7 +52,7 @@ describe("processing state", () => {
 			if (path.endsWith("/capabilities")) return Response.json({ ...caps,
 				capabilities: ["system.telemetry", "job.events", "transcription.review"] });
 			if (path.endsWith("/jobs")) return Response.json({ jobs: [job] });
-			const domain = path.endsWith("/system") ? "telemetry" : path.endsWith("/events") ? "events" : "library";
+			const domain = path.endsWith("/system") ? "telemetry" : path.includes("/events") ? "events" : "library";
 			if (failures.has(domain)) throw new TypeError("synthetic domain failure");
 			if (domain === "telemetry") return Response.json({ sampled_at: "2026-09-26T00:00:00Z",
 				host: { os: "Windows", cpu: "Synthetic CPU" }, cpu: { utilization_percent: 42 },
@@ -169,7 +169,7 @@ describe("processing state", () => {
 					gpus: [],
 				});
 			}
-			if (value.endsWith("/jobs/test-job/events")) {
+			if (value.includes("/jobs/test-job/events")) {
 				eventReads += 1;
 				if (eventReads > 1) throw new TypeError("events hiccup");
 				return Response.json({
@@ -493,7 +493,7 @@ describe("processing state", () => {
 			if (value.endsWith("/health")) return Response.json(health);
 			if (value.endsWith("/capabilities")) return Response.json(diagnosticCaps);
 			if (value.endsWith("/jobs")) return Response.json({ jobs: [failedA, failedB] });
-			if (value.endsWith("/jobs/failed-a/events"))
+			if (value.includes("/jobs/failed-a/events"))
 				return Response.json({
 					events: [
 						{
@@ -505,7 +505,7 @@ describe("processing state", () => {
 						},
 					],
 				});
-			if (value.endsWith("/jobs/failed-b/events"))
+			if (value.includes("/jobs/failed-b/events"))
 				return Response.json({
 					events: [
 						{
@@ -538,6 +538,96 @@ describe("processing state", () => {
 		await controller.observeJob(null);
 		expect(controller.snapshot().observedJobId).toBe("failed-a");
 		expect(controller.snapshot().events[0]?.data).toMatchObject({ track: 1 });
+	});
+
+	it("drains more than one live event page and can load older history without loss", async () => {
+		const eventCaps = { ...caps, capabilities: ["job.events", "job.events.cursor"] };
+		const requestedAfter: number[] = [];
+		const event = (seq: number) => ({
+			seq,
+			attempt: 1,
+			code: "QWEN_WINDOW_TRANSCRIBED",
+			at: "2026-09-26T00:00:00Z",
+			level: "info",
+			data: { window: seq },
+		});
+		let initial = true;
+		const request = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+			const value = String(url);
+			if (value.endsWith("/health")) return Response.json(health);
+			if (value.endsWith("/capabilities")) return Response.json(eventCaps);
+			if (value.endsWith("/jobs")) return Response.json({ jobs: [job] });
+			if (!value.includes("/jobs/test-job/events"))
+				throw new Error(`unexpected request: ${value}`);
+
+			const parsed = new URL(value);
+			const before = parsed.searchParams.get("before_seq");
+			const after = parsed.searchParams.get("after_seq");
+			if (before === "201") {
+				return Response.json({
+					events: Array.from({ length: 200 }, (_, index) => event(index + 1)),
+					has_more: false,
+					next_after_seq: 200,
+					next_before_seq: 1,
+				});
+			}
+			if (after !== null) {
+				const cursor = Number(after);
+				requestedAfter.push(cursor);
+				if (cursor === 250) {
+					return Response.json({
+						events: Array.from({ length: 200 }, (_, index) => event(index + 251)),
+						has_more: true,
+						next_after_seq: 450,
+						next_before_seq: 251,
+					});
+				}
+				if (cursor === 450) {
+					return Response.json({
+						events: Array.from({ length: 50 }, (_, index) => event(index + 451)),
+						has_more: false,
+						next_after_seq: 500,
+						next_before_seq: 451,
+					});
+				}
+				return Response.json({
+					events: [],
+					has_more: false,
+					next_after_seq: cursor,
+					next_before_seq: null,
+				});
+			}
+			if (initial) {
+				initial = false;
+				return Response.json({
+					events: Array.from({ length: 50 }, (_, index) => event(index + 201)),
+					has_more: true,
+					next_after_seq: 250,
+					next_before_seq: 201,
+				});
+			}
+			throw new Error("unexpected uncursored event reload");
+		});
+
+		const controller = new ProcessingController(new LocalBridge(request));
+		await controller.connect(token);
+		expect(controller.snapshot().events.map((item) => item.seq)).toEqual(
+			Array.from({ length: 50 }, (_, index) => index + 201),
+		);
+		expect(controller.snapshot().eventsHasOlder).toBe(true);
+
+		await controller.loadOlderEvents();
+		expect(controller.snapshot().events).toHaveLength(250);
+		expect(controller.snapshot().events[0]?.seq).toBe(1);
+		expect(controller.snapshot().events.at(-1)?.seq).toBe(250);
+		expect(controller.snapshot().eventsHasOlder).toBe(false);
+
+		await controller.refresh("background");
+		expect(requestedAfter).toEqual([250, 450]);
+		expect(controller.snapshot().events).toHaveLength(500);
+		expect(controller.snapshot().events.map((item) => item.seq)).toEqual(
+			Array.from({ length: 500 }, (_, index) => index + 1),
+		);
 	});
 
 	it("observes the oldest queued job because that is the next one executed", async () => {

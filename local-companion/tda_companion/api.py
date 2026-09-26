@@ -1208,6 +1208,7 @@ def create_app(
         features = [
             "synthetic.fixture",
             "job.events",
+            "job.events.cursor",
             "system.telemetry",
             "worker.subprocess",
             "transcription.prepare",
@@ -1451,8 +1452,20 @@ def create_app(
         return store.action(job_id, action)
 
     @app.get("/api/v1/jobs/{job_id}/events")
-    def events(job_id: str):
-        return {"events": store.events(job_id)}
+    def events(
+        job_id: str,
+        after_seq: Annotated[int | None, Query(ge=0)] = None,
+        before_seq: Annotated[int | None, Query(ge=0)] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    ):
+        if after_seq is not None and before_seq is not None:
+            return error("INVALID_REQUEST", 422)
+        return store.events_page(
+            job_id,
+            after_seq=after_seq,
+            before_seq=before_seq,
+            limit=limit,
+        )
 
     @app.get("/api/v1/jobs/{job_id}/result")
     def result(job_id: str):

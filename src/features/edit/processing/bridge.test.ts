@@ -4,6 +4,7 @@ import {
 	LOCAL_API,
 	parseCapabilities,
 	parseJob,
+	parseJobEventPage,
 	parseJobEvents,
 	parseJobs,
 	parsePreparationStatus,
@@ -42,6 +43,33 @@ describe("processing protocol contract", () => {
 				],
 			})[0],
 		).toMatchObject({ code, attempt: 2 });
+	});
+
+	it("parses paginated event metadata and normalizes legacy descending pages", () => {
+		const modern = parseJobEventPage({
+			events: [
+				{ seq: 10, code: "A", at: "2026-09-19T12:00:00Z", level: "info", data: {} },
+				{ seq: 11, code: "B", at: "2026-09-19T12:00:01Z", level: "info", data: {} },
+			],
+			has_more: true,
+			next_after_seq: 11,
+			next_before_seq: 10,
+		});
+		expect(modern).toMatchObject({
+			hasMore: true,
+			nextAfterSeq: 11,
+			nextBeforeSeq: 10,
+		});
+		expect(modern.events.map((event) => event.seq)).toEqual([10, 11]);
+
+		const legacy = parseJobEventPage({
+			events: [
+				{ seq: 2, code: "B", at: "2026-09-19T12:00:01Z", level: "info", data: {} },
+				{ seq: 1, code: "A", at: "2026-09-19T12:00:00Z", level: "info", data: {} },
+			],
+		});
+		expect(legacy.events.map((event) => event.seq)).toEqual([1, 2]);
+		expect(legacy.hasMore).toBe(false);
 	});
 
 	it("keeps legacy/job-level event attempt nullable and rejects invalid attempts", () => {
@@ -417,6 +445,32 @@ describe("loopback bridge", () => {
 			profile_id: "qwen-quality",
 		});
 		expect(request.mock.calls[1][1]?.method).toBe("GET");
+		bridge.disconnect();
+	});
+
+	it("sends bounded event cursors without putting them in the path identity", async () => {
+		const request = vi.fn<typeof fetch>().mockResolvedValue(
+			Response.json({
+				events: [
+					{ seq: 42, code: "TRACK_COMPLETED", at: "2026-09-19T12:00:00Z", level: "info", data: {} },
+				],
+				has_more: false,
+				next_after_seq: 42,
+				next_before_seq: 42,
+			}),
+		);
+		const bridge = new LocalBridge(request);
+		bridge.pair(token);
+
+		const page = await bridge.events("test-job", signal(), {
+			afterSeq: 41,
+			limit: 200,
+		});
+
+		expect(page.events[0]?.seq).toBe(42);
+		expect(request.mock.calls[0][0]).toBe(
+			`${LOCAL_API}/jobs/test-job/events?after_seq=41&limit=200`,
+		);
 		bridge.disconnect();
 	});
 

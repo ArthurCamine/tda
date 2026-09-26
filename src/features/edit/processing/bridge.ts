@@ -17,7 +17,7 @@ import {
 	parsePreparationStatus,
 	record,
 	text,
-	parseJobEvents,
+	parseJobEventPage,
 	parseJobs,
 	parseLocalReview,
 	parseLocalRuns,
@@ -316,9 +316,24 @@ export class LocalBridge {
 	async job(id: string, signal: AbortSignal) {
 		return parseJob(await this.json(`/jobs/${identifier(id)}`, signal));
 	}
-	async events(id: string, signal: AbortSignal) {
-		return parseJobEvents(
-			await this.json(`/jobs/${identifier(id)}/events`, signal),
+	async events(
+		id: string,
+		signal: AbortSignal,
+		options: Readonly<{
+			afterSeq?: number;
+			beforeSeq?: number;
+			limit?: number;
+		}> = {},
+	) {
+		const params = new URLSearchParams();
+		if (options.afterSeq !== undefined)
+			params.set("after_seq", String(options.afterSeq));
+		if (options.beforeSeq !== undefined)
+			params.set("before_seq", String(options.beforeSeq));
+		if (options.limit !== undefined) params.set("limit", String(options.limit));
+		const query = params.size > 0 ? `?${params.toString()}` : "";
+		return parseJobEventPage(
+			await this.json(`/jobs/${identifier(id)}/events${query}`, signal),
 		);
 	}
 	async system(signal: AbortSignal) {
