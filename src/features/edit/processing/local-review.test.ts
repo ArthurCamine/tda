@@ -47,6 +47,8 @@ function rawReview(
 		draft_revision: 0,
 		draft_sha256: draftSha,
 		status: "draft",
+		approval_current: false,
+		approved_at: null,
 		created_at: "2026-09-21T00:00:00.000Z",
 		updated_at: "2026-09-21T00:00:00.000Z",
 		lineage: {
@@ -128,6 +130,27 @@ describe("local result/review contracts", () => {
 			else expect(() => parseLocalReview(raw), item.name).toThrow();
 		}
 	});
+	it("requires an exact approval proof marker for approved review responses", () => {
+		const approved = {
+			...rawReview(),
+			status: "approved_local",
+			approval_current: true,
+			approved_at: "2026-09-26T17:00:00.000Z",
+		};
+		expect(parseLocalReview(approved)).toMatchObject({
+			status: "approved_local",
+			approvalCurrent: true,
+			approvedAt: "2026-09-26T17:00:00.000Z",
+		});
+		expect(() =>
+			parseLocalReview({
+				...approved,
+				approval_current: false,
+				approved_at: null,
+			}),
+		).toThrow();
+	});
+
 	it("parses an ephemeral base without inventing revision, hash or timestamps", () => {
 		const raw = { ...rawReview(), snapshot_contract: "tda_local_review_cas_v1", persistence: "ephemeral_base",
 			draft_revision: null, draft_sha256: null, created_at: null, updated_at: null };

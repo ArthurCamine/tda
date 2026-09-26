@@ -115,6 +115,8 @@ function reviewError(code: string | null): string | null {
 			"Esta revisão antiga contém caracteres incompatíveis. O arquivo foi preservado e precisa de reparo local explícito; consulte o procedimento de reparo de revisão.",
 		LOCAL_REVIEW_BASE_RUN_INVALID:
 			"O run bruto não passou na verificação de integridade. Ele não foi alterado.",
+		LOCAL_REVIEW_APPROVAL_REQUIRES_SAVED_DRAFT:
+			"Salve primeiro as alterações desta revisão. A aprovação só pode ser aplicada ao draft exato já persistido.",
 		LOCAL_REVIEW_RUN_NOT_VISIBLE:
 			"Este run não está mais elegível para revisão.",
 		payload_too_large:
@@ -257,6 +259,7 @@ function ReviewEditor({
 	const participants = new Set(segments.map((segment) => segment.speaker)).size;
 
 	function patch(index: number, value: Partial<LocalReviewSegment>) {
+		if (status === "approved_local") setStatus("reviewed");
 		setSegments((current) =>
 			current.map((segment, candidate) =>
 				candidate === index ? { ...segment, ...value } : segment,
@@ -592,7 +595,7 @@ export function LocalReviewWorkspace({
 	if (review) {
 		return (
 			<ReviewEditor
-				key={`${review.sourceId}:${review.runId}:${review.draftSha256 ?? review.baseTranscriptSha256}`}
+				key={`${review.sourceId}:${review.runId}:${review.draftSha256 ?? review.baseTranscriptSha256}:${review.approvedAt ?? "unapproved"}`}
 				review={review}
 				busy={busy}
 				error={error}

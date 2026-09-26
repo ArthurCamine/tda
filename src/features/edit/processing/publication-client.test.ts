@@ -13,6 +13,8 @@ const review: LocalReview = {
 	draftRevision: 2,
 	draftSha256: "c".repeat(64),
 	status: "approved_local",
+	approvalCurrent: true,
+	approvedAt: "2026-09-21T12:01:00Z",
 	createdAt: "2026-09-21T12:00:00Z",
 	updatedAt: "2026-09-21T12:01:00Z",
 	lineage: {

@@ -18,6 +18,7 @@ from .review_text import count_words_v1, valid_review_string_v1
 REVIEW_SCHEMA_VERSION = "tda_local_review_draft_v1"
 REVIEW_RESPONSE_SCHEMA_VERSION = "tda_local_review_v1"
 REVIEW_SUMMARY_SCHEMA_VERSION = "tda_local_review_summary_v1"
+REVIEW_APPROVAL_SCHEMA_VERSION = "tda_local_review_approval_v1"
 SNAPSHOT_CONTRACT = "tda_local_review_cas_v1"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 
@@ -26,6 +27,7 @@ _SOURCE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _ALLOWED_STATUS = frozenset({"draft", "reviewed", "approved_local"})
 _MAX_DRAFT_BYTES = 32 * 1024 * 1024
 _MAX_SUMMARY_BYTES = 8 * 1024
+_MAX_APPROVAL_BYTES = 4 * 1024
 _MAX_SEGMENTS = 100_000
 
 _LOCKS: dict[str, threading.RLock] = {}
@@ -111,6 +113,110 @@ def _summary_path(draft_path: Path) -> Path:
     return draft_path.with_name("summary.json")
 
 
+def _approval_path(draft_path: Path) -> Path:
+    return draft_path.with_name("approval.json")
+
+
+def _approval_bytes(value: dict[str, Any]) -> bytes:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(payload) <= 0 or len(payload) > _MAX_APPROVAL_BYTES:
+        raise LocalReviewError("LOCAL_REVIEW_APPROVAL_TOO_LARGE")
+    return payload
+
+
+def _write_approval(
+    draft_path: Path,
+    *,
+    draft: dict[str, Any],
+    draft_sha256: str,
+) -> dict[str, Any]:
+    value = {
+        "schema_version": REVIEW_APPROVAL_SCHEMA_VERSION,
+        "source_id": draft["source_id"],
+        "run_id": draft["run_id"],
+        "base_transcript_sha256": draft["base_transcript_sha256"],
+        "approved_draft_revision": draft["draft_revision"],
+        "approved_draft_sha256": draft_sha256,
+        "approved_at": utc_now(),
+    }
+    try:
+        atomic_write(
+            _approval_path(draft_path),
+            _approval_bytes(value),
+            storage_class="authoritative",
+        )
+    except AtomicStorageError as exc:
+        if exc.ambiguous:
+            raise LocalReviewError("LOCAL_REVIEW_APPROVAL_WRITE_UNCONFIRMED") from exc
+        raise
+    return value
+
+
+def _read_current_approval(
+    draft_path: Path,
+    *,
+    draft: dict[str, Any],
+    draft_sha256: str | None,
+) -> dict[str, Any] | None:
+    if draft_sha256 is None:
+        return None
+    path = _approval_path(draft_path)
+    try:
+        before = path.lstat()
+    except (FileNotFoundError, OSError):
+        return None
+    if (
+        path.is_symlink()
+        or path.is_junction()
+        or not stat.S_ISREG(before.st_mode)
+        or not 0 < before.st_size <= _MAX_APPROVAL_BYTES
+    ):
+        return None
+    try:
+        with path.open("rb") as handle:
+            payload = handle.read(_MAX_APPROVAL_BYTES + 1)
+        if len(payload) != before.st_size:
+            return None
+        value = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "source_id",
+        "run_id",
+        "base_transcript_sha256",
+        "approved_draft_revision",
+        "approved_draft_sha256",
+        "approved_at",
+    }:
+        return None
+    revision = value.get("approved_draft_revision")
+    approved_at = value.get("approved_at")
+    if (
+        value.get("schema_version") != REVIEW_APPROVAL_SCHEMA_VERSION
+        or value.get("source_id") != draft.get("source_id")
+        or value.get("run_id") != draft.get("run_id")
+        or value.get("base_transcript_sha256") != draft.get("base_transcript_sha256")
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision != draft.get("draft_revision")
+        or value.get("approved_draft_sha256") != draft_sha256
+        or not isinstance(approved_at, str)
+        or not 0 < len(approved_at) <= 64
+    ):
+        return None
+    try:
+        parsed = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value if parsed.tzinfo is not None else None
+
+
 def _atomic_summary_json(path: Path, value: dict[str, Any]) -> None:
     payload = json.dumps(
         value,
@@ -146,6 +252,8 @@ def _refresh_review_summary(draft_path: Path, draft: dict[str, Any]) -> None:
         draft_stat = draft_path.lstat()
         if not stat.S_ISREG(draft_stat.st_mode):
             return
+        _, draft_payload = _bounded_json(draft_path)
+        draft_sha256 = hashlib.sha256(draft_payload).hexdigest()
         _atomic_summary_json(
             _summary_path(draft_path),
             {
@@ -154,6 +262,7 @@ def _refresh_review_summary(draft_path: Path, draft: dict[str, Any]) -> None:
                 "run_id": draft.get("run_id"),
                 "base_transcript_sha256": draft.get("base_transcript_sha256"),
                 "draft_revision": draft.get("draft_revision"),
+                "draft_sha256": draft_sha256,
                 "status": draft.get("status"),
                 "review_percent": round((reviewed / total) * 100, 1) if total else 100.0,
                 "updated_at": draft.get("updated_at"),
@@ -227,6 +336,7 @@ def review_summary(package_root: Path, run_id: str, *, base_transcript_sha256: s
         if not isinstance(value, dict):
             return _public_unknown_summary()
         revision, status = value.get("draft_revision"), value.get("status")
+        draft_sha256 = value.get("draft_sha256")
         percent, updated_at = value.get("review_percent"), value.get("updated_at")
         fingerprint = value.get("draft_fingerprint")
         if (
@@ -254,6 +364,23 @@ def review_summary(package_root: Path, run_id: str, *, base_transcript_sha256: s
             return _public_unknown_summary()
         if parsed.tzinfo is None:
             return _public_unknown_summary()
+        if status == "approved_local":
+            if (
+                not isinstance(draft_sha256, str)
+                or not _SHA256.fullmatch(draft_sha256)
+                or _read_current_approval(
+                    draft_path,
+                    draft={
+                        "source_id": value.get("source_id"),
+                        "run_id": value.get("run_id"),
+                        "base_transcript_sha256": value.get("base_transcript_sha256"),
+                        "draft_revision": revision,
+                    },
+                    draft_sha256=draft_sha256,
+                )
+                is None
+            ):
+                return _public_unknown_summary()
         return {"status": status, "draft_revision": revision,
                 "review_percent": float(percent), "updated_at": updated_at}
 
@@ -428,6 +555,7 @@ def _response(
     draft: dict[str, Any],
     payload: bytes | None,
     *,
+    draft_path: Path,
     manifest: dict[str, Any],
     base_segments: list[dict[str, Any]],
     warnings: list[str],
@@ -436,6 +564,20 @@ def _response(
     if not isinstance(segments, list):
         raise LocalReviewError("LOCAL_REVIEW_DRAFT_INVALID")
     stats = manifest.get("stats") if isinstance(manifest.get("stats"), dict) else {}
+    draft_sha256 = hashlib.sha256(payload).hexdigest() if payload is not None else None
+    approval = _read_current_approval(
+        draft_path,
+        draft=draft,
+        draft_sha256=draft_sha256,
+    )
+    stored_status = draft["status"]
+    effective_status = (
+        "approved_local"
+        if approval is not None
+        else "reviewed"
+        if stored_status == "approved_local"
+        else stored_status
+    )
     return {
         "schema_version": REVIEW_RESPONSE_SCHEMA_VERSION,
         "snapshot_contract": SNAPSHOT_CONTRACT,
@@ -444,8 +586,10 @@ def _response(
         "run_id": draft["run_id"],
         "base_transcript_sha256": draft["base_transcript_sha256"],
         "draft_revision": draft["draft_revision"],
-        "draft_sha256": hashlib.sha256(payload).hexdigest() if payload is not None else None,
-        "status": draft["status"],
+        "draft_sha256": draft_sha256,
+        "status": effective_status,
+        "approval_current": approval is not None,
+        "approved_at": approval.get("approved_at") if approval is not None else None,
         "created_at": draft["created_at"],
         "updated_at": draft["updated_at"],
         "lineage": {
@@ -527,6 +671,7 @@ def _open_from_snapshot(
         return _response(
             draft,
             payload,
+            draft_path=path,
             manifest=manifest,
             base_segments=base_segments,
             warnings=warnings,
@@ -546,6 +691,7 @@ def _open_from_snapshot(
     return _response(
         draft,
         None,
+        draft_path=path,
         manifest=manifest,
         base_segments=base_segments,
         warnings=warnings,
@@ -599,9 +745,33 @@ def save_review(
             for item in base_segments
         }
         segments = _validate_segment_payload(value.get("segments"), base_map)
+        current_segments = _validate_segment_payload(current["segments"], base_map)
+
+        # Approval is an explicit action over an already-persisted exact draft.
+        # A request that also changes editorial content must save first and only
+        # then approve the resulting revision in a second CAS-fenced action.
+        if status == "approved_local":
+            if absent or segments != current_segments:
+                raise LocalReviewError("LOCAL_REVIEW_APPROVAL_REQUIRES_SAVED_DRAFT")
+            draft, payload = _bounded_json(path)
+            draft_sha256 = hashlib.sha256(payload).hexdigest()
+            _write_approval(path, draft=draft, draft_sha256=draft_sha256)
+            _refresh_review_summary(path, {
+                **draft,
+                "status": "approved_local",
+            })
+            return _response(
+                draft,
+                payload,
+                draft_path=path,
+                manifest=manifest,
+                base_segments=base_segments,
+                warnings=_warnings(transcript),
+            )
+
         # Presentation order alone is not a new editorial revision. Historical
         # bytes and their SHA remain unchanged until an actual field edit.
-        if not absent and status == current["status"] and segments == _validate_segment_payload(current["segments"], base_map):
+        if not absent and status == current["status"] and segments == current_segments:
             return current
         now = utc_now()
         draft = {
@@ -620,6 +790,7 @@ def save_review(
         return _response(
             draft,
             payload,
+            draft_path=path,
             manifest=manifest,
             base_segments=base_segments,
             warnings=_warnings(transcript),
@@ -663,5 +834,5 @@ def repair_legacy_review(
                  "draft_revision": expected_revision + 1, "updated_at": utc_now()}
         payload = _atomic_json(path, draft)
         _refresh_review_summary(path, draft)
-        return _response(draft, payload, manifest=manifest, base_segments=base_segments,
+        return _response(draft, payload, draft_path=path, manifest=manifest, base_segments=base_segments,
                          warnings=_warnings(transcript))

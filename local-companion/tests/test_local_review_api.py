@@ -174,14 +174,31 @@ def test_review_api_loads_only_on_explicit_selection_and_persists_draft(tmp_path
             headers={**headers, "Content-Type": "application/json"},
             json={
                 **_expected(opened),
-                "status": "approved_local",
+                "status": "reviewed",
                 "segments": segments,
             },
         )
         assert saved.status_code == 200
-        value = saved.json()
+        saved_value = saved.json()
+        assert saved_value["draft_revision"] == 1
+        assert saved_value["status"] == "reviewed"
+        assert saved_value["approval_current"] is False
+
+        approved = client.post(
+            f"/api/v1/sources/{source_id}/runs/{run['run_id']}/review",
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                **_expected(saved_value),
+                "status": "approved_local",
+                "segments": saved_value["segments"],
+            },
+        )
+        assert approved.status_code == 200
+        value = approved.json()
         assert value["draft_revision"] == 1
         assert value["status"] == "approved_local"
+        assert value["approval_current"] is True
+        assert value["approved_at"]
         assert value["review"]["review_percent"] == 100.0
         assert value["review"]["edited_segments"] == 1
         assert raw_path.read_bytes() == raw_before

@@ -209,6 +209,8 @@ export type LocalReview = {
 	persistence?: "persisted" | "ephemeral_base";
 	snapshotContract?: "tda_local_review_cas_v1";
 	status: LocalReviewStatus;
+	approvalCurrent: boolean;
+	approvedAt: string | null;
 	createdAt: string | null;
 	updatedAt: string | null;
 	lineage: {
@@ -864,6 +866,14 @@ export function parseLocalReview(value: unknown): LocalReview {
 	if (row.schema_version !== "tda_local_review_v1") return invalid();
 	const status = text(row.status, 32);
 	if (!["draft", "reviewed", "approved_local"].includes(status)) return invalid();
+	const approvalCurrent =
+		row.approval_current === undefined ? false : boolean(row.approval_current);
+	const approvedAt =
+		row.approved_at === undefined || row.approved_at === null
+			? null
+			: isoDate(row.approved_at);
+	if (status === "approved_local" && !approvalCurrent) return invalid();
+	if (approvalCurrent !== (approvedAt !== null)) return invalid();
 	const sourceId = identifier(row.source_id);
 	const runId = runIdentifier(row.run_id);
 	const baseTranscriptSha256 = sha256(row.base_transcript_sha256);
@@ -924,6 +934,8 @@ export function parseLocalReview(value: unknown): LocalReview {
 		persistence: ephemeral ? "ephemeral_base" : "persisted",
 		...(supportsCas ? { snapshotContract: "tda_local_review_cas_v1" as const } : {}),
 		status: status as LocalReviewStatus,
+		approvalCurrent,
+		approvedAt,
 		createdAt: ephemeral ? null : isoDate(row.created_at),
 		updatedAt: ephemeral ? null : isoDate(row.updated_at),
 		lineage: {

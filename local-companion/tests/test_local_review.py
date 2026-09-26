@@ -199,9 +199,14 @@ def test_review_summary_tracks_saved_status_without_get_mutations(tmp_path, stat
     assert not (package / "revisions").exists()
     for index, segment in enumerate(opened["segments"]):
         segment["reviewed"] = status == "approved_local" or (status == "reviewed" and index == 0)
+    initial_status = "reviewed" if status == "approved_local" else status
     saved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
-        **_expected(opened), "status": status, "segments": opened["segments"],
+        **_expected(opened), "status": initial_status, "segments": opened["segments"],
     })
+    if status == "approved_local":
+        saved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+            **_expected(saved), "status": "approved_local", "segments": saved["segments"],
+        })
     assert review_summary(package, run["run_id"]) == {
         "status": status, "draft_revision": 1, "review_percent": percent, "updated_at": saved["updated_at"],
     }
@@ -210,6 +215,86 @@ def test_review_summary_tracks_saved_status_without_get_mutations(tmp_path, stat
     files_before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in directory.iterdir()}
     open_review(package, source_id=source_id, run_id=run["run_id"])
     assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in directory.iterdir()} == files_before
+
+
+def test_approval_binds_exact_saved_draft_and_edits_invalidate_it(tmp_path):
+    package, source_id, run = _package(tmp_path)
+    opened = open_review(package, source_id=source_id, run_id=run["run_id"])
+
+    changed = [dict(item) for item in opened["segments"]]
+    changed[0]["text"] = "Texto aprovado"
+
+    with pytest.raises(LocalReviewError, match="LOCAL_REVIEW_APPROVAL_REQUIRES_SAVED_DRAFT"):
+        save_review(package, source_id=source_id, run_id=run["run_id"], value={
+            **_expected(opened),
+            "status": "approved_local",
+            "segments": changed,
+        })
+
+    saved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(opened),
+        "status": "reviewed",
+        "segments": changed,
+    })
+    draft_path = package / "revisions" / run["run_id"] / "draft.json"
+    draft_before = draft_path.read_bytes()
+
+    approved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(saved),
+        "status": "approved_local",
+        "segments": saved["segments"],
+    })
+    assert approved["status"] == "approved_local"
+    assert approved["approval_current"] is True
+    assert approved["approved_at"]
+    assert approved["draft_revision"] == saved["draft_revision"]
+    assert approved["draft_sha256"] == saved["draft_sha256"]
+    assert draft_path.read_bytes() == draft_before
+
+    approval = json.loads(draft_path.with_name("approval.json").read_bytes())
+    assert approval["approved_draft_revision"] == saved["draft_revision"]
+    assert approval["approved_draft_sha256"] == saved["draft_sha256"]
+
+    edited_segments = [dict(item) for item in approved["segments"]]
+    edited_segments[1]["text"] = "Nova edição"
+    edited = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(approved),
+        "status": "reviewed",
+        "segments": edited_segments,
+    })
+    assert edited["draft_revision"] == approved["draft_revision"] + 1
+    assert edited["status"] == "reviewed"
+    assert edited["approval_current"] is False
+    assert edited["approved_at"] is None
+
+
+def test_missing_or_corrupt_approval_never_preserves_approved_authority(tmp_path):
+    package, source_id, run = _package(tmp_path)
+    opened = open_review(package, source_id=source_id, run_id=run["run_id"])
+    saved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(opened), "status": "reviewed", "segments": opened["segments"],
+    })
+    approved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(saved), "status": "approved_local", "segments": saved["segments"],
+    })
+    assert approved["status"] == "approved_local"
+
+    approval_path = package / "revisions" / run["run_id"] / "approval.json"
+    approval_path.unlink()
+    reopened = open_review(package, source_id=source_id, run_id=run["run_id"])
+    assert reopened["status"] == "reviewed"
+    assert reopened["approval_current"] is False
+    assert review_summary(package, run["run_id"])["status"] == "unknown"
+
+    # Legacy approved_local embedded in draft bytes without an exact sidecar is
+    # presentation-only history, never current approval authority.
+    draft_path = approval_path.with_name("draft.json")
+    legacy = json.loads(draft_path.read_bytes())
+    legacy["status"] = "approved_local"
+    draft_path.write_text(json.dumps(legacy), encoding="utf-8")
+    reopened_legacy = open_review(package, source_id=source_id, run_id=run["run_id"])
+    assert reopened_legacy["status"] == "reviewed"
+    assert reopened_legacy["approval_current"] is False
 
 
 def _persist_summary_fixture(tmp_path):
@@ -635,8 +720,11 @@ def test_legacy_invalid_strings_require_explicit_repair_and_preserve_original(tm
     from tda_companion.local_review import repair_legacy_review
     package, source_id, run = _package(tmp_path)
     opened = open_review(package, source_id=source_id, run_id=run["run_id"])
+    saved = save_review(package, source_id=source_id, run_id=run["run_id"], value={
+        **_expected(opened), "status": "draft", "segments": opened["segments"],
+    })
     save_review(package, source_id=source_id, run_id=run["run_id"], value={
-        **_expected(opened), "status": "approved_local", "segments": opened["segments"],
+        **_expected(saved), "status": "approved_local", "segments": saved["segments"],
     })
     path = package / "revisions" / run["run_id"] / "draft.json"
     legacy = json.loads(path.read_bytes())

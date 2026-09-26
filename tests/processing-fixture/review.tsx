@@ -16,6 +16,8 @@ export function ReviewFixture() {
 		persistence: ephemeral ? "ephemeral_base" : "persisted",
 		...(oldAgent ? {} : { snapshotContract: "tda_local_review_cas_v1" }),
 		status: "draft",
+		approvalCurrent: false,
+		approvedAt: null,
 		createdAt: ephemeral ? null : "2026-09-26T12:00:00Z",
 		updatedAt: ephemeral ? null : "2026-09-26T12:00:00Z",
 		lineage: {
@@ -82,6 +84,8 @@ export function ReviewFixture() {
 			publicationEnabled={false}
 			onOpen={() => {}}
 			onSave={(baseline, status, segments) => setReview({ ...baseline, status, segments,
+				approvalCurrent: status === "approved_local",
+				approvedAt: status === "approved_local" ? "2026-09-26T12:00:01Z" : null,
 				persistence: "persisted", draftRevision: (baseline.draftRevision ?? 0) + 1,
 				draftSha256: "e".repeat(64), createdAt: "2026-09-26T12:00:00Z", updatedAt: "2026-09-26T12:00:00Z" })}
 			onClose={() => {}}
