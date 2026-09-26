@@ -31,7 +31,7 @@ export type Capabilities = {
 };
 export type PreparationStatus = {
 	schema: "tda_profile_preparation_v1";
-	state: "idle" | "running" | "completed" | "failed";
+	state: "idle" | "running" | "completed" | "failed" | "interrupted";
 	active: boolean;
 	operationId: string | null;
 	sourceId: string | null;
@@ -528,7 +528,7 @@ export function parseCapabilities(value: unknown): Capabilities {
 export function parsePreparationStatus(value: unknown): PreparationStatus {
 	const row = record(value);
 	if (row.schema !== "tda_profile_preparation_v1") return invalid();
-	if (!["idle", "running", "completed", "failed"].includes(String(row.state)))
+	if (!["idle", "running", "completed", "failed", "interrupted"].includes(String(row.state)))
 		return invalid();
 	const nullableText = (raw: unknown, limit = 128) =>
 		raw === null || raw === undefined ? null : text(raw, limit);

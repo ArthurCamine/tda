@@ -17,6 +17,8 @@ from .asr_runtime_updates import (
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
 from .network import NetworkError
+from .legacy.artifacts import utc_now
+from .preparation_receipt import PreparationReceipt
 from .qwen_desktop_prepare import (
     QwenDesktopPrepareError,
     prepare_qwen_profile_from_craig,
@@ -411,6 +413,28 @@ class ProfilePreparationManager:
             "sequence": 0,
             "error_code": None,
         }
+        self._receipt = PreparationReceipt(self.state_root)
+        try:
+            previous = self._receipt.read()
+            if previous is not None:
+                self._state.update({key: value for key, value in previous.items() if key != "schema"})
+                if previous["state"] == "running":
+                    self._state.update(state="interrupted", error_code="TRANSCRIPTION_PREPARATION_INTERRUPTED",
+                                       sequence=previous["sequence"] + 1, updated_at=utc_now(), finished_at=utc_now())
+                    self._persist_locked()
+                self._state.update(active=False, title="Preparação anterior interrompida." if self._state["state"] == "interrupted" else "Última preparação registrada.",
+                                   detail="A prontidão atual é verificada pelo catálogo de perfis.")
+        except (OSError, ValueError, TypeError):
+            self._state.update(error_code="PREPARATION_RECEIPT_INVALID")
+            self._log("warning", "PREPARATION_RECEIPT_INVALID", "Registro de preparação indisponível; catálogo permanece independente.", {})
+
+    def _persist_locked(self) -> None:
+        if self._state.get("operation_id") is None:
+            return
+        try:
+            self._receipt.write(self._state)
+        except (OSError, ValueError, TypeError):
+            self._log("warning", "PREPARATION_RECEIPT_WRITE_FAILED", "Não foi possível atualizar o registro de preparação.", {})
 
     def _log(self, level: str, code: str, message: str, context: dict[str, object]) -> None:
         if self.system_log is not None:
@@ -522,6 +546,10 @@ class ProfilePreparationManager:
             )
             if terminal_elapsed is not None:
                 self._state["elapsed_seconds"] = terminal_elapsed
+            self._state["updated_at"] = utc_now()
+            self._state["finished_at"] = utc_now() if state != "running" else None
+            if changed:
+                self._persist_locked()
             profile_id = str(self._state.get("profile_id") or "")
             operation_id = str(self._state.get("operation_id") or "")
             sequence = int(self._state.get("sequence") or 0)
@@ -593,6 +621,11 @@ class ProfilePreparationManager:
                 raise ProfilePreparationError("TRANSCRIPTION_PREPARATION_ALREADY_RUNNING")
 
             operation_id = uuid4().hex
+            predecessor = self._state.get("operation_id") if (
+                self._state.get("state") == "interrupted"
+                and self._state.get("source_id") == source_id
+                and self._state.get("profile_id") == profile_id
+            ) else None
             profile = get_profile(profile_id)
             self._cancel.clear()
             self._started_at = time.monotonic()
@@ -609,7 +642,16 @@ class ProfilePreparationManager:
                 "detail": "Conferindo runtime, modelo e capacidade local.",
                 "sequence": 1,
                 "error_code": None,
+                "resumes_operation_id": predecessor,
+                "started_at": utc_now(),
+                "updated_at": utc_now(),
+                "finished_at": None,
             }
+            try:
+                self._receipt.write(self._state)
+            except (OSError, ValueError, TypeError) as exc:
+                self._state.update(active=False, state="failed", error_code="PREPARATION_RECEIPT_WRITE_FAILED")
+                raise ProfilePreparationError("PREPARATION_RECEIPT_WRITE_FAILED") from exc
             initial = self._snapshot_locked()
             self._thread = threading.Thread(
                 target=self._run,

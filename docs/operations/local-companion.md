@@ -403,3 +403,13 @@ registram hashes, versões, GPU, tempos e contagens, sem áudio, texto ou paths 
 Esta evidência não representa teste da RTX 2080, avaliação editorial de qualidade,
 validação de Craig longo, nem certificação de MSI/RC produzido pela main atual.
 Não houve instalação, promoção de release, deploy ou publicação de transcript.
+
+## Recuperação da preparação após reinício (#656)
+
+O Agent mantém somente `State/preparation/latest.json`, um receipt sanitizado de até 4 KiB com identidade, etapa, sequência, timestamps, código seguro e predecessor opcional. O arquivo usa escrita temporária, fsync e substituição atômica; symlinks/junctions no diretório/arquivo são rejeitados. Não contém caminhos, tokens, URLs, áudio, transcrição ou contexto. A primeira gravação deve passar antes de iniciar a thread; falhas posteriores preservam o último snapshot válido e registram um código seguro no SystemLog.
+
+No startup, uma operação `running` vira `interrupted` antes de servir a API. Terminais permanecem legíveis; um receipt corrompido não impede startup e produz `PREPARATION_RECEIPT_INVALID`. Nenhum receipt é autoridade de readiness: catálogo, seals de runtime/modelo e gate físico continuam sendo revalidados. Recovery de `.partial` e reconexão BITS permanecem nos mecanismos existentes.
+
+A Web mostra a interrupção e oferece **Retomar preparação**, usando a fonte local anterior sem novo upload. A execução recebe novo `operation_id`; quando fonte/perfil coincidem, `resumes_operation_id` preserva a ligação. Cancelar a operação antiga nunca sinaliza a nova. Se o catálogo já estiver pronto, a nova operação apenas verifica a fonte e conclui sem download.
+
+Compatibilidade e rollout: publicar primeiro a Web capaz de ler o estado adicional `interrupted`, depois o Companion; clientes antigos não reconhecem esse estado. Rollback do Companion pode ignorar o receipt, mas perde a explicação do reinício; preserve o arquivo e artefatos locais. Esta implementação não significa release instalada nem validação de download pesado real.

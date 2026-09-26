@@ -481,6 +481,23 @@ export function ProcessingSubmission({
 		}
 	}
 
+	async function resumePreparation() {
+		if (busy || preparation?.state !== "interrupted" || !preparation.sourceId || !preparation.profileId) return;
+		setBusy(true);
+		setError(null);
+		const controller = new AbortController();
+		request.current?.abort();
+		request.current = controller;
+		try {
+			setPreparation(await bridge.prepareProfile(preparation.sourceId, preparation.profileId, controller.signal));
+			setStatus("Retomando preparação após reinício. Os arquivos locais serão verificados novamente.");
+		} catch (cause) {
+			setError(cause instanceof BridgeError && cause.serverCode ? localOperationMessage(cause.serverCode) : messageFor("service_error"));
+		} finally {
+			setBusy(false);
+		}
+	}
+
 	async function cancelActivePreparation() {
 		const operationId = preparation?.operationId;
 		if (
@@ -661,6 +678,13 @@ export function ProcessingSubmission({
 				</form>
 			)}
 
+			{preparation?.state === "interrupted" ? (
+				<div className={styles.notice} role="status">
+					<strong>Preparação interrompida pelo reinício do Companion.</strong>{" "}
+					Etapa anterior: {preparation.stage}. A prontidão do perfil é verificada pelos arquivos locais.
+					<Button type="button" variant="secondary" disabled={busy} onClick={() => void resumePreparation()}>Retomar preparação</Button>
+				</div>
+			) : null}
 			{preparation?.active ? (
 				<div className={styles.notice} role="status">
 					<strong>{preparation.title}</strong>{" "}
