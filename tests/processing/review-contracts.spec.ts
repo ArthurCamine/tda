@@ -123,3 +123,30 @@ test("bulk rename survives a save conflict", async ({ page }) => {
     await expect(page.getByRole("textbox", { name: "Speaker", exact: true }).first()).toHaveValue("Novo");
     await expect(page.getByText("Alterações não salvas neste draft.")).toBeVisible();
 });
+
+
+test("concurrent bulk edits reconcile by field without closing or losing the working copy", async ({ page }, testInfo) => {
+    await page.goto("/?review-contracts&bulk&conflict");
+    await page.getByText(/Gerenciar participantes/).click();
+    await page.getByLabel("Participante de origem").selectOption(JSON.stringify([1, "Alex"]));
+    await page.getByLabel("Novo nome").fill("Novo");
+    await page.getByRole("button", { name: "Revisar renomeio" }).click();
+    await page.getByRole("button", { name: "Aplicar ao draft" }).click();
+    await page.getByLabel("Filtrar falas").fill("Fala");
+    await page.getByRole("button", { name: "Salvar revisão" }).click();
+    await page.getByRole("button", { name: "Comparar com versão mais recente" }).click();
+    await expect(page.getByText(/3 mudanças locais · 1 colisões/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Salvar revisão" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Reconciliar no draft" })).toBeDisabled();
+    await page.getByLabel("Manter minha alteração").check();
+    await page.screenshot({ path: testInfo.outputPath("review-conflict.png"), fullPage: true });
+    await page.getByRole("button", { name: "Reconciliar no draft" }).click();
+    await expect(page.getByLabel("Filtrar falas")).toHaveValue("Fala");
+    await expect(page.getByText(/Reconciliado sobre a revisão 2/)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Speaker", exact: true }).first()).toHaveValue("Novo");
+    await expect(page.getByRole("textbox", { name: "Texto", exact: true }).nth(1)).toHaveValue("Fala remota");
+    await expect(page.getByLabel("Estado do draft")).toHaveValue("reviewed");
+    await page.getByRole("button", { name: "Salvar revisão" }).click();
+    await expect(page.getByText(/Run bruto imutável · draft r3/)).toBeVisible();
+    await expect(page.getByTestId("save-count")).toHaveText("2");
+});

@@ -443,3 +443,11 @@
     border: 1px solid var(--ds-border-subtle);
     border-radius: var(--ds-radius-lg);
 }
+
+.conflictText {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 16rem;
+    overflow: auto;
+    font: inherit;
+}

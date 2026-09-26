@@ -94,13 +94,17 @@ export function ReviewFixture() {
 			onOpen={() => {}}
 			onSave={(baseline, status, segments) => {
                 setSaveCount((count) => count + 1);
-                if (new URLSearchParams(location.search).has("conflict")) { setSaveError("LOCAL_REVIEW_DRAFT_CONFLICT"); return; }
+                setSaveError(null);
+                if (new URLSearchParams(location.search).has("conflict") && baseline.draftRevision !== 2) { setSaveError("LOCAL_REVIEW_DRAFT_CONFLICT"); return; }
                 setReview({ ...baseline, status, segments,
 				approvalCurrent: status === "approved_local",
 				approvedAt: status === "approved_local" ? "2026-09-26T12:00:01Z" : null,
 				persistence: "persisted", draftRevision: (baseline.draftRevision ?? 0) + 1,
 				draftSha256: "e".repeat(64), createdAt: "2026-09-26T12:00:00Z", updatedAt: "2026-09-26T12:00:00Z" }); }}
-			onRepairTarget={new URLSearchParams(location.search).has("repair") ? () => setReview({ ...review,
+			onLoadLatest={async () => ({ ...review, draftRevision: 2, draftSha256: "f".repeat(64), status: "approved_local",
+                segments: review.segments.map((segment, index) => index === 0 ? { ...segment, speaker: "Remoto" } : index === 1 ? { ...segment, text: "Fala remota" } : segment),
+            })}
+            onRepairTarget={new URLSearchParams(location.search).has("repair") ? () => setReview({ ...review,
                 publicationTargetState: "valid", publicationTarget: {
                     campaignSlug: "yuhara-main", sourceSessionId: "sessao-synthetic",
                     jobId: "synthetic",

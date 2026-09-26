@@ -1394,3 +1394,32 @@ Validação: sete testes de estado, incluindo 7.500 segmentos/3.000 alterações
 fluxos desktop/mobile de preview, cancelar, exceções, tracks homônimas, aprovação
 invalidada, um único save e conflito sem perda. Integração e release são etapas
 separadas. Rollback da Web mantém os drafts compatíveis, sem migração de dados.
+
+
+## Recuperação de conflito editorial — candidato #663
+
+Após `LOCAL_REVIEW_DRAFT_CONFLICT`, a cópia local continua montada. Comparar com
+versão mais recente lê S sem substituir W ou fechar o editor. A baseline B, o
+working draft W e S são comparados por `(trackNumber, segmentId)` e pelos campos
+text/speaker/reviewed, nunca por posição. Identidade, conjunto ou tempos divergentes
+falham fechado. Alterações independentes/convergentes são combinadas; somente
+colisões de valores exigem escolha humana. O painel monta no máximo 25 controles
+de colisão por página, mesmo para 100.000 segmentos.
+
+Reconciliar é confirmação explícita: adota S como baseline do próximo CAS, mantém
+as mudanças em memória como dirty e nunca chama save. O controller aceita a nova
+baseline somente quando ela foi lida para o mesmo editor/epoch ativo. Nova mudança
+concorrente ainda pode gerar outro 409. Aprovação não é herdada e receipt anterior
+é retirado da apresentação do draft reconciliado. Save/publicação ficam bloqueados
+durante comparação; nova aprovação só vale após o fluxo normal de salvamento.
+
+Query, paginação e ordem de W continuam; a âncora visível de fala é restaurada
+quando ainda existe na projeção. Cancelar comparação não altera W. O beforeunload
+e a confirmação de fechamento continuam; nenhum texto é persistido em storage
+Web. Comparações auxiliares são liberadas após reconciliar/cancelar.
+
+Validação inclui renomeio de 3.000 falas com três colisões, 7.531 e 100.000 segmentos,
+arrays reordenados, mudanças convergentes, rejeição de conjunto/timing divergente,
+CAS da versão nova sem substituir o editor e fluxo desktop/mobile completo de
+409 → escolha por campo → dirty → save explícito. Não há alteração de schema,
+publicação cloud ou merge textual automático de valores divergentes.

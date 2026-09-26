@@ -885,6 +885,7 @@ describe("processing state", () => {
 			sync: { status: "not_configured" },
 		};
 		let reviewPosts = 0;
+		let lastExpected: unknown;
 		const request = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
 			const value = String(url);
 			if (value.endsWith("/health")) return Response.json(health);
@@ -927,6 +928,7 @@ describe("processing state", () => {
 				return Response.json(rawReview);
 			if (value.endsWith("/review") && init?.method === "POST") {
 				reviewPosts += 1;
+				lastExpected = JSON.parse(String(init?.body)).expected;
 				return Response.json(
 					{ error: { code: "LOCAL_REVIEW_DRAFT_CONFLICT", recoverable: true } },
 					{ status: 409 },
@@ -961,5 +963,16 @@ describe("processing state", () => {
 			localReviewError: "LOCAL_REVIEW_DRAFT_CONFLICT",
 		});
 		expect(controller.snapshot().error).toBeNull();
+        rawReview.draft_revision = 1;
+        rawReview.draft_sha256 = "f".repeat(64);
+        const latest = await controller.loadLatestLocalReview();
+        expect(latest.draftRevision).toBe(1);
+        expect(controller.snapshot().localReview).toBe(current);
+        await controller.saveLocalReview(latest, "reviewed", current.segments);
+        expect(reviewPosts).toBe(2);
+        expect(lastExpected).toMatchObject({ draft_revision: 1, draft_sha256: "f".repeat(64) });
+        await controller.saveLocalReview({ ...latest, draftRevision: 99 }, "reviewed", current.segments);
+        expect(reviewPosts).toBe(2);
+
 	});
 });

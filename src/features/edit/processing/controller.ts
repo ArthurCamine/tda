@@ -102,6 +102,7 @@ function mergeJobEvents(
 
 export class ProcessingController {
 	#state = initial;
+	#recoveryBaseline: LocalReview | null = null;
 	#listeners = new Set<() => void>();
 	#request = new AbortController();
 	#epoch = 0;
@@ -129,6 +130,7 @@ export class ProcessingController {
 	}
 
 	private resetRequest() {
+		this.#recoveryBaseline = null;
 		this.#epoch++;
 		this.#readSequence++;
 		this.#request.abort();
@@ -707,6 +709,18 @@ export class ProcessingController {
 		);
 	};
 
+    loadLatestLocalReview = async () => {
+        const current = this.#state.localReview;
+        const epoch = this.#epoch;
+        if (!current || this.#state.connection !== "connected" || this.#state.localReviewBusy) throw new BridgeError("invalid_response");
+        const latest = await this.bridge.localReview(current.sourceId, current.runId, this.#request.signal);
+        if (epoch !== this.#epoch || this.#request.signal.aborted || this.#state.localReview !== current ||
+            latest.sourceId !== current.sourceId || latest.runId !== current.runId || latest.baseTranscriptSha256 !== current.baseTranscriptSha256)
+            throw new BridgeError("invalid_response");
+        this.#recoveryBaseline = latest;
+        return latest;
+    };
+
 	repairPublicationTarget = async () => {
         const current = this.#state.localReview;
         if (!current || current.publicationTarget) return;
@@ -720,9 +734,10 @@ export class ProcessingController {
 	) => {
 		const current = this.#state.localReview;
 		if (!current) return;
-		if (current.sourceId !== baseline.sourceId || current.runId !== baseline.runId ||
-			current.draftRevision !== baseline.draftRevision || current.draftSha256 !== baseline.draftSha256 ||
-			current.baseTranscriptSha256 !== baseline.baseTranscriptSha256) {
+		const expected = this.#recoveryBaseline === baseline ? this.#recoveryBaseline : current;
+        if (current.sourceId !== baseline.sourceId || current.runId !== baseline.runId ||
+            expected.draftRevision !== baseline.draftRevision || expected.draftSha256 !== baseline.draftSha256 ||
+            current.baseTranscriptSha256 !== baseline.baseTranscriptSha256) {
 			this.update({ localReviewError: "LOCAL_REVIEW_DRAFT_CONFLICT" });
 			return;
 		}
@@ -740,6 +755,7 @@ export class ProcessingController {
 
 	closeLocalReview = () => {
 		if (this.#state.localReviewBusy) return;
+		this.#recoveryBaseline = null;
 		this.update({ localReview: null, localReviewError: null });
 	};
 
