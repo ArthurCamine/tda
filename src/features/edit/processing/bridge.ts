@@ -18,6 +18,7 @@ import {
 	record,
 	text,
 	parseJobEventPage,
+	parseJobListPage,
 	parseJobs,
 	parseLocalReview,
 	parseLocalRuns,
@@ -312,6 +313,18 @@ export class LocalBridge {
 	}
 	async jobs(signal: AbortSignal) {
 		return parseJobs(await this.json("/jobs", signal));
+	}
+	async jobPage(
+		scope: "all" | "active" | "history",
+		signal: AbortSignal,
+		options: Readonly<{ cursor?: string; limit?: number }> = {},
+	) {
+		const params = new URLSearchParams({ scope });
+		if (options.cursor !== undefined) params.set("cursor", options.cursor);
+		if (options.limit !== undefined) params.set("limit", String(options.limit));
+		return parseJobListPage(
+			await this.json(`/jobs?${params.toString()}`, signal),
+		);
 	}
 	async job(id: string, signal: AbortSignal) {
 		return parseJob(await this.json(`/jobs/${identifier(id)}`, signal));

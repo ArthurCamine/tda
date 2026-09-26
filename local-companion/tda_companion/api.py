@@ -1221,6 +1221,7 @@ def create_app(
             "synthetic.fixture",
             "job.events",
             "job.events.cursor",
+            "job.list.cursor",
             "system.telemetry",
             "worker.subprocess",
             "transcription.prepare",
@@ -1351,8 +1352,23 @@ def create_app(
         return health_value()
 
     @app.get("/api/v1/jobs")
-    def jobs():
-        return {"jobs": store.jobs()}
+    def jobs(
+        request: Request,
+        scope: Literal["all", "active", "history"] = "all",
+        cursor: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    ):
+        # Preserve the historical wire exactly for clients that did not negotiate
+        # job.list.cursor. Cursor-aware clients opt in by sending any list query.
+        if not request.query_params:
+            return {"jobs": store.jobs()}
+        try:
+            return store.jobs_page(scope=scope, cursor=cursor, limit=limit)
+        except Conflict as exc:
+            code = str(exc)
+            if code.startswith("JOB_LIST_"):
+                return error(code, 422)
+            raise
 
     @app.post("/api/v1/jobs")
     async def submit(body: JobRequest, idempotency_key: str = Header(pattern=_ID_PATTERN)):

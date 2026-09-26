@@ -214,6 +214,52 @@ export class ProcessingController {
 		}
 	}
 
+	private async readJobScope(
+		scope: "active" | "history",
+		signal: AbortSignal,
+	): Promise<LocalJob[]> {
+		let cursor: string | undefined;
+		let pages = 0;
+		const byId = new Map<string, LocalJob>();
+		const seenCursors = new Set<string>();
+		while (!signal.aborted) {
+			const page = await this.bridge.jobPage(scope, signal, {
+				...(cursor ? { cursor } : {}),
+				limit: 200,
+			});
+			for (const job of page.jobs) byId.set(job.id, job);
+			if (!page.hasMore) break;
+			const next = page.nextCursor;
+			if (!next || seenCursors.has(next))
+				throw new BridgeError("invalid_response");
+			seenCursors.add(next);
+			cursor = next;
+			pages += 1;
+			if (pages > 1000) throw new BridgeError("invalid_response");
+		}
+		return [...byId.values()];
+	}
+
+	private async readJobs(
+		signal: AbortSignal,
+		capabilities: Capabilities,
+	): Promise<LocalJob[]> {
+		if (!capabilities.capabilities.includes("job.list.cursor"))
+			return this.bridge.jobs(signal);
+		const [active, history] = await Promise.all([
+			this.readJobScope("active", signal),
+			this.readJobScope("history", signal),
+		]);
+		const byId = new Map<string, LocalJob>();
+		for (const job of history) byId.set(job.id, job);
+		for (const job of active) byId.set(job.id, job);
+		return [...byId.values()].sort((left, right) => {
+			const updated =
+				Date.parse(right.updated_at) - Date.parse(left.updated_at);
+			return updated || right.id.localeCompare(left.id);
+		});
+	}
+
 	private async readEventTail(
 		jobId: string,
 		signal: AbortSignal,
@@ -265,7 +311,7 @@ export class ProcessingController {
 			deep || !previous.capabilities
 				? await this.bridge.capabilities(signal)
 				: previous.capabilities;
-		const jobs = await this.bridge.jobs(signal);
+		const jobs = await this.readJobs(signal, capabilities);
 		const nextQueued =
 			jobs
 				.filter((job) => job.status === "queued")
@@ -507,7 +553,6 @@ export class ProcessingController {
 
 	observeJob = async (id: string | null) => {
 		if (this.#state.connection !== "connected") return;
-		if (id !== null && !this.#state.jobs.some((job) => job.id === id)) return;
 		if (this.#observedJobOverrideId === id) return;
 
 		this.#observedJobOverrideId = id;

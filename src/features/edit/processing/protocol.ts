@@ -85,6 +85,16 @@ export type LocalJob = {
 	attempt: number;
 	context: JobContext | null;
 };
+export type JobListScope = "all" | "active" | "history";
+export type JobListCounts = Readonly<Record<JobStatus, number>>;
+export type JobListPage = {
+	scope: JobListScope;
+	jobs: readonly LocalJob[];
+	hasMore: boolean;
+	nextCursor: string | null;
+	totalMatching: number;
+	counts: JobListCounts;
+};
 export type JobEventLevel = "info" | "warning" | "error";
 export type JobEventValue = string | number | boolean | null;
 export type JobEvent = {
@@ -623,6 +633,44 @@ export function parseJobs(value: unknown): LocalJob[] {
 	if (new Set(jobs.map((job) => job.id)).size !== jobs.length) return invalid();
 	return jobs;
 }
+export function parseJobListPage(value: unknown): JobListPage {
+	const row = record(value);
+	if (row.schema_version !== "tda_job_page_v1") return invalid();
+	if (!["all", "active", "history"].includes(String(row.scope))) return invalid();
+	const jobs = parseJobs(row);
+	const hasMore = boolean(row.has_more);
+	const nextCursor =
+		row.next_cursor === null ? null : text(row.next_cursor, 512);
+	if (hasMore !== (nextCursor !== null)) return invalid();
+	const totalMatching = nonNegativeInteger(row.total_matching);
+	if (totalMatching < jobs.length) return invalid();
+	const rawCounts = record(row.counts);
+	const statuses: readonly JobStatus[] = [
+		"queued",
+		"running",
+		"succeeded",
+		"failed",
+		"cancelled",
+		"interrupted",
+	];
+	for (const key of Object.keys(rawCounts))
+		if (!statuses.includes(key as JobStatus)) return invalid();
+	const counts = Object.fromEntries(
+		statuses.map((status) => [
+			status,
+			rawCounts[status] === undefined ? 0 : nonNegativeInteger(rawCounts[status]),
+		]),
+	) as Record<JobStatus, number>;
+	return {
+		scope: row.scope as JobListScope,
+		jobs,
+		hasMore,
+		nextCursor,
+		totalMatching,
+		counts,
+	};
+}
+
 export function parseJobEvents(value: unknown): JobEvent[] {
 	const rows = record(value).events;
 	if (!Array.isArray(rows) || rows.length > 200) return invalid();

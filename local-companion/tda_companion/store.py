@@ -1,4 +1,5 @@
 """Transactional queue. Single supervisor owns recovery; claims are atomic."""
+import base64
 import json
 import math
 import re
@@ -64,6 +65,14 @@ class Store:
             db.execute(
                 "INSERT OR IGNORE INTO idempotency_keys(key,job_id,signature) "
                 "SELECT idem,id,signature FROM jobs"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_updated_id_idx "
+                "ON jobs(updated DESC, id DESC)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_status_updated_id_idx "
+                "ON jobs(status, updated DESC, id DESC)"
             )
             db.execute("PRAGMA user_version=6")
             db.execute("INSERT OR IGNORE INTO settings VALUES ('device', ?)", (str(uuid4()),))
@@ -337,9 +346,112 @@ class Store:
                 "updated_at": row["updated"],
             }
 
-    def jobs(self):
+    @staticmethod
+    def _job_cursor(scope, updated, job_id):
+        payload = json.dumps(
+            {
+                "schema": "tda_job_list_cursor_v1",
+                "scope": scope,
+                "updated": updated,
+                "id": job_id,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_job_cursor(cursor, scope):
+        if not isinstance(cursor, str) or not 1 <= len(cursor) <= 512:
+            raise Conflict("JOB_LIST_CURSOR_INVALID")
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            raw = base64.urlsafe_b64decode((cursor + padding).encode("ascii"))
+            if len(raw) > 512:
+                raise ValueError
+            value = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeError, json.JSONDecodeError):
+            raise Conflict("JOB_LIST_CURSOR_INVALID") from None
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema", "scope", "updated", "id"}
+            or value.get("schema") != "tda_job_list_cursor_v1"
+            or value.get("scope") != scope
+            or not isinstance(value.get("updated"), str)
+            or not 1 <= len(value["updated"]) <= 64
+            or not isinstance(value.get("id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["id"])
+        ):
+            raise Conflict("JOB_LIST_CURSOR_INVALID")
+        return value["updated"], value["id"]
+
+    @staticmethod
+    def _job_scope_sql(scope):
+        if scope == "all":
+            return "", ()
+        if scope == "active":
+            return "status IN ('queued','running')", ()
+        if scope == "history":
+            return "status NOT IN ('queued','running')", ()
+        raise Conflict("JOB_LIST_SCOPE_INVALID")
+
+    def jobs_page(self, *, scope="all", cursor=None, limit=100):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise Conflict("JOB_LIST_LIMIT_INVALID")
+        scope_where, scope_params = self._job_scope_sql(scope)
+        clauses = []
+        params = list(scope_params)
+        if scope_where:
+            clauses.append(scope_where)
+        if cursor is not None:
+            updated, job_id = self._decode_job_cursor(cursor, scope)
+            clauses.append("(updated < ? OR (updated = ? AND id < ?))")
+            params.extend((updated, updated, job_id))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self.read() as db:
-            return [self.dto(r) for r in db.execute("SELECT * FROM jobs ORDER BY updated DESC LIMIT 100")]
+            rows = db.execute(
+                f"SELECT * FROM jobs{where} ORDER BY updated DESC, id DESC LIMIT ?",
+                (*params, limit + 1),
+            ).fetchall()
+            has_more = len(rows) > limit
+            selected = rows[:limit]
+            count_where = f" WHERE {scope_where}" if scope_where else ""
+            total_matching = int(
+                db.execute(
+                    f"SELECT COUNT(*) AS total FROM jobs{count_where}",
+                    scope_params,
+                ).fetchone()["total"]
+            )
+            counts = {
+                row["status"]: int(row["total"])
+                for row in db.execute(
+                    "SELECT status, COUNT(*) AS total FROM jobs GROUP BY status"
+                ).fetchall()
+            }
+        next_cursor = None
+        if has_more and selected:
+            tail = selected[-1]
+            next_cursor = self._job_cursor(scope, tail["updated"], tail["id"])
+        return {
+            "schema_version": "tda_job_page_v1",
+            "scope": scope,
+            "jobs": [self.dto(row) for row in selected],
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+            "total_matching": total_matching,
+            "counts": counts,
+        }
+
+    def jobs(self):
+        """Legacy bounded list; cursor-aware clients use jobs_page()."""
+        with self.read() as db:
+            return [
+                self.dto(r)
+                for r in db.execute(
+                    "SELECT * FROM jobs ORDER BY updated DESC, id DESC LIMIT 100"
+                )
+            ]
 
     def has_running_source(self, source_id: str) -> bool:
         with self.read() as db:
