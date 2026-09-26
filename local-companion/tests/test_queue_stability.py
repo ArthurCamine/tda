@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from tda_companion.legacy.artifacts import sha256_json
 from tda_companion.store import Conflict, Store
 
 
@@ -70,7 +71,7 @@ def test_v2_database_migrates_queue_metadata_without_losing_jobs(tmp_path):
         'recoverable': True,
     }
     with sqlite3.connect(database) as check:
-        assert check.execute('PRAGMA user_version').fetchone()[0] == 5
+        assert check.execute('PRAGMA user_version').fetchone()[0] == 6
         columns = {row[1] for row in check.execute('PRAGMA table_info(jobs)').fetchall()}
         event_columns = {row[1] for row in check.execute('PRAGMA table_info(events)').fetchall()}
         assert 'error_recoverable' in columns
@@ -80,6 +81,10 @@ def test_v2_database_migrates_queue_metadata_without_losing_jobs(tmp_path):
             ('legacy-idem',),
         ).fetchone()
         assert alias == ('legacy-job', 'legacy-signature')
+        receipt_table = check.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='terminal_job_receipts'"
+        ).fetchone()
+        assert receipt_table == ('terminal_job_receipts',)
 
 
 def test_polling_reads_never_open_immediate_write_transactions(tmp_path, monkeypatch):
@@ -228,6 +233,23 @@ def test_terminal_job_can_be_removed_with_events(tmp_path):
     assert store.jobs() == []
     with pytest.raises(KeyError):
         store.get(job['id'])
+    assert store.terminal_receipt(job['id']) == {
+        'job_id': job['id'],
+        'attempt': claim[1],
+        'status': 'failed',
+        'result_available': False,
+        'updated_at': store.terminal_receipt(job['id'])['updated_at'],
+    }
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            'SELECT job_id,signature FROM idempotency_keys WHERE key=?',
+            ('delete-terminal',),
+        ).fetchone() == (job['id'], sha256_json(BODY))
+    with pytest.raises(Conflict, match='IDEMPOTENCY_OPERATION_REMOVED'):
+        store.submit('delete-terminal', BODY)
+
+    reopened = Store(tmp_path)
+    assert reopened.terminal_receipt(job['id'])['status'] == 'failed'
 
 
 def test_active_job_cannot_be_removed(tmp_path):

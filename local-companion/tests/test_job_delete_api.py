@@ -76,3 +76,76 @@ def test_active_job_cannot_be_deleted_through_local_api(tmp_path: Path):
         assert response.json()["error"]["code"] == "JOB_ACTIVE"
         still_there = client.get(f"/api/v1/jobs/{job['id']}", headers=HEADERS)
         assert still_there.status_code == 200
+
+
+def _visibility_package(data: Path) -> Path:
+    package = data / "staging" / BODY["source_id"]
+    package.mkdir(parents=True, exist_ok=True)
+    return package
+
+
+def test_failed_run_without_commit_authority_stays_hidden_after_queue_cleanup(tmp_path: Path):
+    client, data = _client(tmp_path)
+    package = _visibility_package(data)
+    with client:
+        job = _submit(client, "visibility-failed-cleanup")
+        store = Store(data)
+        claim = store.claim()
+        assert claim is not None
+        store.fail(*claim, "WORKER_EXECUTION_FAILED")
+        summary = {"job_id": job["id"], "attempt": claim[1]}
+
+        visible = client.app.state.transcription_run_visible
+        assert visible(package, summary) is False
+
+        deleted = client.post(
+            f"/api/v1/jobs/{job['id']}/delete",
+            headers=HEADERS,
+            json={},
+        )
+        assert deleted.status_code == 200
+        assert visible(package, summary) is False
+
+
+def test_retry_does_not_promote_ambiguous_older_attempt(tmp_path: Path):
+    client, data = _client(tmp_path)
+    package = _visibility_package(data)
+    with client:
+        job = _submit(client, "visibility-retry")
+        store = Store(data)
+        first = store.claim()
+        assert first is not None
+        store.fail(*first, "WORKER_EXECUTION_FAILED")
+        summary = {"job_id": job["id"], "attempt": first[1]}
+
+        visible = client.app.state.transcription_run_visible
+        assert visible(package, summary) is False
+
+        store.action(job["id"], "retry")
+        second = store.claim()
+        assert second is not None
+        assert second[1] == first[1] + 1
+        assert visible(package, summary) is False
+
+
+def test_pre_fence_succeeded_run_keeps_visibility_after_queue_cleanup(tmp_path: Path):
+    client, data = _client(tmp_path)
+    package = _visibility_package(data)
+    with client:
+        job = _submit(client, "visibility-legacy-succeeded")
+        store = Store(data)
+        claim = store.claim()
+        assert claim is not None
+        assert store.step(*claim) is False
+        summary = {"job_id": job["id"], "attempt": claim[1]}
+
+        visible = client.app.state.transcription_run_visible
+        assert visible(package, summary) is True
+
+        deleted = client.post(
+            f"/api/v1/jobs/{job['id']}/delete",
+            headers=HEADERS,
+            json={},
+        )
+        assert deleted.status_code == 200
+        assert visible(package, summary) is True

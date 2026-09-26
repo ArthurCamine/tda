@@ -20,7 +20,7 @@ class Store:
         self.path = root / "jobs.sqlite3"
         with self.tx() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise RuntimeError("DATABASE_VERSION_UNSUPPORTED")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -36,6 +36,13 @@ class Store:
                     key TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
                     signature TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS terminal_job_receipts (
+                    job_id TEXT PRIMARY KEY,
+                    attempt INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    result_available INTEGER NOT NULL,
+                    updated TEXT NOT NULL
                 );
             """)
             event_columns = {
@@ -58,7 +65,7 @@ class Store:
                 "INSERT OR IGNORE INTO idempotency_keys(key,job_id,signature) "
                 "SELECT idem,id,signature FROM jobs"
             )
-            db.execute("PRAGMA user_version=5")
+            db.execute("PRAGMA user_version=6")
             db.execute("INSERT OR IGNORE INTO settings VALUES ('device', ?)", (str(uuid4()),))
             db.execute("INSERT OR IGNORE INTO settings VALUES ('paused', 'false')")
 
@@ -239,6 +246,12 @@ class Store:
                     (alias["job_id"],),
                 ).fetchone()
                 if not row:
+                    receipt = db.execute(
+                        "SELECT job_id FROM terminal_job_receipts WHERE job_id=?",
+                        (alias["job_id"],),
+                    ).fetchone()
+                    if receipt:
+                        raise Conflict("IDEMPOTENCY_OPERATION_REMOVED")
                     raise Conflict("IDEMPOTENCY_STATE_INVALID")
                 return self.dto(row)
             if body.get("kind") == "transcription.craig":
@@ -306,6 +319,23 @@ class Store:
             if not row:
                 raise KeyError(job_id)
             return json.loads(row["body"])
+
+    def terminal_receipt(self, job_id):
+        with self.read() as db:
+            row = db.execute(
+                "SELECT job_id,attempt,status,result_available,updated "
+                "FROM terminal_job_receipts WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "job_id": row["job_id"],
+                "attempt": row["attempt"],
+                "status": row["status"],
+                "result_available": bool(row["result_available"]),
+                "updated_at": row["updated"],
+            }
 
     def jobs(self):
         with self.read() as db:
@@ -417,13 +447,39 @@ class Store:
 
     def remove(self, job_id):
         with self.tx() as db:
-            row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            row = db.execute(
+                "SELECT status,attempt,result,updated FROM jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
             if not row:
                 raise KeyError(job_id)
             if row["status"] not in ("succeeded", "failed", "interrupted", "cancelled"):
                 raise Conflict("JOB_ACTIVE")
+            # Queue rows and events are disposable operational state. Preserve the
+            # terminal status/attempt before deletion so run visibility does not
+            # change merely because the row disappeared. Idempotency aliases also
+            # survive cleanup: replay of an accepted key must fail closed rather
+            # than silently forming a new operation.
+            db.execute(
+                """
+                INSERT INTO terminal_job_receipts(
+                    job_id,attempt,status,result_available,updated
+                ) VALUES (?,?,?,?,?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    attempt=excluded.attempt,
+                    status=excluded.status,
+                    result_available=excluded.result_available,
+                    updated=excluded.updated
+                """,
+                (
+                    job_id,
+                    row["attempt"],
+                    row["status"],
+                    int(row["result"] is not None),
+                    row["updated"],
+                ),
+            )
             db.execute("DELETE FROM events WHERE job_id=?", (job_id,))
-            db.execute("DELETE FROM idempotency_keys WHERE job_id=?", (job_id,))
             db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             return {"deleted": True, "id": job_id}
 

@@ -212,6 +212,14 @@ Craig é materializado por `source_id` opaco; o worker recebe roots controlados 
 
 O output de engines diferentes converge para `tda_transcript_v1`. O texto integral permanece no artefato local; mensagens do worker e logs técnicos carregam apenas estado, métricas, hashes e códigos estáveis.
 
+### Cleanup da fila e autoridade histórica
+
+`Excluir da Fila` remove estado operacional terminal, mas não pode alterar a autoridade de um run imutável nem apagar a prova de uma submissão já aceita. Antes de remover a row de `jobs`, o Store grava atomicamente um receipt metadata-only com `job_id`, attempt, status terminal, disponibilidade de resultado e timestamp. As aliases de idempotência permanecem preservadas.
+
+A visibilidade de Results usa essa ordem de evidência: fence `cancel` ou fence inválido falha fechado; attempt histórica só é autorizada por fence `commit`; um run pré-fence `succeeded` pode preservar sua visibilidade através do receipt criado no cleanup. Ausência simultânea de row, receipt e fence `commit` não é tratada como sucesso. Retry, restart ou cleanup nunca funcionam como prova implícita de commit.
+
+O receipt não contém transcript, contexto, glossário, path local ou token. Ele é provenance operacional, não substitui `run.json`, não publica conteúdo e não é tombstone de exclusão editorial do resultado.
+
 Perfis registrados:
 
 ```text

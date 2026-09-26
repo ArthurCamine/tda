@@ -165,6 +165,7 @@ _NON_RECOVERABLE_CONFLICTS = frozenset(
     {
         "IDEMPOTENCY_CONFLICT",
         "IDEMPOTENCY_STATE_INVALID",
+        "IDEMPOTENCY_OPERATION_REMOVED",
         "JOB_TERMINAL",
         "JOB_NOT_RETRYABLE",
         "QWEN_CPU_UNSUPPORTED",
@@ -319,17 +320,28 @@ def create_app(
         try:
             state = store.get(job_id)
         except KeyError:
-            # Job cleanup must not erase a previously committed immutable run.
-            return decision != "cancel"
+            receipt = store.terminal_receipt(job_id)
+            if receipt is not None:
+                # Cleanup preserves the last terminal queue fact. A legacy
+                # pre-fence succeeded run remains visible, while failed,
+                # interrupted and cancelled work cannot be promoted by deletion.
+                return (
+                    receipt.get("attempt") == attempt
+                    and receipt.get("status") == "succeeded"
+                )
+            # A durable commit fence remains authoritative even if an older
+            # cleanup predates terminal receipts. Missing authority fails closed.
+            return decision == "commit"
         current_attempt = state.get("attempt")
         if isinstance(current_attempt, bool) or not isinstance(current_attempt, int):
             return False
         if attempt < current_attempt:
-            # Historical attempts remain immutable. A cancelled historical attempt
-            # is already excluded above by its durable cancel fence.
-            return True
+            # Advancing to a retry is not proof that an older attempt committed.
+            return decision == "commit"
         if attempt > current_attempt:
             return False
+        # Current succeeded rows preserve compatibility with pre-fence runs while
+        # the live row still supplies explicit terminal provenance.
         return state.get("status") == "succeeded"
 
     def source_in_use(source_id: str) -> bool:

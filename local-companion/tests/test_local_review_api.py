@@ -95,7 +95,13 @@ def _document(package) -> TranscriptDocument:
     )
 
 
-def _stage_and_run(client: TestClient, tmp_path: Path, *, job_id: str = "job-review-api"):
+def _stage_and_run(
+    client: TestClient,
+    tmp_path: Path,
+    *,
+    job_id: str = "job-review-api",
+    commit_authority: bool = True,
+):
     upload = client.post(
         "/api/v1/sources/craig",
         headers={
@@ -115,6 +121,8 @@ def _stage_and_run(client: TestClient, tmp_path: Path, *, job_id: str = "job-rev
         job_id=job_id,
         attempt=1,
     )
+    if commit_authority:
+        assert claim_attempt_outcome(package_root, job_id, 1, "commit") == "commit"
     return source_id, package_root, run
 
 
@@ -317,6 +325,7 @@ def test_review_api_never_opens_run_hidden_by_cancel_fence(tmp_path: Path):
             client,
             tmp_path,
             job_id="job-hidden-review",
+            commit_authority=False,
         )
         assert claim_attempt_outcome(
             package_root,
