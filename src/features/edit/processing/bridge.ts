@@ -312,6 +312,15 @@ export class LocalBridge {
 			}),
 		);
 	}
+	async cancelPreparation(operationId: string, signal: AbortSignal) {
+		if (!/^[0-9a-f]{32}$/u.test(operationId))
+			throw new BridgeError("invalid_response");
+		return parsePreparationStatus(
+			await this.json("/preparation/cancel", signal, {
+				expected_operation_id: operationId,
+			}),
+		);
+	}
 	async jobs(signal: AbortSignal) {
 		return parseJobs(await this.json("/jobs", signal));
 	}

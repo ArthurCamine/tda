@@ -433,12 +433,39 @@ class ProfilePreparationManager:
         with self._lock:
             return self._snapshot_locked()
 
-    def request_cancel(self) -> bool:
+    def request_cancel(
+        self,
+        expected_operation_id: str | None = None,
+    ) -> dict[str, object] | bool:
+        """Cancel only the operation the caller actually observed.
+
+        Internal shutdown callers may omit the fence and retain the historical
+        boolean contract. Browser/API callers must provide an operation id and
+        receive the authoritative snapshot for that exact operation.
+        """
         with self._lock:
             active = self._state.get("active") is True
+            current_operation_id = self._state.get("operation_id")
+            if expected_operation_id is None:
+                if active:
+                    self._cancel.set()
+                return active
+            if (
+                not isinstance(expected_operation_id, str)
+                or re.fullmatch(r"[0-9a-f]{32}", expected_operation_id) is None
+            ):
+                raise ProfilePreparationError(
+                    "TRANSCRIPTION_PREPARATION_OPERATION_INVALID"
+                )
+            if current_operation_id != expected_operation_id:
+                raise ProfilePreparationError(
+                    "TRANSCRIPTION_PREPARATION_STALE_OPERATION"
+                )
+            # Repeating cancel for the same operation is idempotent, including
+            # after it has already reached a terminal state.
             if active:
                 self._cancel.set()
-            return active
+            return self._snapshot_locked()
 
     def wait(self, timeout: float | None = None) -> bool:
         with self._lock:
@@ -551,12 +578,6 @@ class ProfilePreparationManager:
             raise ProfilePreparationError("CRAIG_SOURCE_INVALID")
         if profile_id not in _PROFILE_IDS:
             raise ProfilePreparationError("TRANSCRIPTION_PROFILE_INVALID")
-        package_root = self.data_root / "staging" / source_id
-        try:
-            load_craig_package(package_root, verify_tracks=False)
-        except CraigPackageError as exc:
-            raise ProfilePreparationError(str(exc)) from exc
-
         with self._lock:
             thread_alive = self._thread is not None and self._thread.is_alive()
             if self._state.get("active") is True or thread_alive:
@@ -613,6 +634,17 @@ class ProfilePreparationManager:
     def _run(self, operation_id: str, source_id: str, profile_id: str) -> None:
         profile = get_profile(profile_id)
         try:
+            self._ensure_not_cancelled()
+            self._set(
+                "validating_source",
+                "Validando fonte Craig…",
+                "Conferindo o pacote local antes de preparar runtime e modelo.",
+            )
+            package_root = self.data_root / "staging" / source_id
+            try:
+                load_craig_package(package_root, verify_tracks=False)
+            except CraigPackageError as exc:
+                raise ProfilePreparationError(str(exc)) from exc
             self._ensure_not_cancelled()
             catalog = profile_catalog(self.state_root, self.runtime_root, self.models_root)
             current = next(item for item in catalog if item["id"] == profile_id)

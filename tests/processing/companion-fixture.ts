@@ -139,6 +139,7 @@ export async function installCompanionFixture(
 	let prepared = options.profileReady ?? false;
 	const qwenRuntimeVersion = options.qwenRuntimeVersion ?? "1.0.12";
 	let preparationReads = 0;
+	let preparationStarted = false;
 	let jobsReads = 0;
 	let jobsGetCount = 0;
 	let expired = false;
@@ -222,6 +223,7 @@ export async function installCompanionFixture(
 					...(options.reviewEnabled ? ["transcription.review"] : []),
 					"transcription.craig",
 					"transcription.prepare",
+					"transcription.prepare.cancel",
 					"job.events",
 					"system.telemetry",
 				],
@@ -329,11 +331,12 @@ export async function installCompanionFixture(
 				return invalidRequest(route);
 			state.preparationPostCount += 1;
 			preparationReads = 0;
+			preparationStarted = true;
 			return json(route, {
 				schema: "tda_profile_preparation_v1",
 				state: "running",
 				active: true,
-				operation_id: "prep-1",
+				operation_id: "c".repeat(32),
 				source_id: CRAIG_SOURCE_ID,
 				profile_id: "qwen-quality",
 				engine: "qwen3",
@@ -346,13 +349,30 @@ export async function installCompanionFixture(
 			});
 		}
 		if (path === "/preparation" && request.method() === "GET") {
+			if (!preparationStarted) {
+				return json(route, {
+					schema: "tda_profile_preparation_v1",
+					state: "idle",
+					active: false,
+					operation_id: null,
+					source_id: null,
+					profile_id: null,
+					engine: null,
+					stage: "idle",
+					title: "Preparação inativa",
+					detail: "",
+					sequence: 0,
+					elapsed_seconds: 0,
+					error_code: null,
+				});
+			}
 			preparationReads += 1;
 			if (preparationReads >= 1) prepared = true;
 			return json(route, {
 				schema: "tda_profile_preparation_v1",
 				state: "completed",
 				active: false,
-				operation_id: "prep-1",
+				operation_id: "c".repeat(32),
 				source_id: CRAIG_SOURCE_ID,
 				profile_id: "qwen-quality",
 				engine: "qwen3",

@@ -561,3 +561,96 @@ def test_qwen_hardware_failure_after_stable_install_does_not_fall_back_to_rc(
         preparation._install_qwen_runtime(tmp_path / "Runtime", tmp_path / "Cache")
 
     assert calls["fallback"] == 0
+
+
+def test_preparation_cancel_is_fenced_by_observed_operation_id(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = _manager(tmp_path)
+    source_id = "craig-" + "e" * 64
+    entered = threading.Event()
+    release = threading.Event()
+
+    monkeypatch.setattr(
+        preparation,
+        "load_craig_package",
+        lambda _root, verify_tracks=False: object(),
+    )
+    monkeypatch.setattr(
+        preparation,
+        "profile_catalog",
+        lambda *_args: [
+            {
+                "id": "whisper-turbo",
+                "engine": "whisper",
+                "ready": False,
+                "preparation_required": True,
+                "reason": "WHISPER_RUNTIME_REQUIRED",
+            }
+        ],
+    )
+
+    def install(_runtime, _cache, *, is_cancelled=None):
+        entered.set()
+        while not release.is_set():
+            preparation._check_cancelled(is_cancelled)
+            time.sleep(0.005)
+        raise preparation.ProfilePreparationError("TEST_STOP")
+
+    monkeypatch.setattr(preparation, "_install_whisper_runtime", install)
+
+    first = manager.start(source_id, "whisper-turbo")
+    assert entered.wait(timeout=1)
+    operation_id = str(first["operation_id"])
+
+    with pytest.raises(
+        ProfilePreparationError,
+        match="TRANSCRIPTION_PREPARATION_STALE_OPERATION",
+    ):
+        manager.request_cancel("f" * 32)
+
+    assert manager.snapshot()["active"] is True
+    cancelled = manager.request_cancel(operation_id)
+    assert isinstance(cancelled, dict)
+    assert cancelled["operation_id"] == operation_id
+
+    repeated = manager.request_cancel(operation_id)
+    assert isinstance(repeated, dict)
+    assert repeated["operation_id"] == operation_id
+    assert manager.wait(timeout=2) is True
+
+    terminal = manager.request_cancel(operation_id)
+    assert isinstance(terminal, dict)
+    assert terminal["active"] is False
+    assert terminal["error_code"] == "TRANSCRIPTION_PREPARATION_CANCELLED"
+
+
+def test_preparation_operation_is_visible_before_source_validation_finishes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = _manager(tmp_path)
+    source_id = "craig-" + "f" * 64
+    entered = threading.Event()
+    release = threading.Event()
+
+    def load(_root, verify_tracks=False):
+        del verify_tracks
+        entered.set()
+        assert release.wait(timeout=2)
+        raise preparation.CraigPackageError("CRAIG_MANIFEST_INVALID")
+
+    monkeypatch.setattr(preparation, "load_craig_package", load)
+
+    started = manager.start(source_id, "qwen-quality")
+    assert entered.wait(timeout=1)
+    snapshot = manager.snapshot()
+    assert snapshot["active"] is True
+    assert snapshot["operation_id"] == started["operation_id"]
+    assert snapshot["stage"] == "validating_source"
+
+    manager.request_cancel(str(started["operation_id"]))
+    release.set()
+    assert manager.wait(timeout=2) is True
+    assert manager.snapshot()["active"] is False

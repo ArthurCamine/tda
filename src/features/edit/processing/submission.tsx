@@ -59,6 +59,10 @@ function localOperationMessage(code: string | null): string {
 			"Já existe outra preparação em andamento neste computador.",
 		TRANSCRIPTION_PREPARATION_CANCELLED:
 			"A preparação local foi cancelada antes de terminar.",
+		TRANSCRIPTION_PREPARATION_STALE_OPERATION:
+			"A preparação mudou desde a última leitura. Atualizei o estado sem cancelar a operação mais nova.",
+		TRANSCRIPTION_PREPARATION_OPERATION_INVALID:
+			"O Companion recusou a identidade da preparação.",
 		TRANSCRIPTION_PREPARATION_TIMEOUT:
 			"A preparação local atingiu o limite de 2 horas e foi encerrada.",
 		TRANSCRIPTION_PREPARATION_BLOCKED_BY_ACTIVE_JOB:
@@ -149,6 +153,8 @@ export function ProcessingSubmission({
 	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [capabilityError, setCapabilityError] = useState<string | null>(null);
+	const [preparation, setPreparation] = useState<PreparationStatus | null>(null);
+	const [preparationCancelling, setPreparationCancelling] = useState(false);
 	const request = useRef<AbortController | null>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const pending = useRef<PendingSubmission | null>(null);
@@ -202,6 +208,43 @@ export function ProcessingSubmission({
 		}, PROCESSING_REFRESH_POLICY.capabilitiesPollMs);
 		const visible = () => {
 			if (document.visibilityState === "visible") void refreshCapabilities();
+		};
+		document.addEventListener("visibilitychange", visible);
+		return () => {
+			stopped = true;
+			window.clearInterval(timer);
+			document.removeEventListener("visibilitychange", visible);
+			controller.abort();
+		};
+	}, [bridge, paired]);
+
+	useEffect(() => {
+		if (!paired) {
+			setPreparation(null);
+			return;
+		}
+		const controller = new AbortController();
+		let stopped = false;
+		let reading = false;
+		const refreshPreparation = async () => {
+			if (stopped || reading || controller.signal.aborted) return;
+			reading = true;
+			try {
+				const next = await bridge.preparation(controller.signal);
+				if (!stopped && !controller.signal.aborted) setPreparation(next);
+			} catch {
+				// Capabilities/connection owns the global error surface. Losing one
+				// preparation poll must not erase the last authoritative snapshot.
+			} finally {
+				reading = false;
+			}
+		};
+		void refreshPreparation();
+		const timer = window.setInterval(() => {
+			if (document.visibilityState === "visible") void refreshPreparation();
+		}, 1500);
+		const visible = () => {
+			if (document.visibilityState === "visible") void refreshPreparation();
 		};
 		document.addEventListener("visibilitychange", visible);
 		return () => {
@@ -329,26 +372,48 @@ export function ProcessingSubmission({
 			}
 			if (!selectedProfile.ready) {
 				setStatus("Preparando o perfil no Agent local…");
-				let preparation: PreparationStatus = await bridge.prepareProfile(
-					staged.sourceId,
-					profile,
-					controller.signal,
-				);
-				const preparationDeadline = Date.now() + 2 * 60 * 60 * 1000;
-				while (preparation.state === "running") {
-					setStatus(
-						`${preparation.title} ${preparation.detail} · ${Math.round(preparation.elapsedSeconds)} s`,
-					);
-					if (Date.now() >= preparationDeadline) {
-						setError("A preparação excedeu o limite de 2 horas.");
+				let observed = preparation;
+				if (observed?.active) {
+					if (
+						observed.sourceId !== staged.sourceId ||
+						observed.profileId !== profile
+					) {
+						setError(
+							"Já existe outra preparação em andamento. Acompanhe ou cancele a operação atual antes de iniciar outra.",
+						);
 						return;
 					}
+				} else {
+					observed = await bridge.prepareProfile(
+						staged.sourceId,
+						profile,
+						controller.signal,
+					);
+					setPreparation(observed);
+				}
+				const operationId = observed.operationId;
+				if (!operationId) {
+					setError("O Agent não retornou a identidade da preparação.");
+					return;
+				}
+				while (observed.state === "running") {
+					setStatus(
+						`${observed.title} ${observed.detail} · ${Math.round(observed.elapsedSeconds)} s`,
+					);
 					await new Promise((resolve) => window.setTimeout(resolve, 1500));
 					if (controller.signal.aborted) return;
-					preparation = await bridge.preparation(controller.signal);
+					const next = await bridge.preparation(controller.signal);
+					setPreparation(next);
+					if (next.operationId !== operationId) {
+						setError(
+							"A preparação observada terminou ou foi substituída. O estado foi atualizado sem agir sobre a operação nova.",
+						);
+						return;
+					}
+					observed = next;
 				}
-				if (preparation.state !== "completed") {
-					setError(localOperationMessage(preparation.errorCode));
+				if (observed.state !== "completed") {
+					setError(localOperationMessage(observed.errorCode));
 					return;
 				}
 				setStatus("Perfil preparado e validado. Confirmando capacidade do Agent…");
@@ -413,6 +478,42 @@ export function ProcessingSubmission({
 			);
 		} finally {
 			setBusy(false);
+		}
+	}
+
+	async function cancelActivePreparation() {
+		const operationId = preparation?.operationId;
+		if (
+			!operationId ||
+			!preparation.active ||
+			preparationCancelling ||
+			!capabilities?.capabilities.includes("transcription.prepare.cancel")
+		)
+			return;
+		const controller = new AbortController();
+		setPreparationCancelling(true);
+		setError(null);
+		try {
+			const next = await bridge.cancelPreparation(operationId, controller.signal);
+			setPreparation(next);
+			setStatus("Cancelamento solicitado ao Agent local.");
+		} catch (cause) {
+			if (cause instanceof BridgeError) {
+				setError(
+					cause.serverCode
+						? localOperationMessage(cause.serverCode)
+						: messageFor(cause.code),
+				);
+				try {
+					setPreparation(await bridge.preparation(controller.signal));
+				} catch {
+					// Keep the last snapshot; the normal observer will retry.
+				}
+			} else {
+				setError(messageFor("service_error"));
+			}
+		} finally {
+			setPreparationCancelling(false);
 		}
 	}
 
@@ -559,6 +660,25 @@ export function ProcessingSubmission({
 					) : null}
 				</form>
 			)}
+
+			{preparation?.active ? (
+				<div className={styles.notice} role="status">
+					<strong>{preparation.title}</strong>{" "}
+					{preparation.detail} · {Math.round(preparation.elapsedSeconds)} s · op{" "}
+					{preparation.operationId?.slice(0, 8)}…
+					{capabilities?.capabilities.includes("transcription.prepare.cancel") &&
+					preparation.operationId ? (
+						<Button
+							type="button"
+							variant="secondary"
+							disabled={preparationCancelling}
+							onClick={() => void cancelActivePreparation()}
+						>
+							{preparationCancelling ? "Cancelando…" : "Cancelar preparação"}
+						</Button>
+					) : null}
+				</div>
+			) : null}
 
 			{source ? (
 				<p className={styles.source}>

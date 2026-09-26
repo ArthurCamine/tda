@@ -66,6 +66,7 @@ def _browser_route_allowed(method: str, path: str) -> bool:
     if path in {
         "/api/v1/capabilities",
         "/api/v1/preparation",
+        "/api/v1/preparation/cancel",
         "/api/v1/system",
         "/api/v1/lifecycle",
         "/api/v1/jobs",
@@ -74,6 +75,7 @@ def _browser_route_allowed(method: str, path: str) -> bool:
             method == "GET"
             or (method == "POST" and path in {
                 "/api/v1/preparation",
+                "/api/v1/preparation/cancel",
                 "/api/v1/lifecycle",
                 "/api/v1/jobs",
             })
@@ -134,6 +136,11 @@ class ProfilePreparationRequest(BaseModel):
         "qwen-fast",
         "qwen-quality",
     ]
+
+
+class ProfilePreparationCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_operation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
 class LifecycleRequest(BaseModel):
@@ -1231,6 +1238,7 @@ def create_app(
             "system.telemetry",
             "worker.subprocess",
             "transcription.prepare",
+            "transcription.prepare.cancel",
             "transcription.review",
         ]
         catalog = profile_catalog(
@@ -1300,6 +1308,21 @@ def create_app(
                 )
         worker_wake.set()
         return value
+
+    @app.post("/api/v1/preparation/cancel")
+    def cancel_preparation(body: ProfilePreparationCancelRequest):
+        try:
+            return preparation_manager.request_cancel(
+                body.expected_operation_id
+            )
+        except ProfilePreparationError as exc:
+            return error(
+                exc.code,
+                409
+                if exc.code == "TRANSCRIPTION_PREPARATION_STALE_OPERATION"
+                else 400,
+                preparation_recoverable(exc.code),
+            )
 
     @app.get("/api/v1/system")
     def system():

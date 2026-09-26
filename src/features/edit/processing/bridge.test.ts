@@ -539,6 +539,47 @@ describe("loopback bridge", () => {
 		bridge.disconnect();
 	});
 
+
+	it("cancels only the preparation operation explicitly observed by the browser", async () => {
+		const operationId = "a".repeat(32);
+		const preparation = {
+			schema: "tda_profile_preparation_v1",
+			state: "running",
+			active: true,
+			operation_id: operationId,
+			source_id: `craig-${"b".repeat(64)}`,
+			profile_id: "whisper-turbo",
+			engine: "whisper",
+			stage: "runtime",
+			title: "Preparando runtime…",
+			detail: "Em andamento.",
+			sequence: 3,
+			elapsed_seconds: 12,
+			error_code: null,
+		};
+		const request = vi.fn<typeof fetch>().mockResolvedValue(
+			Response.json(preparation),
+		);
+		const bridge = new LocalBridge(request);
+		bridge.pair(token);
+
+		const result = await bridge.cancelPreparation(operationId, signal());
+
+		expect(result.operationId).toBe(operationId);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0]).toBe(
+			`${LOCAL_API}/preparation/cancel`,
+		);
+		expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
+			expected_operation_id: operationId,
+		});
+		await expect(
+			bridge.cancelPreparation("../stale", signal()),
+		).rejects.toMatchObject({ code: "invalid_response" });
+		expect(request).toHaveBeenCalledTimes(1);
+		bridge.disconnect();
+	});
+
 	it("sends bounded event cursors without putting them in the path identity", async () => {
 		const request = vi.fn<typeof fetch>().mockResolvedValue(
 			Response.json({
