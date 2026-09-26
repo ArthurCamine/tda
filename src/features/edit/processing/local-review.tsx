@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status";
 import {
@@ -15,6 +15,8 @@ import type {
 	LocalRunSummary,
 } from "./protocol";
 import styles from "./local-review.module.css";
+import { ReviewConflicts } from "./review-conflicts";
+import { prepareReviewRebase, resolveReviewRebase, type ReviewRebase } from "./review-rebase";
 import { ParticipantManager } from "./participant-manager";
 import { applyParticipantRename } from "./participant-rename";
 import { countWordsV1, isReviewStringV1 } from "../../transcript-review/text-contract";
@@ -32,6 +34,7 @@ type Props = Readonly<{
 		status: LocalReviewStatus,
 		segments: readonly LocalReviewSegment[],
 	) => void | Promise<void>;
+	onLoadLatest?: () => Promise<LocalReview>;
 	onRepairTarget?: () => void | Promise<void>;
 	onClose: () => void;
 	onPublish: (
@@ -110,7 +113,7 @@ function reviewError(code: string | null): string | null {
 		PUBLICATION_TARGET_PROVENANCE_MISMATCH: "A origem e o run divergem. O reparo foi bloqueado e seus arquivos foram preservados.",
 		PUBLICATION_TARGET_CONFLICT: "Existe um vínculo divergente. O reparo não troca a sessão de destino.",
 		LOCAL_REVIEW_DRAFT_CONFLICT:
-			"Este draft mudou em outra aba ou processo. Feche sem descartar seu texto, reabra a revisão e reconcilie antes de salvar.",
+			"Este draft mudou em outra aba ou processo. Suas alterações continuam nesta tela. Compare com a versão mais recente para continuar sem descartar seu trabalho.",
 		LOCAL_REVIEW_WRITE_UNCONFIRMED:
 			"A gravação pode ter ocorrido, mas não foi possível confirmar sua persistência. Preserve o texto e confira a revisão salva antes de tentar novamente.",
 		LOCAL_REVIEW_SNAPSHOT_CONTRACT_REQUIRED:
@@ -213,6 +216,7 @@ function ReviewEditor({
 	publicationEnabled,
 	onPublish,
 	onRepairTarget,
+	onLoadLatest,
 }: Readonly<{
 	review: LocalReview;
 	busy: boolean;
@@ -222,10 +226,25 @@ function ReviewEditor({
 	publicationEnabled: boolean;
 	onPublish: Props["onPublish"];
 	onRepairTarget: Props["onRepairTarget"];
+	onLoadLatest: Props["onLoadLatest"];
 }>) {
+    const scrollAnchor = useRef<{ key: string; top: number } | null>(null);
+    const restoreAnchor = useRef(false);
+    const [baseline, setBaseline] = useState(review);
+    const [comparison, setComparison] = useState<ReviewRebase | null>(null);
+    const [comparing, setComparing] = useState(false);
+    const [comparisonError, setComparisonError] = useState<string | null>(null);
+    const editingBlocked = busy || comparing || comparison !== null;
 	const [segments, setSegments] = useState<LocalReviewSegment[]>(() =>
 		review.segments.map((segment) => ({ ...segment })),
 	);
+    useLayoutEffect(() => {
+        if (!restoreAnchor.current || !scrollAnchor.current || segments.length === 0) return;
+        restoreAnchor.current = false;
+        const anchor = scrollAnchor.current;
+        const row = Array.from(document.querySelectorAll<HTMLElement>("[data-review-segment]")).find((node) => node.dataset.reviewSegment === anchor.key);
+        if (row) window.scrollBy(0, row.getBoundingClientRect().top - anchor.top);
+    }, [segments]);
 	const [status, setStatus] = useState<LocalReviewStatus>(review.status);
 	const [dirty, setDirty] = useState(false);
 	const [query, setQuery] = useState("");
@@ -372,8 +391,8 @@ function ReviewEditor({
 					<Button
 						size="sm"
 						variant="primary"
-						disabled={busy || !dirty || !canSave || invalidStrings}
-						onClick={() => void onSave(review, status, segments)}
+						disabled={editingBlocked || !dirty || !canSave || invalidStrings}
+						onClick={() => void onSave(baseline, status, segments)}
 					>
 						{busy ? "Salvando…" : "Salvar revisão"}
 					</Button>
@@ -382,7 +401,7 @@ function ReviewEditor({
 							size="sm"
 							variant="primary"
 							disabled={
-								busy ||
+								editingBlocked || error === "LOCAL_REVIEW_DRAFT_CONFLICT" ||
 								publishing ||
 								dirty ||
 								review.status !== "approved_local" ||
@@ -518,7 +537,7 @@ function ReviewEditor({
 				</details>
 			) : null}
 
-            <ParticipantManager segments={segments} disabled={busy || publishing || !canSave} onApply={(intent) => {
+            <ParticipantManager segments={segments} disabled={editingBlocked || publishing || !canSave} onApply={(intent) => {
                 const next = applyParticipantRename(segments, intent);
                 if (next === segments) return;
                 setSegments([...next]);
@@ -531,7 +550,7 @@ function ReviewEditor({
 					<span>Estado do draft</span>
 					<select
 						value={status}
-						disabled={busy || !canSave}
+						disabled={editingBlocked || !canSave}
 						onChange={(event) => {
 							setStatus(event.target.value as LocalReviewStatus);
 							setDirty(true);
@@ -574,6 +593,32 @@ function ReviewEditor({
 				</div>
 			</div>
 
+            {error === "LOCAL_REVIEW_DRAFT_CONFLICT" && onLoadLatest ? <Button type="button" disabled={editingBlocked || publishing} onClick={async () => {
+                const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-review-segment]")).find((node) => { const rect = node.getBoundingClientRect(); return rect.bottom > 0 && rect.top < window.innerHeight; });
+                scrollAnchor.current = anchor ? { key: anchor.dataset.reviewSegment ?? "", top: anchor.getBoundingClientRect().top } : null;
+                setComparing(true); setComparisonError(null);
+                try {
+                    const latest = await onLoadLatest();
+                    setComparison(prepareReviewRebase(baseline, segments, status, latest));
+                } catch {
+                    setComparisonError("Não foi possível comparar uma revisão compatível. Suas alterações continuam intactas.");
+                } finally { setComparing(false); }
+            }}>Comparar com versão mais recente</Button> : null}
+            {comparisonError ? <p role="alert">{comparisonError}</p> : null}
+            {comparison ? <ReviewConflicts plan={comparison} onCancel={() => setComparison(null)} onApply={(choices) => {
+                if (segments !== comparison.working) { setComparisonError("O draft mudou durante a comparação. Compare novamente."); setComparison(null); return; }
+                const result = resolveReviewRebase(comparison, choices);
+                restoreAnchor.current = true;
+                setBaseline(comparison.latest);
+                setSegments(result.segments);
+                setStatus(result.status);
+                setDirty(true);
+                setPublicationReceipt(null);
+                setPublishOperationId(null);
+                setPublishConfirmation(false);
+                setComparison(null);
+            }} /> : null}
+            {baseline !== review ? <p role="status">Reconciliado sobre a revisão {baseline.draftRevision}. Alterações ainda não salvas; aprovação nova necessária após salvar.</p> : null}
 			{reviewError(error) ? (
 				<p className={styles.error} role="alert">{reviewError(error)}</p>
 			) : null}
@@ -588,6 +633,7 @@ function ReviewEditor({
 				{visible.map(({ segment, index }) => (
 					<article
 						className={styles.segment}
+						data-review-segment={JSON.stringify([segment.trackNumber, segment.segmentId])}
 						key={`${segment.trackNumber}-${segment.segmentId}`}
 					>
 						<div className={styles.segmentMeta}>
@@ -597,7 +643,7 @@ function ReviewEditor({
 								<input
 									type="checkbox"
 									checked={segment.reviewed}
-									disabled={busy || !canSave}
+									disabled={editingBlocked || !canSave}
 									onChange={(event) => patch(index, { reviewed: event.target.checked })}
 								/>
 								Revisado
@@ -609,7 +655,7 @@ function ReviewEditor({
 								value={segment.speaker}
 								maxLength={320}
 								aria-invalid={!isReviewStringV1(segment.speaker, "speaker")}
-								disabled={busy || !canSave}
+								disabled={editingBlocked || !canSave}
 								onChange={(event) => patch(index, { speaker: event.target.value })}
 							/>
 						</label>
@@ -619,7 +665,7 @@ function ReviewEditor({
 								value={segment.text}
 								maxLength={200_000}
 								aria-invalid={!isReviewStringV1(segment.text, "text")}
-								disabled={busy || !canSave}
+								disabled={editingBlocked || !canSave}
 								onChange={(event) => patch(index, { text: event.target.value })}
 							/>
 						</label>
@@ -644,6 +690,7 @@ export function LocalReviewWorkspace({
 	onClose,
 	onPublish,
 	onRepairTarget,
+	onLoadLatest,
 }: Props) {
 	if (review) {
 		return (
@@ -655,6 +702,7 @@ export function LocalReviewWorkspace({
 				onSave={onSave}
 				onClose={onClose}
 				publicationEnabled={publicationEnabled}
+				onLoadLatest={onLoadLatest}
 				onRepairTarget={onRepairTarget}
 				onPublish={onPublish}
 			/>
