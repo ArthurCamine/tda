@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from .asr_models import AsrProfile
 from .craig import CraigPackage, CraigPackageError, CraigTrack
+from .local_state_paths import (
+    LocalStatePathError,
+    confined_directory,
+    confined_regular_file,
+)
 from .transcript import TranscriptSegment, TranscriptTrack, TranscriptValidationError
 
 CHECKPOINT_SCHEMA = "tda_asr_track_checkpoint_v2"
@@ -134,10 +139,35 @@ def build_checkpoint_signature(
     )
 
 
-def _checkpoint_path(package_root: Path, signature: CheckpointSignature, track_number: int) -> Path:
+def _checkpoint_directory(
+    package_root: Path,
+    signature: CheckpointSignature,
+    *,
+    namespace: str | None = None,
+    create: bool = False,
+) -> Path:
+    parts = [".checkpoints", signature.digest()]
+    if namespace is not None:
+        parts.append(namespace)
+    try:
+        return confined_directory(package_root, tuple(parts), create=create)
+    except LocalStatePathError as exc:
+        code = str(exc)
+        if code == "LOCAL_STATE_PATH_REPARSE":
+            raise ValueError("CHECKPOINT_PATH_SYMLINK") from exc
+        raise ValueError("CHECKPOINT_PATH_INVALID") from exc
+
+
+def _checkpoint_path(
+    package_root: Path,
+    signature: CheckpointSignature,
+    track_number: int,
+    *,
+    create_parent: bool = False,
+) -> Path:
     if track_number < 1:
         raise ValueError("CHECKPOINT_TRACK_NUMBER_INVALID")
-    root = package_root.resolve() / ".checkpoints" / signature.digest()
+    root = _checkpoint_directory(package_root, signature, create=create_parent)
     return root / f"track-{track_number:04d}.json"
 
 
@@ -145,19 +175,37 @@ def _qwen_text_checkpoint_path(
     package_root: Path,
     signature: CheckpointSignature,
     track_number: int,
+    *,
+    create_parent: bool = False,
 ) -> Path:
     if track_number < 1:
         raise ValueError("CHECKPOINT_TRACK_NUMBER_INVALID")
-    package = package_root.resolve()
-    base = package / ".checkpoints"
-    signature_root = base / signature.digest()
-    namespace = signature_root / QWEN_TEXT_CHECKPOINT_NAMESPACE
-    for candidate in (base, signature_root, namespace):
-        if candidate.is_symlink():
-            raise ValueError("CHECKPOINT_PATH_SYMLINK")
-        if candidate.exists() and not candidate.is_dir():
-            raise ValueError("CHECKPOINT_PATH_INVALID")
+    namespace = _checkpoint_directory(
+        package_root,
+        signature,
+        namespace=QWEN_TEXT_CHECKPOINT_NAMESPACE,
+        create=create_parent,
+    )
     return namespace / f"track-{track_number:04d}.json"
+
+
+def _checkpoint_file(
+    package_root: Path,
+    path: Path,
+    *,
+    allow_missing: bool,
+) -> Path:
+    try:
+        return confined_regular_file(
+            package_root,
+            path,
+            allow_missing=allow_missing,
+        )
+    except LocalStatePathError as exc:
+        code = str(exc)
+        if code == "LOCAL_STATE_PATH_REPARSE":
+            raise ValueError("CHECKPOINT_PATH_SYMLINK") from exc
+        raise ValueError("CHECKPOINT_PATH_INVALID") from exc
 
 
 def _track_descriptor(track: CraigTrack) -> dict[str, object]:
@@ -273,7 +321,14 @@ def load_track_checkpoint(
     signature: CheckpointSignature,
     track: CraigTrack,
 ) -> TranscriptTrack | None:
-    path = _checkpoint_path(package_root, signature, track.number)
+    try:
+        path = _checkpoint_file(
+            package_root,
+            _checkpoint_path(package_root, signature, track.number),
+            allow_missing=True,
+        )
+    except ValueError:
+        return None
     try:
         stat = path.stat()
     except FileNotFoundError:
@@ -317,12 +372,14 @@ def load_qwen_text_checkpoint(
     if signature.engine != "qwen3":
         return None
     try:
-        path = _qwen_text_checkpoint_path(package_root, signature, track.number)
+        path = _checkpoint_file(
+            package_root,
+            _qwen_text_checkpoint_path(package_root, signature, track.number),
+            allow_missing=True,
+        )
     except ValueError:
         return None
     try:
-        if path.is_symlink():
-            return None
         stat = path.stat()
     except (FileNotFoundError, OSError):
         return None
@@ -375,18 +432,31 @@ def save_qwen_text_checkpoint(
     if len(encoded.encode("utf-8")) > MAX_CHECKPOINT_BYTES:
         raise ValueError("CHECKPOINT_SIZE_LIMIT")
 
-    path = _qwen_text_checkpoint_path(package_root, signature, source_track.number)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Re-evaluate after mkdir so a pre-existing symlinked checkpoint namespace
-    # cannot turn the atomic write into an escape from the package root.
-    path = _qwen_text_checkpoint_path(package_root, signature, source_track.number)
+    path = _qwen_text_checkpoint_path(
+        package_root,
+        signature,
+        source_track.number,
+        create_parent=True,
+    )
+    path = _checkpoint_file(package_root, path, allow_missing=True)
     temporary = path.with_name(path.name + f".{uuid4().hex}.partial")
     try:
-        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        _checkpoint_file(package_root, temporary, allow_missing=True)
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        # Revalidate the namespace and destination after writing. A reparse-point
+        # swap never becomes an accepted checkpoint commit.
+        _qwen_text_checkpoint_path(
+            package_root,
+            signature,
+            source_track.number,
+            create_parent=False,
+        )
+        _checkpoint_file(package_root, path, allow_missing=True)
         os.replace(temporary, path)
+        _checkpoint_file(package_root, path, allow_missing=False)
         return path
     finally:
         temporary.unlink(missing_ok=True)
@@ -401,8 +471,13 @@ def save_track_checkpoint(
     transcript_track.validate()
     if not _matches_source(transcript_track, source_track):
         raise ValueError("CHECKPOINT_TRACK_SOURCE_MISMATCH")
-    path = _checkpoint_path(package_root, signature, source_track.number)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = _checkpoint_path(
+        package_root,
+        signature,
+        source_track.number,
+        create_parent=True,
+    )
+    path = _checkpoint_file(package_root, path, allow_missing=True)
     temporary = path.with_name(path.name + f".{uuid4().hex}.partial")
     content = {
         "track_source_sha256": source_track.sha256.lower(),
@@ -419,11 +494,20 @@ def save_track_checkpoint(
     if len(encoded.encode("utf-8")) > MAX_CHECKPOINT_BYTES:
         raise ValueError("CHECKPOINT_SIZE_LIMIT")
     try:
-        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        _checkpoint_file(package_root, temporary, allow_missing=True)
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        _checkpoint_path(
+            package_root,
+            signature,
+            source_track.number,
+            create_parent=False,
+        )
+        _checkpoint_file(package_root, path, allow_missing=True)
         os.replace(temporary, path)
+        _checkpoint_file(package_root, path, allow_missing=False)
         return path
     finally:
         temporary.unlink(missing_ok=True)

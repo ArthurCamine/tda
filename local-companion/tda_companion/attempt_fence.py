@@ -6,6 +6,11 @@ import time
 from pathlib import Path
 from typing import Literal
 from .atomic_storage import sync_namespace
+from .local_state_paths import (
+    LocalStatePathError,
+    confined_directory,
+    confined_regular_file,
+)
 
 AttemptOutcome = Literal["cancel", "commit"]
 
@@ -27,19 +32,42 @@ def _attempt_key(job_id: str, attempt: int) -> str:
     return f"run-{job_id}-a{attempt}"
 
 
-def _fence_path(package_root: Path, job_id: str, attempt: int) -> Path:
-    package = package_root.resolve()
-    root = package / _FENCE_DIR
-    if root.is_symlink():
-        raise AttemptFenceError("ATTEMPT_FENCE_PATH_SYMLINK")
-    if root.exists() and not root.is_dir():
-        raise AttemptFenceError("ATTEMPT_FENCE_PATH_INVALID")
-    return root / f"{_attempt_key(job_id, attempt)}.decision"
+def _fence_path(
+    package_root: Path,
+    job_id: str,
+    attempt: int,
+    *,
+    create_parent: bool = False,
+) -> Path:
+    try:
+        root = confined_directory(
+            package_root,
+            (_FENCE_DIR,),
+            create=create_parent,
+        )
+    except LocalStatePathError as exc:
+        if str(exc) == "LOCAL_STATE_PATH_REPARSE":
+            raise AttemptFenceError("ATTEMPT_FENCE_PATH_SYMLINK") from exc
+        raise AttemptFenceError("ATTEMPT_FENCE_PATH_INVALID") from exc
+    path = root / f"{_attempt_key(job_id, attempt)}.decision"
+    try:
+        return confined_regular_file(
+            package_root,
+            path,
+            allow_missing=True,
+        )
+    except LocalStatePathError as exc:
+        if str(exc) == "LOCAL_STATE_PATH_REPARSE":
+            raise AttemptFenceError("ATTEMPT_FENCE_PATH_SYMLINK") from exc
+        raise AttemptFenceError("ATTEMPT_FENCE_PATH_INVALID") from exc
 
 
 def _read_fence(path: Path) -> AttemptOutcome:
-    if path.is_symlink():
-        raise AttemptFenceError("ATTEMPT_FENCE_PATH_SYMLINK")
+    try:
+        if path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)()):
+            raise AttemptFenceError("ATTEMPT_FENCE_PATH_SYMLINK")
+    except OSError as exc:
+        raise AttemptFenceError("ATTEMPT_FENCE_READ_FAILED") from exc
     try:
         stat = path.stat()
     except FileNotFoundError as exc:
@@ -104,13 +132,17 @@ def claim_attempt_outcome(
     if decision not in {"cancel", "commit"}:
         raise AttemptFenceError("ATTEMPT_FENCE_DECISION_INVALID")
 
-    path = _fence_path(package_root, job_id, attempt)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Re-evaluate after mkdir so a pre-existing symlink cannot redirect the
-    # cross-process winner marker outside the staged Craig package.
+    path = _fence_path(
+        package_root,
+        job_id,
+        attempt,
+        create_parent=True,
+    )
+    # Re-evaluate after mkdir so a pre-existing reparse point cannot redirect
+    # the cross-process winner marker outside the staged Craig package.
     path = _fence_path(package_root, job_id, attempt)
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileExistsError:
@@ -133,6 +165,7 @@ def claim_attempt_outcome(
     else:
         os.close(descriptor)
     try:
+        _fence_path(package_root, job_id, attempt)
         sync_namespace(path.parent)
     except OSError as exc:
         # The winner marker is already visible; never unlink it to compensate.

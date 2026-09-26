@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -359,3 +361,79 @@ def test_signature_changes_for_runtime_recipe_model_inputs():
 
     assert first.digest() != second.digest()
     assert first.digest() != third.digest()
+
+
+def test_completed_track_checkpoint_rejects_symlinked_checkpoint_root(tmp_path: Path):
+    outside = tmp_path / "outside-track"
+    outside.mkdir()
+    checkpoint_root = tmp_path / ".checkpoints"
+    try:
+        checkpoint_root.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation unavailable on this runner")
+
+    track = _source_track()
+    signature = _signature()
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_SYMLINK"):
+        save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+    assert list(outside.iterdir()) == []
+
+
+def test_completed_track_checkpoint_rejects_symlinked_signature_directory(tmp_path: Path):
+    outside = tmp_path / "outside-signature"
+    outside.mkdir()
+    root = tmp_path / ".checkpoints"
+    root.mkdir()
+    signature = _signature()
+    signature_root = root / signature.digest()
+    try:
+        signature_root.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation unavailable on this runner")
+
+    track = _source_track()
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_SYMLINK"):
+        save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+    assert list(outside.iterdir()) == []
+
+
+def test_checkpoint_guard_treats_junction_semantics_as_reparse(monkeypatch, tmp_path: Path):
+    checkpoint_root = tmp_path / ".checkpoints"
+    checkpoint_root.mkdir()
+    original = getattr(Path, "is_junction", lambda self: False)
+
+    def fake_junction(self: Path) -> bool:
+        return self == checkpoint_root or bool(original(self))
+
+    monkeypatch.setattr(Path, "is_junction", fake_junction, raising=False)
+    track = _source_track()
+    signature = _signature()
+
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_SYMLINK"):
+        save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction regression")
+def test_completed_track_checkpoint_rejects_windows_junction_root(tmp_path: Path):
+    outside = tmp_path / "outside-junction"
+    outside.mkdir()
+    checkpoint_root = tmp_path / ".checkpoints"
+    try:
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(checkpoint_root), str(outside)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("junction creation unavailable on this Windows runner")
+
+    track = _source_track()
+    signature = _signature()
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_SYMLINK"):
+        save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+    assert list(outside.iterdir()) == []
