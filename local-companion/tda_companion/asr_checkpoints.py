@@ -13,10 +13,41 @@ from .asr_models import AsrProfile
 from .craig import CraigPackage, CraigTrack
 from .transcript import TranscriptSegment, TranscriptTrack, TranscriptValidationError
 
-CHECKPOINT_SCHEMA = "tda_asr_track_checkpoint_v1"
+CHECKPOINT_SCHEMA = "tda_asr_track_checkpoint_v2"
 QWEN_TEXT_CHECKPOINT_SCHEMA = "tda_qwen_text_checkpoint_v1"
 QWEN_TEXT_CHECKPOINT_NAMESPACE = "qwen-text-v1"
 MAX_CHECKPOINT_BYTES = 64 * 1024 * 1024
+_TRACK_CHECKPOINT_KEYS = frozenset(
+    {
+        "schema",
+        "signature",
+        "signature_sha256",
+        "content_sha256",
+        "track_source_sha256",
+        "track",
+    }
+)
+_TRACK_CHECKPOINT_TRACK_KEYS = frozenset(
+    {
+        "number",
+        "speaker",
+        "source_filename",
+        "source_sha256",
+        "duration_seconds",
+        "segments",
+        "timeline_offset_seconds",
+        "identity",
+    }
+)
+_TRACK_CHECKPOINT_SEGMENT_KEYS = frozenset(
+    {"id", "start", "end", "text", "words", "confidence"}
+)
+_TRACK_CHECKPOINT_WORD_KEYS = frozenset(
+    {"text", "start", "end", "confidence"}
+)
+_TRACK_CHECKPOINT_IDENTITY_KEYS = frozenset(
+    {"username", "discriminator", "discord_id"}
+)
 
 
 @dataclass(frozen=True)
@@ -166,12 +197,28 @@ def _validated_qwen_text_windows(value: Any) -> tuple[QwenTextCheckpointWindow, 
 def _track_from_dict(value: Any) -> TranscriptTrack:
     if not isinstance(value, dict):
         raise TranscriptValidationError("track:OBJECT_REQUIRED")
+    if set(value) != _TRACK_CHECKPOINT_TRACK_KEYS:
+        raise TranscriptValidationError("track:SCHEMA_INVALID")
     segments_value = value.get("segments")
     if not isinstance(segments_value, list):
         raise TranscriptValidationError("track.segments:ARRAY_REQUIRED")
+    for segment in segments_value:
+        if not isinstance(segment, dict) or set(segment) != _TRACK_CHECKPOINT_SEGMENT_KEYS:
+            raise TranscriptValidationError("track.segment:SCHEMA_INVALID")
+        words = segment.get("words")
+        if not isinstance(words, list):
+            raise TranscriptValidationError("track.segment.words:ARRAY_REQUIRED")
+        if any(
+            not isinstance(word, dict) or set(word) != _TRACK_CHECKPOINT_WORD_KEYS
+            for word in words
+        ):
+            raise TranscriptValidationError("track.segment.word:SCHEMA_INVALID")
     identity = value.get("identity")
-    if identity is not None and not isinstance(identity, dict):
-        raise TranscriptValidationError("track.identity:OBJECT_REQUIRED")
+    if identity is not None:
+        if not isinstance(identity, dict):
+            raise TranscriptValidationError("track.identity:OBJECT_REQUIRED")
+        if set(identity) != _TRACK_CHECKPOINT_IDENTITY_KEYS:
+            raise TranscriptValidationError("track.identity:SCHEMA_INVALID")
     result = TranscriptTrack(
         number=int(value.get("number")),
         speaker=str(value.get("speaker") or ""),
@@ -219,9 +266,19 @@ def load_track_checkpoint(
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if not isinstance(value, dict) or value.get("schema") != CHECKPOINT_SCHEMA:
+    if (
+        not isinstance(value, dict)
+        or set(value) != _TRACK_CHECKPOINT_KEYS
+        or value.get("schema") != CHECKPOINT_SCHEMA
+    ):
         return None
     if value.get("signature") != signature.as_dict() or value.get("signature_sha256") != signature.digest():
+        return None
+    content = {
+        "track_source_sha256": value.get("track_source_sha256"),
+        "track": value.get("track"),
+    }
+    if value.get("content_sha256") != _canonical_json_hash(content):
         return None
     if value.get("track_source_sha256") != track.sha256.lower():
         return None
@@ -327,12 +384,16 @@ def save_track_checkpoint(
     path = _checkpoint_path(package_root, signature, source_track.number)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{uuid4().hex}.partial")
+    content = {
+        "track_source_sha256": source_track.sha256.lower(),
+        "track": asdict(transcript_track),
+    }
     payload = {
         "schema": CHECKPOINT_SCHEMA,
         "signature": signature.as_dict(),
         "signature_sha256": signature.digest(),
-        "track_source_sha256": source_track.sha256.lower(),
-        "track": asdict(transcript_track),
+        "content_sha256": _canonical_json_hash(content),
+        **content,
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_CHECKPOINT_BYTES:

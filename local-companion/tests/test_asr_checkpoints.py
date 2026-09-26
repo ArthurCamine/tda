@@ -147,6 +147,84 @@ def test_corrupt_or_oversized_checkpoint_is_ignored(tmp_path: Path):
     assert load_track_checkpoint(tmp_path, signature, track) is None
 
 
+def test_completed_track_checkpoint_rejects_semantic_tamper_and_schema_drift(tmp_path: Path):
+    track = _source_track()
+    signature = _signature()
+    path = save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+
+    original = json.loads(path.read_text(encoding="utf-8"))
+    assert original["schema"] == "tda_asr_track_checkpoint_v2"
+    assert len(original["content_sha256"]) == 64
+
+    tampered_text = json.loads(json.dumps(original))
+    tampered_text["track"]["segments"][0]["text"] = "conteúdo alterado"
+    path.write_text(json.dumps(tampered_text), encoding="utf-8")
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+    tampered_word = json.loads(json.dumps(original))
+    tampered_word["track"]["segments"][0]["words"][0]["end"] = 0.25
+    path.write_text(json.dumps(tampered_word), encoding="utf-8")
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+    tampered_metadata = json.loads(json.dumps(original))
+    tampered_metadata["track"]["duration_seconds"] = 2.5
+    path.write_text(json.dumps(tampered_metadata), encoding="utf-8")
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+    bad_digest = json.loads(json.dumps(original))
+    bad_digest["content_sha256"] = "0" * 64
+    path.write_text(json.dumps(bad_digest), encoding="utf-8")
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+    unknown_track_field = json.loads(json.dumps(original))
+    unknown_track_field["track"]["debug_text_copy"] = "not supported"
+    unknown_track_field["content_sha256"] = checkpoints_module._canonical_json_hash(
+        {
+            "track_source_sha256": unknown_track_field["track_source_sha256"],
+            "track": unknown_track_field["track"],
+        }
+    )
+    path.write_text(json.dumps(unknown_track_field), encoding="utf-8")
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+    for mutate in (
+        lambda value: value["track"]["segments"][0].__setitem__("debug", "x"),
+        lambda value: value["track"]["segments"][0]["words"][0].__setitem__("debug", "x"),
+        lambda value: value["track"].__setitem__(
+            "identity",
+            {
+                "username": "Alice",
+                "discriminator": None,
+                "discord_id": None,
+                "debug": "x",
+            },
+        ),
+    ):
+        nested_drift = json.loads(json.dumps(original))
+        mutate(nested_drift)
+        nested_drift["content_sha256"] = checkpoints_module._canonical_json_hash(
+            {
+                "track_source_sha256": nested_drift["track_source_sha256"],
+                "track": nested_drift["track"],
+            }
+        )
+        path.write_text(json.dumps(nested_drift), encoding="utf-8")
+        assert load_track_checkpoint(tmp_path, signature, track) is None
+
+
+def test_completed_track_checkpoint_v1_is_an_untrusted_cache_miss(tmp_path: Path):
+    track = _source_track()
+    signature = _signature()
+    path = save_track_checkpoint(tmp_path, signature, track, _transcript_track(track))
+
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["schema"] = "tda_asr_track_checkpoint_v1"
+    value.pop("content_sha256")
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert load_track_checkpoint(tmp_path, signature, track) is None
+
+
 def test_qwen_text_checkpoint_roundtrip_requires_exact_signature_and_track(tmp_path: Path):
     track = _source_track()
     signature = _qwen_signature()
