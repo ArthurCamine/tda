@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .execution_device import gpu_uuid, pci_bus_id
+
 import math
 import re
 from dataclasses import dataclass
@@ -62,6 +64,7 @@ _ALIGNMENT_DIAGNOSTICS = (
 )
 
 EVENT_SCHEMAS: dict[str, EventSchema] = {
+    "ASR_EXECUTION_DEVICE": _schema("stage", "device", "kind", "logical_index", "physical_uuid", "pci_bus_id", required=("stage", "device", "kind")),
     "WHISPER_RUNTIME_IMPORT_STARTED": _schema(
         "stage", "preloaded", required=("stage", "preloaded")
     ),
@@ -238,6 +241,14 @@ def _safe_text(value: object, maximum: int) -> str | None:
 
 
 def _sanitize_field(key: str, value: object) -> Scalar | None:
+    if key == "physical_uuid":
+        return gpu_uuid(value)
+    if key == "pci_bus_id":
+        return pci_bus_id(value)
+    if key == "kind":
+        return value if value in ("cpu", "cuda") else None
+    if key == "logical_index":
+        return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 100 else None
     if key == "stage":
         return value if isinstance(value, str) and _STAGE.fullmatch(value) else None
     if key == "speaker":

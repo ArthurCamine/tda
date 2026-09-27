@@ -424,3 +424,17 @@ test("reduced motion salta telemetry ao target factual e desliga transição de 
 		String(2 / 3),
 	);
 });
+
+
+test("command bar joins the worker GPU by UUID instead of machine ordinal", async ({ page }, testInfo) => {
+ const identity = { kind: "cuda", logical_index: 0, physical_uuid: "GPU-22222222-2222-2222-2222-222222222222", pci_bus_id: "00000000:02:00.0" };
+ await installCompanionFixture(page, { initialJobs: [fixtureJob("running", { execution_device: identity })], advanceJobs: false, system: { gpus: [
+  { index: 1, uuid: identity.physical_uuid, pciBusId: identity.pci_bus_id, name: "NVIDIA RTX 3090", utilizationPercent: 80, memoryUsedBytes: 4 * 1024 ** 3, memoryTotalBytes: 24 * 1024 ** 3 },
+  { index: 0, uuid: "GPU-11111111-1111-1111-1111-111111111111", pciBusId: "00000000:01:00.0", name: "NVIDIA RTX 4070", utilizationPercent: 10, memoryUsedBytes: 1 * 1024 ** 3, memoryTotalBytes: 8 * 1024 ** 3 },
+ ] } });
+ await page.goto("/");
+ const bar = page.getByRole("region", { name: "Estado e comandos do TDA Companion" });
+ await expect(bar.getByText(/GPU do processamento · RTX 3090/)).toBeVisible();
+ await expect(bar.getByText(/RTX 4070/)).toHaveCount(0);
+ await page.screenshot({ path: testInfo.outputPath("cuda-physical-identity.png"), fullPage: true });
+});

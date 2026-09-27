@@ -16,6 +16,7 @@ from .attempt_fence import AttemptFenceError, claim_attempt_outcome
 from .asr_whisper import WhisperRuntimeError, transcribe_craig_package
 from .craig import CraigPackageError
 from .craig_runtime import load_craig_package
+from .execution_device import reset_execution_device
 from .execution_lineage import capture_execution_lineage
 from .transcript import TranscriptValidationError
 from .transcription_runs import (
@@ -132,6 +133,7 @@ def _run_craig(
     *,
     emit_ready: bool = True,
 ) -> int:
+    reset_execution_device()
     if emit_ready:
         emitter.emit(
             "ready",

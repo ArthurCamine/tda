@@ -316,6 +316,7 @@ export function ProcessingPanel({
 				connectionLabel={label}
 				health={state.health}
 				system={state.system}
+				executionDevice={running.length === 1 ? running[0].executionDevice : null}
 				refreshError={state.refreshError ?? state.telemetryRefreshError}
 				checkedAt={state.telemetryCheckedAt ?? state.checkedAt}
 				runningCount={running.length}

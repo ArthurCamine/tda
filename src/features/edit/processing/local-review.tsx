@@ -548,6 +548,7 @@ function ReviewEditor({
 				<div>
 					<span>Hardware</span>
 					<strong>{review.lineage.executionLineage?.gpu?.model ?? review.lineage.device ?? "—"}</strong>
+					{review.lineage.executionLineage?.gpu && !review.lineage.executionLineage.executionDevice ? <small>Identidade física histórica não verificada</small> : null}
 					<small>
 						{[
 							review.lineage.executionLineage?.runtimeFamily,

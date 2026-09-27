@@ -2,7 +2,8 @@
 
 import { AnimatedMetric } from "@/components/ui/animated-metric";
 import { Button } from "@/components/ui/button";
-import type { Health, SystemSnapshot } from "./protocol";
+import type { Health, SystemSnapshot, ExecutionDevice } from "./protocol";
+import { selectExecutionGpu } from "./execution-device";
 import styles from "./command-bar.module.css";
 
 type Props = Readonly<{
@@ -11,6 +12,7 @@ type Props = Readonly<{
 	connectionLabel: string;
 	health: Health | null;
 	system: SystemSnapshot | null;
+	executionDevice?: ExecutionDevice | null;
 	refreshError: string | null;
 	checkedAt: string | null;
 	runningCount: number;
@@ -61,6 +63,7 @@ export function ProcessingCommandBar({
 	connectionLabel,
 	health,
 	system,
+	executionDevice,
 	refreshError,
 	checkedAt,
 	runningCount,
@@ -74,7 +77,8 @@ export function ProcessingCommandBar({
 	onDiagnostics,
 }: Props) {
 	// Machine inventory only; CUDA logical device identity is a separate contract.
-	const gpu = system?.gpus.reduce<(typeof system.gpus)[number] | null>(
+	const executionGpu = selectExecutionGpu(system?.gpus ?? [], executionDevice);
+	const gpu = executionGpu ?? system?.gpus.reduce<(typeof system.gpus)[number] | null>(
 		(selected, candidate) => !selected || candidate.index < selected.index ? candidate : selected, null,
 	) ?? null;
 	const gpuMemory =
@@ -132,8 +136,8 @@ export function ProcessingCommandBar({
 					{degradedHint ? <span className={styles.degradedHint}>{degradedHint}</span> : null}
 				</div>
 				{connected && gpu ? (
-					<span className={styles.gpuCluster} title={`GPU ${gpu.index} da máquina · ${gpu.name}`}>
-						GPU {gpu.index} · {compactGpuName(gpu.name)}
+					<span className={styles.gpuCluster} title={`${executionGpu ? "GPU do processamento" : `GPU ${gpu.index} da máquina`} · ${gpu.name}`}>
+						{executionGpu ? "GPU do processamento" : `GPU ${gpu.index}`} · {compactGpuName(gpu.name)}
 						{gpu.utilizationPercent !== null ? (
 							<>
 								{" · "}

@@ -404,6 +404,16 @@ Esta evidência não representa teste da RTX 2080, avaliação editorial de qual
 validação de Craig longo, nem certificação de MSI/RC produzido pela main atual.
 Não houve instalação, promoção de release, deploy ou publicação de transcript.
 
+## Identidade CUDA física (#641, candidata)
+
+O worker consulta o CUDA Driver API no próprio processo após carregar o modelo ASR/aligner. `execution_device` separa ordinal lógico de UUID e PCI bus id; o NVML expõe UUID/PCI na telemetria. O commit usa a identidade capturada nesse attempt, não infere ordinal NVML nem inicializa CUDA em um run que só reutilizou checkpoints. Cada comando limpa o cache de identidade antes de trabalhar. Falha de sensor mantém identidade física desconhecida e não derruba a transcrição.
+
+O join prefere UUID e só usa PCI quando UUID não existe. UUID divergente (incluindo MIG) nunca cai para PCI de um device pai; múltiplas correspondências ficam desconhecidas. A barra associa GPU ao processamento somente para um único job ativo com join comprovado; caso contrário rotula a amostra como GPU da máquina. Runs v1 sem a extensão continuam legíveis, com aviso de identidade física histórica não verificada. A publicação cloud continua excluindo o fingerprint. Benchmark/calibração usa `executionHardwareKey`, nunca ordinal como chave.
+
+SQLite local passa de user_version 7 para 8 por migração aditiva `jobs.execution_device TEXT`. Evento e identidade são persistidos na mesma transação e somente para job running/attempt atual; claim limpa a identidade e o DTO confere attempt. Nenhuma linha histórica é reescrita. Consumers: Store, API jobs, parser Web e command bar. Antes de atualizar a instalação, preservar jobs.sqlite3 com o Agent parado; rollback binário anterior requer restaurar o backup pré-upgrade, sem excluir dados novos por conveniência. Preferir correção adiante para preservar jobs criados após upgrade.
+
+Referências: [CUDA device management](https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__DEVICE.html) e [CUDA_VISIBLE_DEVICES](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html). O driver resolve o namespace efetivamente visível ao processo; não interpretamos ordinais da variável como ordinais NVML.
+
 ## Recuperação da preparação após reinício (#656)
 
 O Agent mantém somente `State/preparation/latest.json`, um receipt sanitizado de até 4 KiB com identidade, etapa, sequência, timestamps, código seguro e predecessor opcional. O arquivo usa escrita temporária, fsync e substituição atômica; symlinks/junctions no diretório/arquivo são rejeitados. Não contém caminhos, tokens, URLs, áudio, transcrição ou contexto. A primeira gravação deve passar antes de iniciar a thread; falhas posteriores preservam o último snapshot válido e registram um código seguro no SystemLog.
@@ -430,3 +440,4 @@ Critério para reabrir a investigação: candidato que prove redução de infer�
 ## Posição factual das janelas Qwen (#605)
 
 `QWEN_WINDOW_TRANSCRIBED` inclui speaker normalizado, total de tracks e `start_seconds`/`end_seconds` copiados da janela efetivamente processada. Os tempos são locais à faixa, antes do offset de sessão; não são estimados por índice nem representam alinhamento concluído. A apresentação identifica esse sistema de coordenadas. Campos adicionais são opcionais para consumidores de eventos históricos. A allowlist valida números finitos/bounded e continua descartando texto reconhecido, prompt, contexto, glossário e paths. Não há I/O extra, evento adicional ou transmissão cloud. Whisper mantém o contrato de segmento atual; timing por unidade pertence à instrumentação específica. Rollback pode omitir os novos campos sem reescrever histórico.
+O contrato de identidade física (`execution_device.py`) integra os filtros de build e as cercas de ancestralidade dos dois runtimes. Alterações isoladas nesse módulo exigem reconstrução antes de promoção; um pacote anterior não pode representar o contrato novo.

@@ -73,7 +73,9 @@ export type JobContext = {
 	sourceId: string;
 	profileId?: TranscriptionProfileId;
 };
+export type ExecutionDevice = Readonly<{ kind: "cpu" | "cuda"; logicalIndex: number | null; physicalUuid: string | null; pciBusId: string | null }>;
 export type LocalJob = {
+	executionDevice?: ExecutionDevice | null;
 	id: string;
 	kind: string;
 	status: JobStatus;
@@ -127,6 +129,8 @@ export type JobActivity = {
 	metrics: readonly JobActivityItem[];
 };
 export type SystemGpu = {
+	uuid?: string | null;
+	pciBusId?: string | null;
 	index: number;
 	name: string;
 	utilizationPercent: number | null;
@@ -169,6 +173,7 @@ export type LocalPublicationTarget = {
 export type LocalExecutionLineage = {
 	schemaVersion: "tda_execution_lineage_v1";
 	companionVersion: string | null;
+	executionDevice?: ExecutionDevice | null;
 	runtimeFamily: string | null;
 	runtimeVersion: string | null;
 	device: string | null;
@@ -628,6 +633,7 @@ export function parseJob(value: unknown): LocalJob {
 				: { ...base, profileId: transcriptionProfile(rawContext.profile_id) };
 	}
 	return {
+		executionDevice: parseExecutionDevice(row.execution_device),
 		id: identifier(row.id),
 		kind: text(row.kind),
 		status: row.status as JobStatus,
@@ -797,6 +803,24 @@ export function parseJobActivity(value: unknown): JobActivity {
 	};
 }
 
+export function parseExecutionDevice(value: unknown): ExecutionDevice | null {
+ if (value === null || value === undefined) return null;
+ const row = record(value);
+ if (row.kind === "cpu") return { kind: "cpu", logicalIndex: null, physicalUuid: null, pciBusId: null };
+ if (row.kind !== "cuda") return invalid();
+ const logicalIndex = nonNegativeInteger(row.logical_index); if (logicalIndex > 99) return invalid();
+ return { kind: "cuda", logicalIndex, physicalUuid: parseGpuUuid(row.physical_uuid), pciBusId: parsePciBusId(row.pci_bus_id) };
+}
+function parseGpuUuid(value: unknown): string | null {
+ if (value === null || value === undefined) return null;
+ if (typeof value !== "string" || !/^(GPU|MIG)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value)) return invalid();
+ const offset = value.indexOf("-"); return value.slice(0, offset).toUpperCase() + value.slice(offset).toLowerCase();
+}
+function parsePciBusId(value: unknown): string | null {
+ if (value === null || value === undefined) return null;
+ if (typeof value !== "string" || !/^[0-9a-f]{8}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu.test(value)) return invalid();
+ return value.toLowerCase();
+}
 export function parseSystemSnapshot(value: unknown): SystemSnapshot {
 	const row = record(value);
 	const host = record(row.host);
@@ -806,6 +830,8 @@ export function parseSystemSnapshot(value: unknown): SystemSnapshot {
 	const gpus = row.gpus.map((value) => {
 		const gpu = record(value);
 		return {
+			uuid: parseGpuUuid(gpu.uuid),
+			pciBusId: parsePciBusId(gpu.pci_bus_id),
 			index: nonNegativeInteger(gpu.index),
 			name: text(gpu.name, 160),
 			utilizationPercent: nullablePercent(gpu.utilization_percent),
@@ -876,6 +902,7 @@ function parseExecutionLineage(value: unknown): LocalExecutionLineage | null {
 	return {
 		schemaVersion: "tda_execution_lineage_v1",
 		companionVersion: nullableText(row.companion_version, 64),
+		executionDevice: parseExecutionDevice(row.execution_device),
 		runtimeFamily: nullableText(row.runtime_family, 64),
 		runtimeVersion: nullableText(row.runtime_version, 128),
 		device: nullableText(row.device, 64),

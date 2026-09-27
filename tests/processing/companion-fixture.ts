@@ -17,6 +17,8 @@ export type FixtureJobStatus =
 	| "interrupted";
 
 export type FixtureSystemGpu = {
+    uuid?: string | null;
+    pciBusId?: string | null;
 	index: number;
 	name: string;
 	utilizationPercent: number | null;
@@ -284,6 +286,8 @@ export async function installCompanionFixture(
 				},
 				gpus: (system?.gpus ?? []).map((gpu) => ({
 					index: gpu.index,
+                    uuid: gpu.uuid ?? null,
+                    pci_bus_id: gpu.pciBusId ?? null,
 					name: gpu.name,
 					utilization_percent: gpu.utilizationPercent,
 					memory_used_bytes: gpu.memoryUsedBytes,

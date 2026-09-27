@@ -56,6 +56,7 @@ def test_execution_lineage_captures_sanitized_runtime_and_selected_gpu():
                 },
                 {
                     "index": 1,
+                    "uuid": "GPU-11111111-1111-1111-1111-111111111111",
                     "name": "NVIDIA GPU 1",
                     "memory_total_bytes": 24 * 1024**3,
                     "compute_capability": "8.6",
@@ -65,6 +66,7 @@ def test_execution_lineage_captures_sanitized_runtime_and_selected_gpu():
                 },
             ],
         },
+        execution_device={"kind": "cuda", "logical_index": 1, "physical_uuid": "GPU-11111111-1111-1111-1111-111111111111", "pci_bus_id": None},
         environ={
             "TDA_ASR_RUNTIME_FAMILY": "qwen",
             "TDA_ASR_RUNTIME_VERSION": "1.0.10",
@@ -80,6 +82,9 @@ def test_execution_lineage_captures_sanitized_runtime_and_selected_gpu():
     assert value["gpu"] == {
         "vendor": "NVIDIA",
         "index": 1,
+        "logical_index": 1,
+        "uuid": "GPU-11111111-1111-1111-1111-111111111111",
+        "pci_bus_id": None,
         "model": "NVIDIA GPU 1",
         "vram_total_bytes": 24 * 1024**3,
         "compute_capability": "8.6",

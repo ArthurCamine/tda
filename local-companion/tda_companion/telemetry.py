@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .execution_device import gpu_uuid, pci_bus_id
+
 import platform
 from datetime import datetime, timezone
 from typing import Any
@@ -70,6 +72,14 @@ class SystemTelemetry:
                     "memory_used_bytes": max(0, int(memory.used)),
                     "memory_total_bytes": max(0, int(memory.total)),
                 }
+                try:
+                    row["uuid"] = gpu_uuid(pynvml.nvmlDeviceGetUUID(handle))
+                except Exception:
+                    row["uuid"] = None
+                try:
+                    row["pci_bus_id"] = pci_bus_id(pynvml.nvmlDeviceGetPciInfo(handle).busId)
+                except Exception:
+                    row["pci_bus_id"] = None
                 capability_reader = getattr(
                     pynvml,
                     "nvmlDeviceGetCudaComputeCapability",

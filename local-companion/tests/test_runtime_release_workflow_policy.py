@@ -48,6 +48,7 @@ def test_whisper_runtime_workflow_tracks_worker_dependency_closure():
     required = {
         "local-companion/tda_companion/asr_checkpoints.py",
         "local-companion/tda_companion/asr_timeline.py",
+        "local-companion/tda_companion/execution_device.py",
         "local-companion/tda_companion/craig_runtime.py",
         "local-companion/tda_companion/flac_metadata.py",
         "local-companion/tda_companion/transcript.py",
@@ -64,6 +65,7 @@ def test_qwen_runtime_workflows_track_the_strict_worker_dependency_closure():
         "local-companion/tda_companion/asr_checkpoints.py",
         "local-companion/tda_companion/asr_qwen_strict.py",
         "local-companion/tda_companion/asr_timeline.py",
+        "local-companion/tda_companion/execution_device.py",
         "local-companion/tda_companion/craig_runtime.py",
         "local-companion/tda_companion/flac_metadata.py",
         "local-companion/tda_companion/transcript.py",

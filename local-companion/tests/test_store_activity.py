@@ -163,7 +163,7 @@ def test_schema_v6_upgrades_to_activity_v7_without_reinterpreting_old_events(
             row[1] for row in db.execute("PRAGMA table_info(job_activity)").fetchall()
         }
 
-    assert version == 7
+    assert version == 8
     assert {"job_id", "attempt", "track", "metric", "value", "updated"} <= columns
     assert migrated.activity(job_id)["metrics"] == []
 

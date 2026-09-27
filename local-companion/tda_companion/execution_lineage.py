@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import VERSION
+from .execution_device import committed_execution_device, matching_gpu
 from .telemetry import SystemTelemetry
 from .transcript import TranscriptDocument
 
@@ -35,6 +36,7 @@ def capture_execution_lineage(
     *,
     snapshot: Mapping[str, Any] | None = None,
     environ: Mapping[str, str] | None = None,
+    execution_device: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Capture a sanitized, best-effort execution fingerprint at run commit time.
 
@@ -49,6 +51,7 @@ def capture_execution_lineage(
     runtime_family = _bounded_text(environment.get("TDA_ASR_RUNTIME_FAMILY"), 64)
     runtime_version = _bounded_text(environment.get("TDA_ASR_RUNTIME_VERSION"), 128)
 
+    identity = dict(execution_device) if execution_device is not None else committed_execution_device(device)
     gpu: dict[str, Any] | None = None
     index = _gpu_index(device)
     if index is not None:
@@ -63,14 +66,7 @@ def capture_execution_lineage(
 
         rows = value.get("gpus")
         if isinstance(rows, list):
-            row = next(
-                (
-                    candidate
-                    for candidate in rows
-                    if isinstance(candidate, dict) and candidate.get("index") == index
-                ),
-                None,
-            )
+            row = matching_gpu(rows, identity)
             if isinstance(row, dict):
                 total = row.get("memory_total_bytes")
                 vram_total_bytes = (
@@ -80,7 +76,10 @@ def capture_execution_lineage(
                 )
                 gpu = {
                     "vendor": "NVIDIA",
-                    "index": index,
+                    "index": row.get("index"),
+                    "logical_index": index,
+                    "uuid": identity.get("physical_uuid") if identity else None,
+                    "pci_bus_id": identity.get("pci_bus_id") if identity else None,
                     "model": _bounded_text(row.get("name"), 160),
                     "vram_total_bytes": vram_total_bytes,
                     "compute_capability": _bounded_text(
@@ -96,6 +95,7 @@ def capture_execution_lineage(
         "runtime_family": runtime_family,
         "runtime_version": runtime_version,
         "device": device,
+        "execution_device": identity,
         "compute_type": _bounded_text(engine.compute_type, 64),
         "gpu": gpu,
     }

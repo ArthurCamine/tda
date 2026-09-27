@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .execution_device import device_event
+
 import gc
 import os
 import shutil
@@ -233,6 +235,7 @@ def load_whisper_model(
                 "duration_ms": round((time.monotonic() - construct_started) * 1000),
             }
         )
+        report(device_event(plan.device))
         return model, plan.compute_type, False
     except Exception as exc:
         memory_error = _is_cuda_memory_error(exc)
@@ -292,6 +295,7 @@ def load_whisper_model(
                 "duration_ms": round((time.monotonic() - fallback_started) * 1000),
             }
         )
+        report(device_event(plan.device))
         return model, plan.fallback_compute_type, True
 
 

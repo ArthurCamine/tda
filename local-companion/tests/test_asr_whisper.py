@@ -508,6 +508,7 @@ def test_whisper_model_load_emits_sanitized_milestones(monkeypatch, tmp_path: Pa
         "WHISPER_RUNTIME_IMPORT_READY",
         "WHISPER_MODEL_CONSTRUCT_STARTED",
         "WHISPER_MODEL_CONSTRUCT_READY",
+        "ASR_EXECUTION_DEVICE",
     ]
     assert all(item.get("stage") == "model_load" for item in reports)
     assert all("path" not in item for item in reports)
@@ -515,6 +516,8 @@ def test_whisper_model_load_emits_sanitized_milestones(monkeypatch, tmp_path: Pa
     assert reports[2]["compute_type"] == "float16"
     assert int(reports[1]["duration_ms"]) >= 0
     assert int(reports[3]["duration_ms"]) >= 0
+    assert reports[4]["kind"] == "cuda"
+    assert reports[4]["logical_index"] == 0
 
 
 

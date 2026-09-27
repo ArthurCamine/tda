@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from uuid import uuid4
 
+from .execution_device import sanitize_execution_device
 from .legacy.artifacts import sha256_json, utc_now
 from .legacy.publication import build_publication_bundle
 
@@ -32,7 +33,7 @@ class Store:
         self.path = root / "jobs.sqlite3"
         with self.tx() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
                 raise RuntimeError("DATABASE_VERSION_UNSUPPORTED")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -78,6 +79,8 @@ class Store:
             job_columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(jobs)").fetchall()
             }
+            if "execution_device" not in job_columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN execution_device TEXT")
             if "error_recoverable" not in job_columns:
                 db.execute(
                     "ALTER TABLE jobs ADD COLUMN error_recoverable INTEGER NOT NULL DEFAULT 1"
@@ -94,7 +97,7 @@ class Store:
                 "CREATE INDEX IF NOT EXISTS jobs_status_updated_id_idx "
                 "ON jobs(status, updated DESC, id DESC)"
             )
-            db.execute("PRAGMA user_version=7")
+            db.execute("PRAGMA user_version=8")
             db.execute("INSERT OR IGNORE INTO settings VALUES ('device', ?)", (str(uuid4()),))
             db.execute("INSERT OR IGNORE INTO settings VALUES ('paused', 'false')")
 
@@ -195,6 +198,10 @@ class Store:
                 raise KeyError(job_id)
             if row["status"] != "running" or row["attempt"] != attempt:
                 return False
+            if code == "ASR_EXECUTION_DEVICE":
+                identity = sanitize_execution_device(clean)
+                if identity is not None:
+                    db.execute("UPDATE jobs SET execution_device=? WHERE id=?", (json.dumps({"attempt": attempt, **identity}), job_id))
             self.event(db, job_id, code, clean, level=level, attempt=attempt)
             return True
 
@@ -369,7 +376,10 @@ class Store:
         if body["kind"] == "transcription.craig":
             context["profile_id"] = body["profile_id"]
             context["cpu"] = bool(body.get("cpu", False))
+        raw_device = json.loads(row["execution_device"]) if row["execution_device"] else None
+        execution_device = sanitize_execution_device(raw_device) if isinstance(raw_device, dict) and raw_device.get("attempt") == row["attempt"] else None
         return dict(
+            execution_device=execution_device,
             id=row["id"],
             kind=body["kind"],
             status=row["status"],
@@ -836,7 +846,7 @@ class Store:
             next_attempt = row["attempt"] + 1
             stage = "preparing" if body["kind"] == "transcription.craig" else "fixture"
             db.execute(
-                "UPDATE jobs SET status='running',stage=?,attempt=?,updated=? WHERE id=?",
+                "UPDATE jobs SET status='running',stage=?,attempt=?,execution_device=NULL,updated=? WHERE id=?",
                 (stage, next_attempt, utc_now(), row["id"]),
             )
             self.event(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .execution_device import device_event
+
 import math
 import re
 import time
@@ -664,6 +666,7 @@ def transcribe_craig_package_qwen_strict(
         model_root = model_prepare(models_root.resolve(), profile)
         report({"type": "stage", "stage": "model_load", "profile": profile.id})
         asr_session: AsrSession = asr_session_factory(model_root, plan)
+        report(device_event(plan.device))
         report({"type": "stage", "stage": "transcription", "profile": profile.id})
         try:
             for track in asr_tracks:
@@ -757,6 +760,7 @@ def transcribe_craig_package_qwen_strict(
         report({"type": "stage", "stage": "alignment", "profile": profile.id})
         aligner_root = aligner_prepare(models_root.resolve())
         aligner: AlignerSession = aligner_session_factory(aligner_root, plan)
+        report(device_event(plan.device))
         try:
             for track in pending_tracks:
                 source = _safe_track_path(package_root, track)

@@ -609,11 +609,17 @@ def test_catalog_of_100_sources_reads_zero_transcript_bytes(monkeypatch, tmp_pat
         run = write_completed_run(package, _document("a" * 64, "qwen-quality", "synthetic"), job_id="run", attempt=1)
         write_compatibility_mirror(package, run["run_id"])
         packages.append(package)
+    import threading
+    test_thread = threading.get_ident()
     original_open = Path.open
     opened = []
     def metadata_only(path, *args, **kwargs):
-        assert path.name != "transcript.json"
-        opened.append(path.name)
+        # Path.open is process-global: unrelated worker/runtime threads may still
+        # perform legitimate I/O while this focused catalog assertion runs.
+        # Observe only the synchronous call path under test.
+        if threading.get_ident() == test_thread:
+            assert path.name != "transcript.json"
+            opened.append(path.name)
         return original_open(path, *args, **kwargs)
     monkeypatch.setattr(Path, "open", metadata_only)
     for package in packages:
