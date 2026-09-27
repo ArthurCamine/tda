@@ -19,6 +19,8 @@ def test_known_activity_event_drops_private_extra_fields_without_losing_safe_met
             "total_tracks": 4,
             "speaker": "Álice",
             "window": 89,
+            "start_seconds": 7860.125,
+            "end_seconds": 7890.75,
             "text": "segredo reconhecido",
             "path": "C:/private/audio.flac",
         }
@@ -32,6 +34,8 @@ def test_known_activity_event_drops_private_extra_fields_without_losing_safe_met
         "total_tracks": 4,
         "speaker": "Álice",
         "window": 89,
+        "start_seconds": 7860.125,
+        "end_seconds": 7890.75,
     }
     assert event.drift_reason == "unexpected_or_invalid_field"
     assert event.rejected_field_count == 2

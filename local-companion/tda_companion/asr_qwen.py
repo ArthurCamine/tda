@@ -591,7 +591,11 @@ def transcribe_craig_package_qwen(
                             "code": "QWEN_WINDOW_TRANSCRIBED",
                             "stage": "transcription",
                             "track": track.number,
+                            "total_tracks": len(package.tracks),
+                            "speaker": track.speaker,
                             "window": window.index,
+                            "start_seconds": window.start,
+                            "end_seconds": window.end,
                         }
                     )
                 if not values:

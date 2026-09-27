@@ -461,6 +461,8 @@ export async function installCompanionFixture(
 										total_tracks: 2,
 										speaker: "Alice",
 										window: 1,
+										start_seconds: 0,
+										end_seconds: 30,
 									},
 								},
 							]

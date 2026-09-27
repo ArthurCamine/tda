@@ -238,8 +238,15 @@ export function presentJobEvent(event: JobEvent): PresentedJobEvent {
 		case "QWEN_WINDOW_TRANSCRIBED": {
 			const track = numberData(event, "track");
 			const window = numberData(event, "window");
+			const speaker = textData(event, "speaker");
+			const start = numberData(event, "start_seconds");
+			const end = numberData(event, "end_seconds");
+			const timestamp = (seconds: number) => [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, Math.floor(seconds) % 60].map(value => String(value).padStart(2, "0")).join(":");
+			const range = start !== null && end !== null && start >= 0 && end >= start
+				? `${timestamp(start)}–${timestamp(end)} na faixa` : null;
 			return {
 				title: `Qwen concluiu uma janela de áudio${track !== null ? ` da faixa ${track}` : ""}${window !== null ? ` · janela ${window}` : ""}.`,
+				detail: [speaker, range].filter(Boolean).join(" · ") || undefined,
 			};
 		}
 		case "QWEN_ALIGNMENT_TRAILING_OVERFLOW_IGNORED": {

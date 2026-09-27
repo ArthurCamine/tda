@@ -337,6 +337,8 @@ def test_strict_qwen_accepts_silent_window_without_alignment(tmp_path: Path):
             "speaker": "Alice",
             "window": 1,
             "completed_window_count": 1,
+            "start_seconds": 0.0,
+            "end_seconds": 2.0,
         }
     ]
     completed = next(

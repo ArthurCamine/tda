@@ -702,6 +702,8 @@ def transcribe_craig_package_qwen_strict(
                             "speaker": track.speaker,
                             "window": window.index,
                             "completed_window_count": len(values),
+                            "start_seconds": window.start,
+                            "end_seconds": window.end,
                         }
                     )
                 if not values:

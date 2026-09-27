@@ -141,7 +141,7 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         ),
     ),
     "QWEN_WINDOW_TRANSCRIBED": _schema(
-        *_TRACK, "window", "completed_window_count",
+        *_TRACK, "window", "completed_window_count", "start_seconds", "end_seconds",
         required=("stage", "track", "total_tracks", "speaker", "window"),
     ),
     "ASR_TEXT_CHECKPOINT_SAVED": _schema(
@@ -220,6 +220,7 @@ _SECONDS_FIELDS = frozenset(
         "context_seconds", "window_start_seconds", "window_end_seconds",
         "ownership_left_seconds", "ownership_right_seconds",
         "overflow_seconds", "previous_end_seconds",
+        "start_seconds", "end_seconds",
     }
 )
 _SIGNED_SECONDS_FIELDS = frozenset({"relative_start_seconds", "relative_end_seconds"})

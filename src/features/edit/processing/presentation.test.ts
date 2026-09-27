@@ -8,6 +8,12 @@ import {
 } from "./presentation";
 
 describe("processing presentation", () => {
+	it("uses factual track-local window time and preserves legacy events", () => {
+		const event = { seq: 1, attempt: null, code: "QWEN_WINDOW_TRANSCRIBED", at: "2026-09-27T00:00:00Z", level: "info", data: { track: 3, window: 205 } } as const;
+		expect(presentJobEvent(event).detail).toBeUndefined();
+		expect(presentJobEvent({ ...event, data: { ...event.data, speaker: "Alice", total_tracks: 4, start_seconds: 7860.125, end_seconds: 7890.75 } }).detail).toBe("Alice · 02:11:00–02:11:30 na faixa");
+		expect(presentJobEvent({ ...event, data: { ...event.data, start_seconds: 20, end_seconds: 10 } }).detail).toBeUndefined();
+	});
 	it("separates version, API and browser-session compatibility diagnostics", () => {
 		expect(
 			presentConnectionError("version_incompatible", {
