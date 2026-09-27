@@ -22,6 +22,7 @@ import { ParticipantManager } from "./participant-manager";
 import { applyParticipantRename } from "./participant-rename";
 import { countWordsV1, isReviewStringV1 } from "../../transcript-review/text-contract";
 import { localRunKey, serializeLocalRunKey } from "./local-run-key";
+import { processingStageLabels } from "./engine-metrics";
 
 type Props = Readonly<{
 	runs: readonly LocalRunSummary[];
@@ -186,6 +187,10 @@ function RunCard({
 	onOpen: () => void;
 }>) {
 	const model = [run.engine, run.model].filter(Boolean).join(" · ") || "modelo desconhecido";
+	const measured = run.stats.processingMetrics;
+	const processingSeconds = measured?.totalProcessingSeconds ?? run.stats.processingSeconds;
+	const measuredAudio = measured ? measured.freshAudioWorkSeconds + measured.reusedAudioWorkSeconds : 0;
+	const rtf = measured ? (measuredAudio > 0 ? measured.totalProcessingSeconds / measuredAudio : null) : run.stats.rtf;
 	return (
 		<article className={styles.runCard}>
 			<div className={styles.runHeader}>
@@ -205,9 +210,9 @@ function RunCard({
 				<div><dt>Concluído</dt><dd>{formatDate(run.completedAt)}</dd></div>
 				<div><dt>Duração da sessão</dt><dd>{formatSeconds(run.stats.sessionDurationSeconds)}</dd></div>
 				<div><dt>Trabalho de áudio</dt><dd>{formatSeconds(run.stats.audioWorkSeconds)}</dd></div>
-				<div><dt>Processamento</dt><dd>{formatSeconds(run.stats.processingSeconds)}</dd></div>
-				<div><dt>Velocidade</dt><dd>{formatRealtime(run.stats.rtf)}</dd></div>
-				<div><dt>RTF</dt><dd>{run.stats.rtf === null ? "—" : run.stats.rtf.toFixed(3)}</dd></div>
+				<div><dt>Processamento</dt><dd>{formatSeconds(processingSeconds)}</dd></div>
+				<div><dt>Velocidade</dt><dd>{formatRealtime(rtf)}</dd></div>
+				<div><dt>RTF</dt><dd>{rtf === null ? "—" : rtf.toFixed(3)}</dd></div>
 				<div><dt>Palavras</dt><dd>{run.stats.wordCount ?? "—"}</dd></div>
 				<div><dt>Segmentos</dt><dd>{run.stats.segmentCount ?? "—"}</dd></div>
 				<div><dt>Turnos</dt><dd>{run.stats.turnCount ?? "—"}</dd></div>
@@ -219,6 +224,16 @@ function RunCard({
 				<div><dt>Runtime</dt><dd>{formatRuntime(run)}</dd></div>
 				<div><dt>Compute capability</dt><dd>{run.executionLineage?.gpu?.computeCapability ?? "—"}</dd></div>
 			</dl>
+			{measured ? (
+				<details>
+					<summary>Tempo comparável e reaproveitamento</summary>
+					<p>Inclui validação, modelos, transcrição, alinhamento e consolidação dentro da engine. Não inclui preparação externa nem o tempo completo do job.</p>
+					<p>{measured.freshAsrTracks} faixas com ASR novo · {measured.textCheckpointReusedTracks} com texto reaproveitado · {measured.completedCheckpointReusedTracks} concluídas reaproveitadas.</p>
+					<p>{measured.freshCalibrationEligible ? "Amostra integral elegível para calibração compatível." : "Resultado com reaproveitamento ou sem áudio: não usar como throughput de ASR integral."}</p>
+					<dl>{Object.entries(measured.stageSeconds).map(([stage, seconds]) => <div key={stage}><dt>{processingStageLabels[stage]}</dt><dd>{formatSeconds(seconds)}</dd></div>)}</dl>
+					<small>Registro original: {formatSeconds(run.stats.processingSeconds)} · medição {measured.version}</small>
+				</details>
+			) : <p>Tempo histórico sem medição comparável entre engines.</p>}
 			<div className={styles.runIdentity}>
 				<span title={run.sourceId}>Fonte {run.sourceId.slice(0, 22)}…</span>
 				<span title={run.transcriptSha256}>SHA {run.transcriptSha256.slice(0, 12)}…</span>
@@ -543,7 +558,7 @@ function ReviewEditor({
 				<div><span>Revisão</span><strong>{reviewed} / {segments.length}</strong><small>{segments.length ? Math.round((reviewed / segments.length) * 100) : 100}%</small></div>
 				<div><span>Palavras</span><strong>{words}</strong><small>{review.review.editedSegments} segmentos alterados no último save</small></div>
 				<div><span>Participantes</span><strong>{participants}</strong><small>{review.stats.trackCount ?? "—"} tracks</small></div>
-				<div><span>Duração</span><strong>{formatSeconds(review.stats.sessionDurationSeconds)}</strong><small>Processamento {formatSeconds(review.stats.processingSeconds)}</small></div>
+				<div><span>Duração</span><strong>{formatSeconds(review.stats.sessionDurationSeconds)}</strong><small>Processamento {formatSeconds(review.stats.processingMetrics?.totalProcessingSeconds ?? review.stats.processingSeconds)}</small></div>
 				<div><span>Avisos</span><strong>{review.review.warningCount}</strong><small>{review.warningSummary ? "atalhos de atenção, não veredictos" : "total histórico não verificado"}</small></div>
 				<div>
 					<span>Hardware</span>

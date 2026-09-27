@@ -1,6 +1,6 @@
 import { publishApprovedLocalReview } from "../../src/features/edit/processing/publication-client";
 import { LocalReviewWorkspace } from "../../src/features/edit/processing/local-review";
-import type { LocalReview } from "../../src/features/edit/processing/protocol";
+import type { LocalReview, LocalRunSummary } from "../../src/features/edit/processing/protocol";
 import { useState } from "react";
 
 // Synthetic browser data; the product never imports this isolated harness.
@@ -10,6 +10,7 @@ export function ReviewFixture() {
 	const ephemeral = new URLSearchParams(location.search).has("ephemeral");
 	const oldAgent = new URLSearchParams(location.search).has("old-agent");
 	const bulk = new URLSearchParams(location.search).has("bulk");
+	const metricsMode = new URLSearchParams(location.search).has("metrics");
     const [saveCount, setSaveCount] = useState(0);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [review, setReview] = useState<LocalReview>({
@@ -84,12 +85,22 @@ export function ReviewFixture() {
 		],
 		sync: { status: "not_configured" },
 	});
+	const run: LocalRunSummary = {
+		...review.lineage, sourceId: review.sourceId, runId: review.runId, language: "pt",
+		transcriptSha256: review.baseTranscriptSha256, transcriptSizeBytes: 1000,
+		publicationTarget: null, review: null,
+		stats: { ...review.stats, audioWorkSeconds: 400, sessionDurationSeconds: 100, trackCount: 4, turnCount: 1, deduplicatedSegmentCount: 0, warningCount: 0,
+			processingMetrics: legacy ? null : { version: "engine_processing_v1",
+				stageSeconds: { runtime_validation: 0, checkpoint_scan: 0, model_prepare: 10, model_load: 5, transcription: 20, alignment_and_energy: 0, consolidation: 0 },
+				totalProcessingSeconds: 35, totalTracks: 4, freshAsrTracks: 1, textCheckpointReusedTracks: 1,
+				completedCheckpointReusedTracks: 2, freshAudioWorkSeconds: 100, reusedAudioWorkSeconds: 300, freshCalibrationEligible: false } },
+	};
 	return (
 		<>
         <span data-testid="save-count">{saveCount}</span>
         <LocalReviewWorkspace
-			runs={[]}
-			review={review}
+			runs={metricsMode ? [run] : []}
+			review={metricsMode ? null : review}
 			busy={false}
 			error={saveError}
 			publicationEnabled={publication}

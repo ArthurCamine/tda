@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .engine_metrics import validate_engine_metrics
+
 SCHEMA_VERSION = "tda_transcript_v1"
 TIME_EPSILON = 0.05
 
@@ -255,8 +257,13 @@ class TranscriptStats:
     turn_count: int = 0
     deduplicated_segment_count: int = 0
     duration_semantics: str | None = "session_extent_v1"
+    processing_metrics: dict[str, Any] | None = None
 
     def validate(self) -> None:
+        try:
+            validate_engine_metrics(self.processing_metrics)
+        except ValueError as exc:
+            raise TranscriptValidationError("stats.processing_metrics:INVALID") from exc
         if self.duration_semantics not in (None, "session_extent_v1"):
             raise TranscriptValidationError("stats.duration_semantics:UNSUPPORTED")
         _number(self.audio_work_seconds, "stats.audio_work_seconds")
@@ -275,6 +282,13 @@ class TranscriptStats:
             raise TranscriptValidationError("stats.deduplicated_segment_count:RANGE_INVALID")
         if self.rtf is not None:
             _number(self.rtf, "stats.rtf")
+        if self.processing_metrics is not None:
+            metrics = self.processing_metrics
+            if metrics["total_tracks"] != self.track_count or not math.isclose(
+                metrics["fresh_audio_work_seconds"] + metrics["reused_audio_work_seconds"],
+                self.audio_work_seconds, abs_tol=0.001,
+            ):
+                raise TranscriptValidationError("stats.processing_metrics:WORK_MISMATCH")
 
 
 @dataclass(frozen=True)
@@ -478,6 +492,7 @@ def stats_for_tracks(
     processing_seconds: float,
     turn_count: int = 0,
     deduplicated_segment_count: int = 0,
+    processing_metrics: dict[str, Any] | None = None,
 ) -> TranscriptStats:
     values = tuple(tracks)
     durations = [float(track.duration_seconds or 0.0) for track in values]
@@ -497,4 +512,5 @@ def stats_for_tracks(
         turn_count=turn_count,
         deduplicated_segment_count=deduplicated_segment_count,
         duration_semantics="session_extent_v1" if metrics else None,
+        processing_metrics=processing_metrics,
     )

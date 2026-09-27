@@ -189,6 +189,7 @@ def _manifest_for_document(
             "turn_count": stats.turn_count,
             "deduplicated_segment_count": stats.deduplicated_segment_count,
             "warning_count": len(document.warnings),
+            "processing_metrics": stats.processing_metrics,
         },
     }
     if execution_lineage is not None:
@@ -467,6 +468,16 @@ def _validate_manifest(
     stats = value.get("stats")
     if not isinstance(stats, dict):
         raise TranscriptionRunError("TRANSCRIPTION_RUN_STATS_INVALID")
+    from .engine_metrics import validate_engine_metrics
+    try:
+        validate_engine_metrics(stats.get("processing_metrics"))
+        metrics = stats.get("processing_metrics")
+        if metrics is not None and (metrics["total_tracks"] != stats.get("track_count") or
+            not isinstance(stats.get("audio_work_seconds"), (int, float)) or
+            not math.isclose(metrics["fresh_audio_work_seconds"] + metrics["reused_audio_work_seconds"], stats["audio_work_seconds"], abs_tol=0.001)):
+            raise ValueError("ENGINE_METRICS_WORK_MISMATCH")
+    except ValueError as exc:
+        raise TranscriptionRunError("TRANSCRIPTION_RUN_STATS_INVALID") from exc
     for name in ("audio_work_seconds", "processing_seconds", "session_duration_seconds", "rtf",
                  "word_count", "segment_count", "track_count", "turn_count",
                  "deduplicated_segment_count", "warning_count"):

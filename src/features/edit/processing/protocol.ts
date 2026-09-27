@@ -1,4 +1,5 @@
 import { supportsQwenAlignmentRuntime } from "./compatibility";
+import { parseEngineMetrics, type EngineProcessingMetrics } from "./engine-metrics";
 import { isReviewStringV1 } from "../../transcript-review/text-contract";
 
 export const LOCAL_API = "http://127.0.0.1:8765/api/v1";
@@ -214,6 +215,7 @@ export type LocalRunSummary = {
 	stats: {
 		audioWorkSeconds: number | null;
 		processingSeconds: number | null;
+		processingMetrics?: EngineProcessingMetrics | null;
 		sessionDurationSeconds: number | null;
 		durationSemantics?: "session_extent_v1";
 		rtf: number | null;
@@ -264,6 +266,7 @@ export type LocalReview = {
 	stats: {
 		audioWorkSeconds: number | null;
 		processingSeconds: number | null;
+		processingMetrics?: EngineProcessingMetrics | null;
 		sessionDurationSeconds: number | null;
 		durationSemantics?: "session_extent_v1";
 		rtf: number | null;
@@ -1010,6 +1013,7 @@ export function parseLocalRuns(value: unknown): LocalRunSummary[] {
 			stats: {
 				audioWorkSeconds: nullableMetric(stats.audio_work_seconds),
 				processingSeconds: nullableMetric(stats.processing_seconds),
+				processingMetrics: parseEngineMetrics(stats.processing_metrics, stats.track_count, stats.audio_work_seconds),
 				sessionDurationSeconds: nullableMetric(stats.session_duration_seconds),
 				...(stats.duration_semantics === "session_extent_v1"
 					? { durationSemantics: "session_extent_v1" as const }
@@ -1125,6 +1129,7 @@ export function parseLocalReview(value: unknown): LocalReview {
 		stats: {
 			audioWorkSeconds: nullableNonNegativeNumber(stats.audio_work_seconds),
 			processingSeconds: nullableNonNegativeNumber(stats.processing_seconds),
+			processingMetrics: parseEngineMetrics(stats.processing_metrics, stats.track_count, stats.audio_work_seconds),
 			sessionDurationSeconds: nullableNonNegativeNumber(stats.session_duration_seconds),
 			...(stats.duration_semantics === "session_extent_v1"
 				? { durationSemantics: "session_extent_v1" as const }

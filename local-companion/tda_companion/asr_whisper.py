@@ -501,6 +501,9 @@ def transcribe_craig_package(
     if profile.engine != "whisper":
         raise WhisperRuntimeError("WHISPER_PROFILE_REQUIRED")
     report = report or (lambda _: None)
+    from .engine_metrics import EngineMeasurement
+    measurement = EngineMeasurement(report)
+    report = measurement.emit
     is_cancelled = is_cancelled or (lambda: False)
     if is_cancelled():
         raise WhisperRuntimeError("ASR_CANCELLED")
@@ -539,6 +542,7 @@ def transcribe_craig_package(
     used_fallback = False
     model = None
 
+    report({"type": "stage", "stage": "checkpoint_scan", "profile": profile.id})
     if checkpoints:
         candidates = [(plan.compute_type, False)]
         if plan.fallback_compute_type:
@@ -569,6 +573,7 @@ def transcribe_craig_package(
                 break
 
     if checkpoint_signature is None:
+        measurement.switch("model_prepare")
         prepared = prepare_whisper_model(
             models_root,
             profile,
@@ -753,6 +758,7 @@ def transcribe_craig_package(
             processing_seconds=elapsed,
             turn_count=len(turns),
             deduplicated_segment_count=len(dedup_decisions),
+            processing_metrics=measurement.finish(transcript_tracks),
         ),
         warnings=warnings,
     )
